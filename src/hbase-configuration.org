@@ -1,0 +1,310 @@
+#+title: Apache HBase Configuration
+- http://hbase.apache.org/book/book.html
+- http://hbase.apache.org/book/configuration.html
+
+配置文件分布在三个地方：
+- for HBase, site specific customizations go into the file *conf/hbase-site.xml.*
+- *hbase-default.xml* source file in the HBase source code at *src/main/resources.*
+- Not all configuration options make it out to hbase-default.xml. *Configuration that it is thought rare anyone would change can exist only in code;* the only way to turn up such configurations is via a reading of the source code itself.
+
+** core
+- hbase.rootdir
+  - The directory shared by region servers and into which HBase persists. The URL should be 'fully-qualified' to include the filesystem scheme.
+  - Default: file:///tmp/hbase-${user.name}/hbase
+- hbase.cluster.distributed
+  - standalone(hbase and zk in one JVM) or distributed mode.
+  - Default: false
+- hbase.tmp.dir
+  - Temporary directory on the local filesystem.
+  - #todo: hbase为什么需要local filesystem?
+  - Default: ${java.io.tmpdir}/hbase-${user.name}
+- hbase.local.dir
+  - Directory on the local filesystem to be used as a local storage.
+  - Default: ${hbase.tmp.dir}/local/
+- dfs.support.append
+  - hdfs是否支持append. #todo: 如果支持append是否有更好的实现？
+  - Default: true
+- hbase.offheapcache.percentage
+  - 使用heap cache的百分比（好像这个cache是会放在disk上的）
+  - The amount of off heap space to be allocated towards the experimental off heap cache.
+  - If you desire the cache to be disabled, simply set this value to 0.
+  - Default: 0
+
+** master
+- hbase.master.port
+  - Default: 60000
+- hbase.master.info.port
+  - Default: 60010
+- hbase.master.info.bindAddress
+  - Default: 0.0.0.0
+- hbase.master.dns.interface
+  - The name of the Network Interface from which a master should report its IP address.
+  - Default: default
+- hbase.master.dns.nameserver
+  - The host name or IP address of the name server (DNS) which a master should use to determine the host name used for communication and display purposes.
+  - Default: default
+- *hbase.balancer.period*
+  - 多长时间进行balance
+  - Period at which the region balancer runs in the Master.
+  - Default: 300000(ms)=5min
+- *hbase.regions.slop*
+  - 触发balance的倾斜度
+  - Rebalance if any regionserver has average + (average * slop) regions. Default is 20% slop.
+  - Default: 0.2
+- hbase.master.logcleaner.ttl
+  - Maximum time a HLog can stay in the .oldlogdir directory, after which it will be cleaned by a Master thread.
+  - Default: 600000
+- hbase.master.cleaner.interval
+  - master每隔一段时间都会检查log是否需要删除，默认是1分钟
+
+** regionserver
+- hbase.regionserver.port
+  - Default: 60020
+- hbase.regionserver.info.port
+  - Default: 60030
+- hbase.regionserver.info.port.auto
+  - Enables automatic port search if hbase.regionserver.info.port is already in use.
+  - Default: false
+- hbase.regionserver.info.bindAddress
+  - Default: 0.0.0.0
+- *hbase.regionserver.handler.count*
+  - rs和master的RPC线程数目
+    - The default of 10 is rather low in order to prevent users from killing their region servers when using large write buffers with a high number of concurrent clients.
+    - The rule of thumb is to keep this number low when the payload per request approaches the MB (big puts, scans using a large cache) and high when the payload is small (gets, small puts, ICVs, deletes).
+    - It is safe to set that number to the maximum number of incoming clients if their payload is small, the typical example being a cluster that serves a website since puts aren't typically buffered and most of the operations are gets. （对于gets等website操作的话比较适合调高，因为每次payload都比较小）
+    - The reason why it is dangerous to keep this setting high is that the aggregate size of all the puts that are currently happening in a region server may impose too much pressure on its memory, or even trigger an OutOfMemoryError. （而对于大量put以及scan这样操作的话比较适合调低，以防止对内存造成巨大压力）
+    - A region server running on low memory will trigger its JVM's garbage collector to run more frequently up to a point where GC pauses become noticeable (the reason being that all the memory used to keep all the requests' payloads cannot be trashed, no matter how hard the garbage collector tries).
+    - After some time, the overall cluster throughput is affected since every request that hits that region server will take longer, which exacerbates the problem even more.
+    - 可以通过做RPC-level logging来判断线程数目是多是少。
+  - Count of RPC Listener instances spun up on RegionServers. Same property is used by the Master for count of master handlers.
+  - Default: 10
+- hbase.bulkload.retries.number
+  - #todo: bulk load?
+  - This is maximum number of iterations to atomic bulk loads are attempted in the face of splitting operations 0 means never give up.
+  - Default: 0.
+- *hbase.regionserver.msginterval*
+  - #todo: heartbeat?
+  - Interval between messages from the RegionServer to Master in milliseconds.
+  - Default: 3000
+- *hbase.regionserver.optionallogflushinterval*
+  - sync hlog到hdfs时间间隔，如果在这段时间内没有足够的entry来做sync的话 #todo: 这里的entry是不是edit?
+  - Sync the HLog to the HDFS after this interval if it has not accumulated enough entries to trigger a sync.
+  - Default: 1000(ms)
+- *hbase.regionserver.regionSplitLimit*
+  - region splitting上限，超过这个上限之后就不做splitting
+  - Limit for the number of regions after which no more region splitting should take place.
+  - Default is set to MAX_INT; i.e. do not block splitting.
+  - Default: 2147483647
+- *hbase.regionserver.logroll.period*
+  - Period at which we will roll the commit log regardless of how many edits it has.
+  - Default: 3600000(ms)
+- *hbase.regionserver.logroll.errors.tolerated*
+  - WAL close时候出现error最多容忍多少次
+  - The number of consecutive WAL close errors we will allow before triggering a server abort.
+  - A setting of 0 will cause the region server to abort if closing the current WAL writer fails during log rolling.
+  - Even a small value (2 or 3) will allow a region server to ride over transient HDFS errors.
+  - Default: 2
+- hbase.regionserver.hlog.reader.impl
+  - The HLog file reader implementation.
+  - Default: org.apache.hadoop.hbase.regionserver.wal.ProtobufLogReader
+- hbase.regionserver.hlog.writer.impl
+  - The HLog file writer implementation.
+  - Default: org.apache.hadoop.hbase.regionserver.wal.ProtobufLogWriter
+- hbase.regionserver.nbreservationblocks
+  - 保留的内存块以便出现OOME的时候还可以做cleanup
+  - The number of resevoir blocks of memory release on OOME so we can cleanup properly before server shutdown.
+  - Default: 4
+- hbase.regionserver.dns.interface
+  - The name of the Network Interface from which a region server should report its IP address.
+  - Default: default
+- hbase.regionserver.dns.nameserver
+  - The host name or IP address of the name server (DNS) which a region server should use to determine the host name used by the master for communication and display purposes.
+  - Default: default
+- *hbase.regionserver.global.memstore.upperLimit*
+  - 所有memstore内存占用比率超过这个值的话就会block update并且强制进行flush
+  - Maximum size of all memstores in a region server before new updates are blocked and flushes are forced. Defaults to 40% of heap.
+  - Default: 0.4
+- *hbase.regionserver.global.memstore.lowerLimit*
+  - 所有memstore内存占用比率超过这个值的话就会强制做flush
+  - Maximum size of all memstores in a region server before flushes are forced. Defaults to 35% of heap.
+  - Default: 0.35
+- *hbase.server.thread.wakefrequency*
+  - 每隔一段时间去检查有什么例行任务需要完成，或者是做major compaction等。
+  - Time to sleep in between searches for work (in milliseconds). Used as sleep interval by service threads such as log roller.
+  - Default: 10000
+- hbase.server.versionfile.writeattempts
+  - 写version file的尝试次数，并且每隔一段时间会尝试写 #todo: what‘s version file？
+  - How many time to retry attempting to write a version file before just aborting.
+  - Each attempt is seperated by the hbase.server.thread.wakefrequency milliseconds.
+  - Default: 3
+- *hbase.regionserver.optionalcacheflushinterval*
+  - #todo: edit不是都要写到file的吗？
+  - Maximum amount of time an edit lives in memory before being automatically flushed.
+  - Set it to 0 to disable automatic flushing.
+  - Default: 3600000(ms)
+- *hbase.hregion.memstore.flush.size*
+  - memstore超过多少内存会刷新到disk，并且每隔一段时间会检查. #todo: 这个不是每次进行write memstore就可以检查的吗？只要超过内存大小应该立刻就可以感知到的
+  - Memstore will be flushed to disk if size of the memstore exceeds this number of bytes.
+  - Value is checked by a thread that runs every hbase.server.thread.wakefrequency.
+  - Default: 134217728
+- *hbase.hregion.preclose.flush.size*
+  - preclose可能是预先将一部分的数据刷到磁盘上面，这样在close memstore过程中就非常快
+  - If the memstores in a region are this size or larger when we go to close, run a "pre-flush" to clear out memstores before we put up the region closed flag and take the region offline.
+  - The preflush is meant to clean out the bulk of the memstore before putting up the close flag and taking the region offline so the flush that runs under the close flag has little to do.
+  - Default: 5242880
+- *hbase.hregion.memstore.block.multiplier*
+  - 超过大小的话那么会阻塞update #todo: 为什么会出现这种情况？
+  - Block updates if memstore has hbase.hregion.block.memstore.multiplier time hbase.hregion.flush.size bytes.
+  - Default: 2
+- *hbase.hregion.memstore.mslab.enabled*
+  - #todo: what's mslab?
+  - Enables the MemStore-Local Allocation Buffer, a feature which works to prevent heap fragmentation under heavy write loads.
+  - This can reduce the frequency of stop-the-world GC pauses on large heaps.
+  - Default: true
+- *hbase.hregion.max.filesize*
+  - 如果一个regionserver上面column family的hstorefiles大小总和过大的话，那么就会进行splitting
+  - For the 0.90.x codebase, the upper-bound of regionsize is about 4Gb, with a default of 256Mb. For 0.92.x codebase, due to the HFile v2 change much larger regionsizes can be supported (e.g., 20Gb). 对于0.90.x来说regionsize上界就是4GB，高版本更大的regionsize被支持。
+  - Maximum HStoreFile size. If any one of a column families' HStoreFiles has grown to exceed this value, the hosting HRegion is split in two.
+  - Default: 10737418240(10G)
+- *hbase.hstore.compactionThreshold*
+  - 在一个HStore下面过多的hstorefile就会进行compaction合并成为1个文件。如果这个值过大的话，那么做compaction的时间就会更长。注意这里也说了一个hstorefile是一个memstore flush的结果。
+  - If more than this number of HStoreFiles in any one HStore (one HStoreFile is written per flush of memstore) then a compaction is run to rewrite all HStoreFiles files as one.      - Larger numbers put off compaction but when it runs, it takes longer to complete.
+  - Default: 3
+- *hbase.hstore.blockingStoreFiles*
+  - 如果超过hstorefile没有合并完成的话，那么就会阻塞，直到compaction完成，或者是超过一定时间
+  - If more than this number of StoreFiles in any one Store (one StoreFile is written per flush of MemStore) then updates are blocked for this HRegion until a compaction is completed, or until hbase.hstore.blockingWaitTime has been exceeded.
+  - Default: 7
+- *hbase.hstore.blockingWaitTime*
+  - 如果超过这些时间之后，那么HRegion将不会阻塞update.
+  - The time an HRegion will block updates for after hitting the StoreFile limit defined by hbase.hstore.blockingStoreFiles.
+  - After this time has elapsed, the HRegion will stop blocking updates even if a compaction has not been completed. Default: 90 seconds.
+  - Default: 90000(s)
+- *hbase.hstore.compaction.max*
+  - 一次minor compaction的文件数目
+  - Max number of HStoreFiles to compact per 'minor' compaction.
+  - Default: 10
+- *hbase.hregion.majorcompaction*
+  - 两次做major compaction的间隔
+  - The time (in miliseconds) between 'major' compactions of all HStoreFiles in a region.
+  - Set to 0 to disable automated major compactions.
+  - Default: 86400000(ms) = 1day
+- hbase.storescanner.parallel.seek.enable
+  - Enables StoreFileScanner parallel-seeking in StoreScanner, a feature which can reduce response latency under special conditions.
+  - Default: false
+- hbase.storescanner.parallel.seek.threads
+  - The default thread pool size if parallel-seeking feature enabled.
+  - Default: 10
+- *hfile.block.cache.size*
+  - HFile/StoreFile分配多少内存作为block cache.
+  - Percentage of maximum heap (-Xmx setting) to allocate to block cache used by HFile/StoreFile.
+  - Set to 0 to disable but it's not recommended.
+  - Default: 0.25
+- *hbase.hash.type*
+  - 用于bloom filter的hash算法
+  - The hashing algorithm for use in HashFunction.
+  - Two values are supported now: murmur (MurmurHash) and jenkins (JenkinsHash). Used by bloom filters.
+  - Default: murmur
+- hfile.format.version
+  - HFile的格式版本号，用于处理兼容性问题。
+  - The HFile format version to use for new files. Set this to 1 to test backwards-compatibility. The default value of this option should be consistent with FixedFileTrailer.MAX_VERSION.
+  - Default: 2
+- *io.storefile.bloom.block.size*
+  - HFile block大小，这个大小包括data + bloom filter.
+  - The size in bytes of a single block ("chunk") of a compound Bloom filter.
+  - Default: 131072
+- hbase.rpc.server.engine
+  - Implementation of org.apache.hadoop.hbase.ipc.RpcServerEngine to be used for server RPC call marshalling.
+  - Default: org.apache.hadoop.hbase.ipc.ProtobufRpcServerEngine
+- *hbase.ipc.client.tcpnodelay*
+  - Set no delay on rpc socket connections.
+  - Default: true
+- hbase.data.umask.enable
+  - regionserver是否使用umask来决定文件权限
+  - Enable, if true, that file permissions should be assigned to the files written by the regionserver
+  - Default: false
+- hbase.data.umask
+  - File permissions that should be used to write data files when hbase.data.umask.enable is true
+  - Default: 000
+- *hbase.rpc.timeout*
+  - 用来估计client rpc timeout时间
+  - This is for the RPC layer to define how long HBase client applications take for a remote call to time out.
+  - It uses pings to check connections but will eventually throw a TimeoutException. The default value is 60000ms(60s).
+  - Default: 60000
+- *hbase.server.compactchecker.interval.multiplier*
+  - 多长时间检查一次是否需要做compaction.(major compaction)
+  - The number that determines how often we scan to see if compaction is necessary.
+  - Normally, compactions are done after some events (such as memstore flush), but if region didn't receive a lot of writes for some time, or due to different compaction policies, it may be necessary to check it periodically.
+  - The interval between checks is hbase.server.compactchecker.interval.multiplier multiplied by hbase.server.thread.wakefrequency.
+  - Default: 1000
+
+** client
+- hbase.client.write.buffer
+  - HTable client writer buffer in bytes.
+  - Default: 2097152 = 2M
+  - A bigger buffer takes more memory -- on both the client and server side since server instantiates the passed write buffer to process it -- but a larger buffer size reduces the number of RPCs made.
+  - For an estimate of server-side memory-used, evaluate hbase.client.write.buffer * hbase.regionserver.handler.count *用来估计handler.count以及server memory used*
+- hbase.client.pause
+  - General client pause value. Used mostly as value to wait before running a retry of a failed get, region lookup, etc.  *client retry之间的pause时间*
+  - Default: 1000
+- hbase.client.retries.number
+  - Default: 10
+- hbase.client.scanner.caching
+  - Number of rows that will be fetched when calling next on a scanner *每次scanner取出的row number*
+  - Default: 100
+  - Do not set this value such that the time between invocations is greater than the scanner timeout; i.e. hbase.client.scanner.timeout.period  *但是需要注意两次操作之间不要超时*
+- hbase.client.keyvalue.maxsize
+  - Specifies the combined maximum allowed size of a KeyValue instance. Setting it to zero or less disables the check.
+  - Default: 10485760 = 10MB
+- hbase.client.scanner.timeout.period
+  - Client scanner lease period in milliseconds. *scanner两次操作之间的lease时长*
+  - Default: 60000(ms)
+- hbase.mapreduce.hfileoutputformat.blocksize
+  - HFileOutputFormat直接输出HBase文件的blocksize.
+  - Default: 65536(64KB?)
+
+** zookeeper
+- hbase.zookeeper.dns.interface
+  - The name of the Network Interface from which a ZooKeeper server should report its IP address.
+  - Default: default
+- hbase.zookeeper.dns.nameserver
+  - The host name or IP address of the name server (DNS) which a ZooKeeper server should use to determine the host name used by the master for communication and display purposes.
+  - Default: default
+- *zookeeper.session.timeout*
+  - zookeeper的session超时时间. 这个参数一方面涉及到hmaster多久发现regionserver挂掉，另外一方面也设计到regionserver本身做GC会和zookeeper比较长时间没有通信。
+  - ZooKeeper session timeout. HBase passes this to the zk quorum as suggested maximum time for a session
+  - "The client sends a requested timeout, the server responds with the timeout that it can give the client. " In milliseconds.
+  - Default: 180000(3min)
+- *zookeeper.znode.parent*
+  - Root ZNode for HBase in ZooKeeper. All of HBase's ZooKeeper files that are configured with a relative path will go under this node.
+  - By default, all of HBase's ZooKeeper file path are configured with a relative path, so they will all go under this directory unless changed.
+  - Default: /hbase
+- *zookeeper.znode.rootserver*
+  - Path to ZNode holding root region location. This is written by the master and read by clients and region servers.
+  - Default: root-region-server
+- *hbase.zookeeper.quorum*
+  - Comma separated list of servers in the ZooKeeper Quorum.
+  - "host1.mydomain.com,host2.mydomain.com,host3.mydomain.com".
+  - Default: localhost
+- *hbase.zookeeper.peerport*
+  - Port used by ZooKeeper peers to talk to each other.
+  - Default: 2888
+- *hbase.zookeeper.leaderport*
+  - Port used by ZooKeeper for leader election.
+  - Default:
+- hbase.zookeeper.property.initLimit
+  - Property from ZooKeeper's config zoo.cfg. The number of ticks that the initial synchronization phase can take.
+  - Default: 10
+- hbase.zookeeper.property.syncLimit
+  - Property from ZooKeeper's config zoo.cfg. The number of ticks that can pass between sending a request and getting an acknowledgment.
+  - Default: 5
+- hbase.zookeeper.property.dataDir
+  - Property from ZooKeeper's config zoo.cfg. The directory where the snapshot is stored.
+  - Default: ${hbase.tmp.dir}/zookeeper
+- *hbase.zookeeper.property.clientPort*
+  - client链接zookeeper的port
+  - Property from ZooKeeper's config zoo.cfg. The port at which the clients will connect.
+  - Default: 2181
+- *hbase.zookeeper.property.maxClientCnxns*
+  - Property from ZooKeeper's config zoo.cfg. Limit on number of concurrent connections
+  - Default: 300
+

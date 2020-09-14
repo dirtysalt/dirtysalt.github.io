@@ -1,0 +1,71 @@
+#+title: Case Study GFS: Evolution on Fast-forward
+
+http://queue.acm.org/detail.cfm?id=1594206 @ 2009
+
+-----
+#+BEGIN_QUOTE
+MCKUSICK Now, under the current schema for GFS, you have one master per cell, right?
+
+QUINLAN That’s correct.
+
+MCKUSICK And historically you’ve had one cell per data center, right?
+
+QUINLAN That was initially the goal, but it didn’t work out like that to a large extent—partly because of the limitations of the single-master design and partly because isolation proved to be difficult. As a consequence, people generally ended up with more than one cell per data center. We also ended up doing what we call a “multi-cell” approach, which basically made it possible to put multiple GFS masters on top of a pool of chunkservers. That way, the chunkservers could be configured to have, say, eight GFS masters assigned to them, and that would give you at least one pool of underlying storage—with multiple master heads on it, if you will. Then the application was responsible for partitioning data across those different cells.
+
+#+END_QUOTE
+
+GFS初始设计是在一个data center/cell部署一个master. 但是事实证明这种方式不太好，一方面是因为master本身限制造成压力，另外一方面是在单master上面完成隔离比较困难。因此后来采用了mult-cell的方法，在一个data center/cell部署多个master,但是这些master贡献一个chunkserver pool. 用户程序通过自己partition决定数据元信息存放在哪个master上面。
+
+-----
+#+BEGIN_QUOTE
+MCKUSICK What longer-term strategy have you come up with for dealing with the file-count issue? Certainly, it doesn’t seem that a distributed master is really going to help with that—not if the master still has to keep all the metadata in memory, that is.
+
+QUINLAN The distributed master certainly allows you to grow file counts, in line with the number of machines you’re willing to throw at it. That certainly helps.
+
+One of the appeals of the distributed multimaster model is that if you scale everything up by two orders of magnitude, then getting down to a 1-MB average file size is going to be a lot different from having a 64-MB average file size. If you end up going below 1 MB, then you’re also going to run into other issues that you really need to be careful about. For example, if you end up having to read 10,000 10-KB files, you’re going to be doing a lot more seeking than if you’re just reading 100 1-MB files.
+
+My gut feeling is that if you design for an average 1-MB file size, then that should provide for a much larger class of things than does a design that assumes a 64-MB average file size. Ideally, you would like to imagine a system that goes all the way down to much smaller file sizes, but 1 MB seems a reasonable compromise in our environment.
+
+MCKUSICK What have you been doing to design GFS to work with 1-MB files?
+
+QUINLAN We haven’t been doing anything with the existing GFS design. Our distributed master system that will provide for 1-MB files is essentially a whole new design. That way, we can aim for something on the order of 100 million files per master. You can also have hundreds of masters. 
+
+MCKUSICK So, essentially no single master would have all this data on it?
+
+QUINLAN That’s the idea.
+
+#+END_QUOTE
+
+解决文件数量限制问题可以通过分布式master来解决。减小chunkfile size可以有效地为使用小文件的应用服务。
+
+-----
+With the recent emergence within Google of BigTable, a distributed storage system for managing structured data, one potential remedy for the file-count problem—albeit perhaps not the very best one—is now available.
+
+#+BEGIN_QUOTE
+MCKUSICK I guess the question I’m really trying to pose here is: Did BigTable just get stuck into a lot of these applications as an attempt to deal with the small-file problem, basically by taking a whole bunch of small things and then aggregating them together?
+
+QUINLAN That has certainly been one use case for BigTable, but it was actually intended for a much more general sort of problem. If you’re using BigTable in that way—that is, as a way of fighting the file-count problem where you might have otherwise used a file system to handle that—then you would not end up employing all of BigTable’s functionality by any means. BigTable isn’t really ideal for that purpose in that it requires resources for its own operations that are nontrivial. Also, it has garbage-collection policy that’s not super-aggressive, so that might not be the most efficient way to use your space. I’d say that the people who have been using BigTable purely to deal with the file- count problem probably haven’t been terribly happy, but there’s no question that it is one way for people to handle that problem.
+
+#+END_QUOTE
+
+The other major challenge for GFS, of course, has revolved around finding ways to build latency- sensitive applications on top of a file system designed around an entirely different set of priorities.
+
+Our user base has definitely migrated from being a MapReduce-based world to more of an interactive world that relies on things such as BigTable. Gmail is an obvious example of that. Videos aren’t quite as bad where GFS is concerned because you get to stream data, meaning you can buffer. Still, trying to build an interactive database on top of a file system that was designed from the start to support more batch-oriented operations has certainly proved to be a pain point.
+
+BigTable的出现解决了GFS出现的两个问题，一个侧面地解决了大量小文件存储问题虽然不是非常优雅但也可用，另外一方面是来处理延迟敏感的user-face application
+
+-----
+#+BEGIN_QUOTE
+MCKUSICK Was this done by design?
+
+QUINLAN At the time, it must have seemed like a good idea, but in retrospect I think the consensus is that it proved to be more painful than it was worth. It just doesn’t meet the expectations people have of a file system, so they end up getting surprised. Then they had to figure out work-arounds. MCKUSICK In retrospect, how would you handle this differently?
+
+QUINLAN I think it makes more sense to have a single writer per file.
+
+MCKUSICK All right, but what happens when you have multiple people wanting to append to a log? 
+
+QUINLAN You serialize the writes through a single process that can ensure the replicas are consistent.
+#+END_QUOTE
+
+GFS里面对于一个文件允许多个writer同时操作，因为mutation order以及支持random write造成的一致性问题一直是论文中最难理解的部分。google要是从头设计的话，也会使用HDFS方式支持append并且一个文件只允许一个appender
+

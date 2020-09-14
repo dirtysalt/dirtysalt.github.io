@@ -1,0 +1,80 @@
+#+title: 比特币挖矿的泊松分布问题(指数分布)
+
+https://twitter.com/SatoshiLite/status/978913057999998976
+
+#+BEGIN_QUOTE
+Let's test your knowledge of Bitcoin mining. Bitcoin is designed such that a block is mined every 10 minutes on average.
+
+If 5 minutes has passed since the last block was mined, what's the expected amount of time before the next block is mined?
+#+END_QUOTE
+
+这里问题是首先我们需要假定出矿间隔是泊松分布。如果是泊松分布的话，如果平均出矿时间是10分钟的话，那么lambda = 10.
+
+然后我们可以用程序来做个模拟：
+- 首先用lambda = 10的泊松分布产生N个点
+- 排除那些值小于5的点，剩余的就是之后可能出现的点
+- 然后看剩余的点平均值
+
+#+BEGIN_SRC Python
+#!/usr/bin/env python
+# coding:utf-8
+# Copyright (C) dirlt
+
+import numpy as np
+
+def run(lam, thres, n):
+    values = np.random.poisson(lam=lam, size=n)
+    values = np.array([x for x in values if x > thres])
+    print('n = {}, # = {}, avg = {}'.format(n, len(values), values.mean()))
+
+
+lam = 10
+thres = 5
+for n in (100 * 1000, 1000 * 1000, 5 * 1000 * 1000):
+    run(lam, thres, n)
+
+#+END_SRC
+
+输出结果如下，可以看到实际结果其实并不是10min, 而是在10.4min左右。
+这个解释是，在接下来的10.4分钟内，平均会发生一次事件。
+
+#+BEGIN_EXAMPLE
+n = 100000, # = 93291, avg = 10.434715031460698
+n = 1000000, # = 932709, avg = 10.401006101581523
+n = 5000000, # = 4664554, avg = 10.404514558090655
+#+END_EXAMPLE
+
+--------------------
+
+UPDATE@202001: 我觉得这个模型用指数模型建模更合适。泊松分布式一段时间内独立事件的发生次数，而指数分布则是两次独立事件发生时间的间隔。
+这里就是两个block之间产生的平均时间间隔10min. 指数分布的期望正好就是lambda, 所以lambda=10. 程序和上面类似，只不过我们改用指数分布做模拟。
+
+#+BEGIN_SRC python
+#!/usr/bin/env python
+# coding:utf-8
+# Copyright (C) dirlt
+
+import numpy as np
+
+def run(lam, thres, n):
+    values = np.random.exponential(lam=lam, size=n)
+    values = np.array([x for x in values if x > thres])
+    print('n = {}, # = {}, avg = {}'.format(n, len(values), values.mean()))
+
+
+lam = 10
+thres = 5
+for n in (100 * 1000, 1000 * 1000, 5 * 1000 * 1000):
+    run(lam, thres, n)
+#+END_SRC
+
+输出结果如下，实际结果就是15min. 这个解释是下次block到来的平均时间是15min. 而此时已经过去了5min, 所以平均还要等待10min.
+
+#+BEGIN_EXAMPLE
+n = 100000, # = 60571, avg = 14.929722202106614
+n = 1000000, # = 605959, avg = 15.006197564991856
+n = 5000000, # = 3032462, avg = 15.00148591494115
+#+END_EXAMPLE
+
+泊松分布和指数分布两者时间是存在一定关系的：[[https://www.ruanyifeng.com/blog/2015/06/poisson-distribution.html][泊松分布和指数分布：10分钟教程 - 阮一峰的网络日志]]. 对于单位时间内发生次数这种离散量，
+应该使用泊松分布，而对于两次事件的时间间隔这种连续量，应该使用指数分布。

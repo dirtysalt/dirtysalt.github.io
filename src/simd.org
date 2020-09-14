@@ -1,0 +1,325 @@
+#+title: SIMD
+
+Intel® 64 and IA-32 Architectures Software Developer Manuals | Intel® Software - https://software.intel.com/en-us/articles/intel-sdm
+
+** 指令集
+*** MMX
+- Multimedia Extensions.[PII & PMMX]
+- (CPUID.01H:EDX.MMX[bit 23]=1)
+
+*** SSE.
+- Streaming SIMD Extensions.[PIII]
+- (CPUID.01H:EDX.SSE[bit 25]=1)
+
+*** SSE2
+- Streaming SIMD Extensions2.[P4 & Xeon]
+- (CPUID.01H:EDX.SSE2[bit 26]=1)
+
+*** SSE3
+- Streaming SIMD Extensions3.[P4(HT)]
+- (CPUID.01H:ECX.SSE3[bit 0]=1)
+
+*** SSSE3
+- Supplemental Stream SIMD Extensions3.[Xeon(5100) & Core2]
+- (CPUID.01H:ECX.SSSE3[bit 9]=1)
+
+*** SSE4
+- Streaming SIMD Extensions4.[Xeon(5400) & Core2Ex(QX9650)]
+- SSE4.1.(CPUID.01H:ECX.SSE4_1[bit 19]=1)
+- SSE4.2.(CPUID.01H:ECX.SSE4_2[bit 20]=1)
+
+*** 检测代码
+#+BEGIN_SRC C++
+#include <stdio.h>
+int check_support_mmx(){
+    int res=0;
+    __asm__ __volatile__(
+        "movl $1,%%eax\n\t"
+        "cpuid\n\t"
+        "test $0x800000,%%edx\n\t"
+        "jz 1f\n\t"
+        "movl $1,%0\n\t"
+        "1:\n\t"
+        :"=m"(res)
+        ::"eax","edx");
+    return res;
+}
+int check_support_sse(){
+    int res=0;
+    __asm__ __volatile__(
+        "movl $1,%%eax\n\t"
+        "cpuid\n\t"
+        "test $0x02000000,%%edx\n\t"
+        "jz 1f\n\t"
+        "movl $1,%0\n\t"
+        "1:\n\t"
+        :"=m"(res)
+        ::"eax","edx");
+    return res;
+}
+int check_support_sse2(){
+    int res=0;
+    __asm__ __volatile__(
+        "movl $1,%%eax\n\t"
+        "cpuid\n\t"
+        "test $0x04000000,%%edx\n\t"
+        "jz 1f\n\t"
+        "movl $1,%0\n\t"
+        "1:\n\t"
+        :"=m"(res)
+        ::"eax","edx");
+    return res;
+}
+int check_support_sse3(){
+    int res=0;
+    __asm__ __volatile__(
+        "movl $1,%%eax\n\t"
+        "cpuid\n\t"
+        "test $0x1,%%ecx\n\t"
+        "jz 1f\n\t"
+        "movl $1,%0\n\t"
+        "1:\n\t"
+        :"=m"(res)
+        ::"eax","edx");
+    return res;
+}
+int check_support_ssse3(){
+    int res=0;
+    __asm__ __volatile__(
+        "movl $1,%%eax\n\t"
+        "cpuid\n\t"
+        "test $0x0200,%%ecx\n\t"
+        "jz 1f\n\t"
+        "movl $1,%0\n\t"
+        "1:\n\t"
+        :"=m"(res)
+        ::"eax","edx");
+    return res;
+}
+int check_support_sse4_1(){
+    int res=0;
+    __asm__ __volatile__(
+        "movl $1,%%eax\n\t"
+        "cpuid\n\t"
+        "test $0x80000,%%ecx\n\t"
+        "jz 1f\n\t"
+        "movl $1,%0\n\t"
+        "1:\n\t"
+        :"=m"(res)
+        ::"eax","edx");
+    return res;
+}
+int check_support_sse4_2(){
+    int res=0;
+    __asm__ __volatile__(
+        "movl $1,%%eax\n\t"
+        "cpuid\n\t"
+        "test $0x0100000,%%ecx\n\t"
+        "jz 1f\n\t"
+        "movl $1,%0\n\t"
+        "1:\n\t"
+        :"=m"(res)
+        ::"eax","edx");
+    return res;
+}
+int main(){
+    printf("MMX[%s]\n",check_support_mmx()?"OK":"FAILED");
+    printf("SSE[%s]\n",check_support_sse()?"OK":"FAILED");
+    printf("SSE2[%s]\n",check_support_sse2()?"OK":"FAILED");
+    printf("SSE3[%s]\n",check_support_sse3()?"OK":"FAILED");
+    printf("SSSE3[%s]\n",check_support_ssse3()?"OK":"FAILED");
+    printf("SSE4.1[%s]\n",check_support_sse4_1()?"OK":"FAILED");
+    printf("SSE4.2[%s]\n",check_support_sse4_2()?"OK":"FAILED");
+    return 0;
+}
+
+#+END_SRC
+
+** 基本概念
+*** %mm寄存器
+%mm寄存器是64bit,共有8个%mm寄存器.需要注意的是,%mm0-%mm7是X87 FPU寄存器的alias,
+分别对应%r0-%r7.所以对%mm0-%mm7的操作会覆盖X87 FPU的内容.使用%mm寄存器的时候,
+效果是这样的.
+   1. TOS(Top Of Stack)会被置为0,也就是FPU registers的顶部会置0.
+   2. 整个FPU tag word会被置为valid(0x0).如果后续想使用的话,需要使用EMMS指令.
+   3. FPU register有80位,但是%mm寄存器只是用了64位,因此其余位填充(0xff).
+
+因此如果在使用%mm寄存器之后,想使用FPU指令的话,那么应该
+   1. fsave/fxsave保存FPU状态.
+   2. 执行EMMS指令.
+   3. 可选地使用frstore/fxstore载入之前FPU状态.
+   3. 执行FPU指令.
+
+如果使用FPU指令之后,想切换回%mm寄存器的话.
+   1. fsave/fxsave保存FPU状态.
+   2. 可选地使用frstore/fxrstore载入之前FPU状态.
+   3. 操作%mm寄存器.
+
+EMMS指令会清除MMX的状态,将FPU tag word进行清空,表示所有的FPU registers都已经清空.
+我们必须在执行完成MMX指令之后,如果之后需要使用FPU registers的话,那么需要执行这个指令.
+
+*** %xmm寄存器
+%xmm寄存器是128bit.
+Intel64架构下允许访问16个%xmm寄存器.
+IA-32架构下只允许访问8个%xmm寄存器.
+
+*** %mxcsr寄存器
+%mxcsr是32bit.%mxcsr寄存器是在SSE指令集引入的,用来控制作用在%xmm寄存器操作的行为,
+所有的这些行为都是和浮点相关的,在某种程度上非常类似于X87 FPU tag word.
+关于%mxcsr寄存器各个位所表示的意思在这里不细说,可以查看Intel手册得到详细解释.
+可以查看Intel Vol.1 10.2.3.%mxcrs默认值是0x1f80.
+
+| 指令    | 说明              |
+|---------+-------------------|
+| LDMXCSR | mem->%mxcsr.32bit |
+| STMXCSR | %mxcsr->mem.32bit |
+
+*** Saturation & Wraparound
+在进行整数运算的时候,可能会存在out-of-range的情况,结果不能够被目标数所表示.对于
+这种溢出处理有下面3种方式.
+- Wraparound Arithmetic.
+回绕模式.比如8个字节表示257的话,那么就是257-256=1.
+- Signed Saturation Arithmetic.
+符号位溢出模式.比如8个字节表示257的话,那么会是0x7f=127.
+- Unsigned Saturation Arithmetic.
+无符号溢出模式.比如8个字节表示257的话,那么会是0xff=255.
+
+对于溢出模式对于一些计算是非常重要的.假设256色的像素如果两个像素相叠加的话,
+当然不希望像素值发生回绕.如果溢出的话,通常这个像素保持纯黑或者是纯白.
+
+*** General Purpose Register(GPR)
+通用寄存器,包括EAX/RAX,EBX/RBX,ECX/RCX等.这些通用寄存器和%mm和%xmm之间的差别是,
+%mm和%xmm不能够用来存放地址,也就是说不能够将内存地址存放在%mm和%xmm里面然后进行引用.
+
+*** X87 FPU
+X87 FPU是浮点运算部件,共有8个寄存器,组织方式是堆栈.通常来说对于SIMD并不需要关心
+X87 FPU这个部件.但是因为SIMD使用的%mm寄存器是FPU寄存器的alias,所以我们这里需要了解.
+后面我们把X87 FPU都称为FPU.
+
+对于FPU会有一个状态,状态包括执行环境和寄存器内容.每个寄存器80bit.在操作%mm寄存器
+和执行FPU指令切换之间,我们可能需要保存状态.那么下面就是关于FPU操作状态的指令.
+
+| 指令     | 说明                                                   |
+|----------+--------------------------------------------------------|
+| FSAVE    | 保存FPU状态,然后重新初始化FPU.84/108字节               |
+| FRSTORE  | FSAVE逆操作.                                           |
+| FXSAVE   | 保存FPU状态/%mm寄存器,%xmm寄存器,%mxscr寄存器.512字节. |
+| FXRSTORE | FXSAVE逆操作.                                          |
+
+关于如何协调%mm寄存器和FPU寄存器的使用,在%mm寄存器这节有解释.
+
+*** Packed & Scalar Instructions
+对于SIMD提供了操作packed和scalar指令.我们假设存在两个操作数,
+假设是(f00,f01,f02,f03)和(f10,f11,f12,f13)的话,那么
+- 如果是packed操作的话,那么操作是(f00 op f01,f01 op f11,f02 op f12,f03 op f13).
+- 如果是scalar操作的话,那么操作是(f00,f01,f03,f03 op f13).
+也就是说,如果在scalar操作的话,仅仅是操作最后面一个单元,其他单元全部复制.
+
+需要注意的是,在Scalar操作下面
+- 单精度浮点是24-bit significand + 8-bit exponent.
+- 双精度浮点是53-bit significand + 11-bit exponent.
+而在IEEE-754和FPU操作环境下面的的话
+- 单精度浮点是24-bit significand + 15-bit exponent.
+- 双精度浮点是52-bit significand + 15-bit exponent.
+此外SIMD操作浮点数和FPU操作浮点数有些不同,SIMD是直接操作浮点数的Native Format,
+而FPU是首先在更高的精度上面操作,然后取舍到Native Format.
+
+*** Temporal & NonTemporal Data
+待续.需要阅读Intel Vol.3A Memory & Cache Control这节.在Intel Vol.1 10.4.6.2也有介绍.
+
+*** Alignment
+关于对齐方面,如果使用128bit Memory Operand必须进行16字节的对齐.但是有些例外
+- 使用UnAlign的Data Transfer操作,比如MOVUPS/MOVUPD.
+- 如果是Scalar Memory Float的话,必须是4字节对齐.
+- 如果是Scalar Memory Double的话,必须是8字节对齐.
+- 此外还有部分指令字节对齐存在例外,会在响应的指令部分说明.
+
+*** Asymmetric & Horizontal Processing
+分别是对称处理和水平处理.假设存在操作数(a0,a1,a2,a3)以及(b0,b1,b2,b3).
+对于大部分SIMD指令处理都是对称处理,也就是(a0 op b0,a1 op b1,a2 op b2,a3 op b3).
+相邻处理就是(a0 op a1,a2 op a3,b0 op b1,b2 op b3).
+
+*** Zero Fill & Truncated
+对于从内存/寄存器载入到寄存器的话,如果位数不够,通常是占用寄存器的低字节,
+除非显式指定.对于寄存器中没有使用的高字节,通常是采用0填充,也就是Zero Fill.:).
+
+而另外一个方面,如果从寄存器传输到内存/寄存器,如果寄存器位数过多的话,那么也
+通常只是传输寄存器的低字节,而保留寄存器的高字节,也就是Truncated.:).
+
+** 指令
+为了方便表示,我们定义下面缩写和操作.
+
+| 助记符 | 含义                                          | 其他 |
+|--------+-----------------------------------------------+------|
+| A      | Aligned                                       |      |
+| U      | UnAligned                                     |      |
+| L      | Low                                           |      |
+| H      | High/Horizontal                               |      |
+| B      | Byte                                          |      |
+| SB     | Signed Byte                                   |      |
+| UB     | Unsigned Byte                                 |      |
+| W      | Word                                          |      |
+| SW     | Signed Word                                   |      |
+| UW     | Unsigned Word                                 |      |
+| Q      | Quad Word                                     |      |
+| DQ     | Double Quad Word                              |      |
+| F      | Float                                         |      |
+| D      | Double                                        |      |
+| PS     | Packed Single Precision Floating Point        |      |
+| SS     | Scalar Single Precision Floating Point        |      |
+| PD     | Packed Double Precision Floating Point        |      |
+| SD     | Scalar Double Precision Floating Point        |      |
+| CMP    | Compare                                       |      |
+| STR    | String                                        |      |
+| EQ     | Equal                                         |      |
+| GT     | Greater                                       |      |
+| SLL    | Shift Left Logical                            |      |
+| SRL    | Shift Right Logical                           |      |
+| SRA    | Shift Right Arithmetic                        |      |
+| DUP    | Duplicate                                     |      |
+| WAM    | Wraparound Mode                               |      |
+| SSM    | Signed Saturation Mode                        |      |
+| USM    | Unsigned Saturation Mode                      |      |
+| RCP    | Reciprocal.RCP(x)=1/x                         |      |
+| SQRT   | Square Root                                   |      |
+| RSQRT  | Reciprocal Square Root                        |      |
+| MSK    | Mask                                          |      |
+| CVT    | Convert                                       |      |
+| SX     | Signed Extend                                 |      |
+| ZX     | Zero Extend                                   |      |
+| ROUND  |                                               |      |
+| UNPCK  | Unpack                                        |      |
+| EXTR   | Extract                                       |      |
+| INSR   | Insert                                        |      |
+| AND    | a && b                                        |      |
+| OR     | a or b                                        |      |
+| NAND   | !(a && b)                                     |      |
+| XOR    | a ^ b                                         |      |
+| SAD    | Sum of Absolute Difference.                   |      |
+| SIGN   | SIGN(src,dst)=if(src<0):dst=-dst              |      |
+| MADD   | MADD((a00,a01),(b00,b01))=(a00*b00)+(a01*b01) |      |
+| ALIGNR | ALIGNR(src,dst,imm)=(src,dst) >> imm          |      |
+| AVG    | Average                                       |      |
+| ABS    | Absolute                                      |      |
+| NT     | NonTemporal                                   |      |
+| CVTT   | Convert With Truncate                         |      |
+| UNPCKH | UNPCKH((s00,s01),(d00,d01))=(d01,s01)         |      |
+| UNPCKL | UNPCKL((s00,s01),(d00,d01))=(d00,s00)         |      |
+| MSB    | Most Significant Bit                          |      |
+| LF     | Lowest Float                                  |      |
+| LF2    | Lower 2 Floats                                |      |
+| LF4    | Lower 4 Floats                                |      |
+| HF     | Highest Float                                 |      |
+| HF2    | Higher 2 Floats                               |      |
+| LD     | Lowest Double                                 |      |
+| HD     | Highest Double                                |      |
+| LDW    | Lower Double Word                             |      |
+| LDW2   | Lower 2 Double Words                          |      |
+| LDW4   | Lower 4 Double Words                          |      |
+| LW     | Lower Word                                    |      |
+| HW     | Higher Wword                                  |      |
+| GPR    | General Purpose Resgister                     |      |
+
+这里有几点需要注意的
+- 对于Move如果使用了错误类型指令的话,会产生性能消耗.Vol.1 11.6.9
+- 对于使用SIMD来说,推荐使用caller-save.Vol.1 11.6.10.3

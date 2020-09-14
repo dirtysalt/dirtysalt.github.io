@@ -1,0 +1,58 @@
+#+title: Gizzard: a library for creating distributed datastores
+https://github.com/twitter/gizzard # 项目已经废弃
+
+** An introduction to sharding
+** What is a sharding framework?
+- Thus, we have extracted Gizzard, a Scala framework that makes it easy to create custom fault-tolerant, distributed databases.
+- At a high level,
+ - Gizzard is a middleware networking service that manages partitioning data across arbitrary backend datastores (e.g., SQL databases, Lucene, etc.).
+ - The partitioning rules are stored in a forwarding table that maps key ranges to partitions.
+ - Each partition manages its own replication through a declarative replication tree.
+ - Gizzard supports “migrations” (for example, elastically adding machines to the cluster) and gracefully handles failures.
+ - The system is made eventually consistent by requiring that all write-operations are idempotent and commutative and as operations fail (because of, e.g., a network partition) they are retried at a later time.
+
+** How does it work?
+*** Gizzard is middleware
+file:images/gizzard-middleware.png
+
+- Gizzard instances are stateless so run as many gizzards as are necessary to sustain throughput or manage TCP
+
+*** Gizzard supports any datastorage backend
+- As a general rule, Gizzard requires that all write operations be idempotent and commutative (see the section on Fault Tolerance and Migrations), so this places some constraints on how you may use the back-end store.
+- In particular, Gizzard does not guarantee that write operations are applied in order. It is therefore imperative that the system is designed to reach a consistent state regardless of the order in which writes are applied.
+要求写操作是幂等并且是具有结合性的（说白了就是out-of-order write要支持），要求这些特性主要是和gizzard设计的fault-tolerance,migrations策略相关。
+
+*** Gizzard handles partitioning through a forwarding table
+- Gizzard handles partitioning (i.e., dividing exclusive ranges of data across many hosts) by mappings ranges of data to particular shards. （range based partition)
+- These mappings are stored in a forwarding table that specifies lower-bound of a numerical range and what shard that data in that range belongs to.(partition信息保存在forwarding-table上面）
+- To be precise, you provide Gizzard a hash function that, given a key for your data (and this key can be application specific), produces a number that belongs to one of the ranges in the forwarding table. (自己指定hash function将数据生成number然后做range based partition)
+- This range-based approach differs from the "consistent hashing" technique used in many other distributed data-stores. This allows for heterogeneously sized partitions so that you easily manage hotspots, segments of data that are extremely popular. (range based相对于一致性hash能够更好地找到热点，并且针对热点进行优化）
+- In fact, Gizzard does allows you to implement completely custom forwarding strategies like consistent hashing, but this isn't the recommended approach（但是gizzard本身也是支持一致性hash路由算法，但是这个算法本身是不被推荐的）
+
+file:images/gizzard-forwarding-table.png
+
+*** Gizzard handles replication through a replication tree
+- Each shard referenced in the forwarding table can be either a physical shard or a logical shard.
+  - A physical shard is a reference to a particular data storage back-end, such as a SQL database. (physical shard)
+  - In contrast, A logical shard is just a tree of other shards, where each branch in the tree represents some logical transformation on the data, and each node is a data-storage back-end. (logical shard/branch)
+  - These logical transformations at the branches are usually rules about how to propagate read and write operations to the children of that branch.（branch代表数据的流动，这个和logical shard属性相关）
+
+file:images/gizzard-replication-tree.png
+
+- But Gizzard ships with a few standard strategies of broad utility such as Replicating, Write-Only, Read-Only, and Blocked (allowing neither reads nor writes). （我觉得文章里面说的logical shard/branch就是这几类）
+- You can create custom branching/logical shards for your particular data storage needs, such as to add additional transaction/coordination primitives or quorum strategies.（可以编写自定义的logical shard/branch)
+
+*** Gizzard is fault-tolerant
+- Gizzard is designed to avoid any single points of failure.
+- If a certain replica in a partition has crashed, Gizzard routes requests to the remaining healthy replicas, bearing in mind the weighting function.
+- If all replicas of in a partition are unavailable, Gizzard will be unable to serve read requests to that shard, but all other shards will be unaffected.
+- Writes to an unavailable shard are buffered until the shard again becomes available.
+ - In fact, if any number of replicas in a shard are unavailable, Gizzard will try to write to all healthy replicas as quickly as possible and buffer the writes to the unavailable shard, to try again later when the unhealthy shard returns to life.(如果shard任何一个replicas挂掉的话，那么对于healthy replicas依然能够正常工作，而对于bad replicas的会buffer起来，等待replicas恢复之后write下去）
+ - The basic strategy is that all writes are materialized to a durable, transactional journal. Writes are then performed asynchronously (but with manageably low latency) to all replicas in a shard. If a shard is unavailable, the write operation goes into an error queue and is retried later.(writer buffer是通过保存到本地磁盘的journal来完成的，当shard重新恢复的话那么期间所有的写都会异步地更新到上面）
+ - In order to achieve “eventual consistency”, this “retry later” strategy requires that your write operations are idempotent and commutative. This is because a retry later strategy can apply operations out-of-order（为了达到这种最终一致性，retry later这种策略就要求write操作本身是幂等并且是满足结合性的）
+
+*** Winged migrations
+- When migrating from Datastore A to Datastore A', a Replicating shard is set up between them but a WriteOnly shard is placed in front of Datastore A'. Then data is copied from the old shard to the new shard. The WriteOnly shard ensures that while the new Shard is bootstrapping, no data is read from it (because it has an incomplete picture of the corpus). (原来老的数据通过replication复制过去，而新增数据通过write-only shard拦截住，在new shard完全replication之前是不可读但是却可写的。
+- Because writes will happen out of order (new writes occur before older ones and some writes may happen twice), all writes must be idempotent and commutative to ensure data consistency.（同样在这里牵扯到replication以及write-only，write是完全无序并且可能写多次的，因此这里也要求write操作满足幂等和结合性）
+
+file:images/gizzard-migration.png

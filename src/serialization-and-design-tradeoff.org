@@ -1,0 +1,48 @@
+#+title: 序列化和设计权衡
+
+最近几天又重新翻翻 [[http://zguide.zeromq.org/page:all][zeromq guide]]. 大概在2011年的时候看过一阵子，但是当时对网络编程不熟悉，也没有做过太多系统设计方面的工作，
+所以总是想把zeromq硬套在我当时理解的RPC模型上。不是说zeromq不能做RPC或者是做的不好，zeromq可以很好地完成rpc工作，但是它还有许多其他设计模式和应用场景，
+这点是我当时忽略的。最近几天又从几个不同途径看到zeromq(我也知道作者放弃zmq做nanomsg了， 我也知道作者现在去世了，还是安乐死去世的），
+所以觉得有必要在翻翻。
+
+zeromq guide非常长，我只是比较细致地看了前面3章，其他章节就是随便翻翻。看到关于 [[http://zguide.zeromq.org/page:all#Serialization-Libraries][序列化]] 这节，我觉得作者对msgpack的观点挺有意思的。
+
+#+BEGIN_QUOTE
+
+The msgpack.org site says:
+
+It's like JSON, but fast and small. MessagePack is an efficient binary serialization format. It lets you exchange data among multiple languages like JSON, but it's faster and smaller. For example, small integers (like flags or error code) are encoded into a single byte, and typical short strings only require an extra byte in addition to the strings themselves.
+
+
+I'm going to make the perhaps unpopular claim that "fast and small" are features that solve non-problems. The only real problem that serialization libraries solve is, as far as I can tell, the need to document the message contracts and actually serialize data to and from the wire.
+
+Let's start by debunking "fast and small". It's based on a two-part argument. First, that making your messages smaller and reducing CPU cost for encoding and decoding will make a significant difference to your application's performance. Second, that this equally valid across-the-board to all messages.
+
+But most real applications tend to fall into one of two categories. Either the speed of serialization and size of encoding is marginal compared to other costs, such as database access or application code performance. Or, network performance really is critical, and then all significant costs occur in a few specific message types.
+
+Thus, aiming for "fast and small" across the board is a false optimization. You neither get the easy flexibility of Cheap for your infrequent control flows, nor do you get the brutal efficiency of Nasty for your high-volume data flows. Worse, the assumption that all messages are equal in some way can corrupt your protocol design. Cheap or Nasty isn't only about serialization strategies, it's also about synchronous versus asynchronous, error handling and the cost of change.
+
+My experience is that most performance problems in message-based applications can be solved by (a) improving the application itself and (b) hand-optimizing the high-volume data flows. And to hand-optimize your most critical data flows, you need to cheat; to learn exploit facts about your data, something general purpose serializers cannot do.
+#+END_QUOTE
+
+作者觉得msgpack完全在解决错误的问题。序列化库的关键，是确保协议的一致和兼容性。json的优势在于可读可交互性，msgapck在 "Cheap" 这方面把优势抹去了。而将尝试将json数据大小缩减下来，则是针对错误的场景。因为真正数据流量关键的网络应用，都会使用手工方式来实现序列化，做到又小又快，但是可能在API上使用不方便。所以msgpack在 "Nasty" 这方面也没有优势。总得来说就是处在 "Cheap" 和 "Nasty"的中间状态，看起来属于万金油，但是实际上却不是关键组件。
+
+所以想要把一个产品做好，就要在一方面做到极致：要不API使用上特别方便，能够成倍地提高生产效率，哪怕有点性能损失；要不就在性能和稳定性上做到极致，哪怕使用起来稍微有点困难。
+
+虽然我承认msgpack不是那种all-or-nothing东西，但是它还是个好东西。它和json兼容性很好，而且速度和大小上都比json要好那么一些，可以作为drop-in replacement使用。
+
+然后作者在 [[http://zguide.zeromq.org/page:all#Handwritten-Binary-Serialization][二进制序列化]] 库实现方面给了如下建议：
+
+#+BEGIN_QUOTE
+- Use a profiler. There's simply no way to know what your code is doing until you've profiled it for function counts and for CPU cost per function. When you find your hot spots, fix them.
+
+- Eliminate memory allocations. The heap is very fast on a modern Linux kernel, but it's still the bottleneck in most naive codecs. On older kernels, the heap can be tragically slow. Use local variables (the stack) instead of the heap where you can.
+
+- Test on different platforms and with different compilers and compiler options. Apart from the heap, there are many other differences. You need to learn the main ones, and allow for them.
+
+- Use state to compress better. If you are concerned about codec performance, you are almost definitely sending the same kinds of data many times. There will be redundancy between instances of data. You can detect these and use that to compress (e.g., a short value that means "same as last time").
+
+- Know your data. The best compression techniques (in terms of CPU cost for compactness) require knowing about the data. For example, the techniques used to compress a word list, a video, and a stream of stock market data are all different.
+
+- Be ready to break the rules. Do you really need to encode integers in big-endian network byte order? x86 and ARM account for almost all modern CPUs, yet use little-endian (ARM is actually bi-endian but Android, like Windows and iOS, is little-endian).
+#+END_QUOTE

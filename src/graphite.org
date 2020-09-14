@@ -1,0 +1,116 @@
+#+title: graphite
+
+https://graphite.readthedocs.org/en/latest/
+
+** Overview
+Graphite consists of 3 software components:
+
+- carbon - a [[http://www.twistedmatrix.com/][Twisted]] daemon that listens for time-series data
+- whisper - a simple database library for storing time-series data (similar in design to [[http://oss.oetiker.ch/rrdtool/][RRD]])
+- graphite webapp - A [[http://www.djangoproject.com/][Django]] webapp that renders graphs on-demand using [[http://www.cairographics.org/][Cairo]]
+
+** Installation
+graphite几个组件都是python编写的, 所以推荐使用pip/virtualenv来安装
+
+- pip install whisper
+- pip install carbon
+- pip install graphite-web
+
+如果使用virtualenv安装在自定义目录下的话，可以使用下面两个命令安装. 这里安装位置是$HOME/utils/graphite/app.
+#+BEGIN_EXAMPLE
+pip install carbon --install-option="--prefix=$HOME/utils/graphite/app" --install-option="--install-lib=$HOME/utils/graphite/app/lib/"
+pip install graphite-web --install-option="--prefix=/$HOME/utils/graphite/app" --install-option="--install-lib=$HOME/utils/graphite/app/webapp"
+#+END_EXAMPLE
+但是安装完成之后还需要修改两个地方(修改路径字符串，默认都是/opt/graphite)，一个是graphite_wsgi.py, 另外一个是local_settings.py里面的GRAPHITE_ROOT.
+
+可能还需要安装一些dependency.
+- pip install django==1.8.5 # 高版本Django(1.9.x)似乎不能正常执行migrate
+- pip install django-tagging
+- pip install MySQL-python
+- yum install python27-pycairo-devel.x86_64
+- yum install libffi-devel.x86_64
+- pip install cffi cairocffi
+- pip install pytz gunicorn zope.interface
+
+默认安装路径是/opt/graphite.
+- storage/
+  - log/ # carbon和graphite-web日志
+  - rrd/ # RRD files
+  - whisper/ # whisper数据文件
+- webapp/
+  - graphite/ # django项目
+  - content/ # django静态文件
+
+配置carbon可以看 [[https://graphite.readthedocs.org/en/latest/config-carbon.html][这里]]. 主要考虑的问题是数据如何滚动, 每种粒度的数据各保存多久. 比如1min级别数据保存7天, 10min数据保存30天, 其他数据都以小时级别保存的话. 在storage-schemas.conf保存, 不同前缀数据留存时间不同
+#+BEGIN_EXAMPLE
+[carbon]
+pattern = ^carbon\.
+retentions = 10:1d
+
+[collectd]
+pattern = ^collectd\.*
+retentions = 10s:1d,1m:7d,10m:1y
+
+[statsd]
+pattern = ^stats\.*
+retentions = 10s:1d,1m:7d,10m:1y
+
+[default]
+pattern = .*
+retentions = 10s:1d
+#+END_EXAMPLE
+然后使用 ./bin/carbon-cache.py start 来启动
+
+接下来就是配置webapp可以看 [[https://graphite.readthedocs.org/en/latest/config-local-settings.html][这里]]. 修改graphite/local_settings.py数据库来保存web数据.
+#+BEGIN_SRC Python
+DATABASES = {
+   'default': {
+       # 'NAME': '/opt/graphite/storage/graphite.db',
+       'NAME' : 'graphitedb',
+       # 'ENGINE': 'django.db.backends.sqlite3',
+       'ENGINE': 'django.db.backends.mysql',
+       'USER': 'root',
+       'PASSWORD': '123456',
+       'HOST': '',
+       'PORT': ''
+   }
+}
+#+END_SRC
+然后执行`python manage.py migrate`创建数据库.
+
+在执行migrate的时候可能出现下面这个问题: `Django.db.utils.IntergrityError: 'Cannot add foreing key contraint`. 在 [[http://stackoverflow.com/questions/29483119/django-1-8-syncdb-not-working-throwing-a-foreign-key-constraint-error][SO]] 上可以找到解决办法
+#+BEGIN_SRC Python
+DATABASES = {
+'default': {
+    ...
+    'OPTIONS': {
+         "init_command": "SET foreign_key_checks = 0;",
+    },
+ }
+}
+#+END_SRC
+
+然后配置nginx来转发请求和处理静态文件. 让nginx在10000端口处理, 转发到10001端口.
+#+BEGIN_EXAMPLE
+server {
+    listen 10000;
+    access_log /opt/graphite/storage/log/webapp/nginx_access.log;
+    error_log  /opt/graphite/storage/log/webapp/nginx_error.log;
+    location / {
+        proxy_pass http://127.0.0.1:10001;
+    }
+    location /content {
+        alias /opt/graphite/webapp/content;
+    }
+}
+#+END_EXAMPLE
+
+最后通过gunicorn启动django webapp. graphite_wsgi.py可以从conf/graphite.wsgi.example复制过来
+#+BEGIN_EXAMPLE
+gunicorn graphite_wsgi:application -b 0.0.0.0:10001 -w 4
+#+END_EXAMPLE
+
+** Feed Data
+虽然carbon和redis类似, 也是使用[[http://graphite.readthedocs.org/en/latest/feeding-carbon.html][plaintext protcol]], 但是使用起来依然有所不便. 不过plaintext protocol好处就是可以让许多第三方系统对接. [[http://graphite.readthedocs.org/en/latest/tools.html][这里]] 列举了一些可以和graphite对接的系统和库. 这里以 [[https://github.com/etsy/statsd][statsd]] 和 [[https://github.com/sivy/pystatsd][pystatsd]] 为例.
+
+todo:

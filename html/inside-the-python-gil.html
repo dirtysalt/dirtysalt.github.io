@@ -1,0 +1,163 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Inside The Python GIL</title>
+<meta name="generator" content="Org mode" />
+<meta name="author" content="dirtysalt" />
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content">
+<h1 class="title">Inside The Python GIL</h1>
+<p>
+首先Python的线程是操作系统原生线程的封装，线程调度也是依赖于操作系统的。
+</p>
+
+<p>
+&gt;&gt;&gt; What is a Thread?
+</p>
+<ul class="org-ul">
+<li>Python threads are real system threads
+<ul class="org-ul">
+<li>POSIX threads (pthreads)</li>
+<li>Windows threads</li>
+</ul></li>
+<li>Fully managed by the host operating system
+<ul class="org-ul">
+<li>All scheduling/thread switching</li>
+</ul></li>
+<li>Represent threaded execution of the Python interpreter process (written in C)</li>
+</ul>
+
+<p>
+&gt;&gt;&gt; Thread-Specific State
+</p>
+<ul class="org-ul">
+<li>Each thread has its own interpreter specific data structure (PyThreadState)
+<ul class="org-ul">
+<li>Current stack frame (for Python code)</li>
+<li>Current recursion depth</li>
+<li>Thread ID</li>
+<li>Some per-thread exception information</li>
+<li>Optional tracing/profiling/debugging hooks</li>
+</ul></li>
+<li>It's a small C structure (&lt;100 bytes)</li>
+</ul>
+
+<p>
+Python解释器会保存当前执行线程的全局变量，为了避免这个全局变量被多线程访问，所以需要GIL.
+</p>
+
+<p>
+&gt;&gt;&gt; Thread Execution
+</p>
+<ul class="org-ul">
+<li>The interpreter has a global variable that simply points to the ThreadState structure of the currently running thread</li>
+</ul>
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-comment-delimiter">/* </span><span class="org-comment">Python/pystate.c */</span>
+...
+PyThreadState *_PyThreadState_Current = <span class="org-constant">NULL</span>;
+</pre>
+</div>
+<ul class="org-ul">
+<li>Operations in the interpreter implicitly depend this variable to know what thread they're currently working with</li>
+<li>Here's what happens on thread creation
+<ul class="org-ul">
+<li>Python creates a small data structure containing some interpreter state</li>
+<li>A new thread (pthread) is launched</li>
+<li>The thread calls PyEval_CallObject</li>
+</ul></li>
+</ul>
+
+<p>
+Python解释器没有自己的线程调度器，依赖于操作系统的线程调度。
+</p>
+
+<p>
+&gt;&gt;&gt; Thread Scheduling
+</p>
+<ul class="org-ul">
+<li>Python does not have a thread scheduler</li>
+<li>There is no notion of thread priorities, preemption, round-robin scheduling, etc.</li>
+<li>All thread scheduling is left to the host operating system (e.g., Linux,Windows, etc.)</li>
+<li>This is partly why signals get so weird (the interpreter has no control over scheduling so it just attempts to thread switch as fast as possible with the hope that main will run)</li>
+</ul>
+
+<hr />
+<p>
+GIL Behavior
+</p>
+
+<p>
+每个线程在执行之前需要acuqire GIL, 执行一段时间片去release GIL. 每个时间片称为"check interval" 可以通过 `sys.setcheckinterval()` 来做修改。
+</p>
+
+<p>
+<img src="images/python-gil-behavior.png" alt="python-gil-behavior.png" /> <img src="images/python-cpu-bound-processing.png" alt="python-cpu-bound-processing.png" />
+</p>
+
+<p>
+tick并不是按照指令和时间来计算的，更像是根据high-level op来计算的，单个tick没有办法中断。也就是说，如果一个操作属于一个tick, 一旦执行之后想要Ctrl-C中断是不可能的。
+</p>
+
+<p>
+一旦开辟工作线程之后，主线程要做的事情就是响应信号(signal), 以及等待工作线程结束。在check期间，主线程调用信号处理程序，而其他线程只是release然后重新acquire gil.
+解释器寄希望于OS在check期间可以调度到其他工作线程，不过这样会带来很多问题。
+</p>
+
+<hr />
+<p>
+Signal Handling
+</p>
+
+<p>
+一旦线程检测到有信号(signal)的话，那么就要开始切换回到主线程来处理信号的。但是注意前面"Thread Scheduling"，因为Python是自己做线程调度的，
+所以几乎没有办法主动地要求切换回到主线程， <b>只能是期待操作系统调度调度到主线程</b> 。如果这个时候其他工作线程是CPU密集型的话，很大规律是没有办法
+切换回主线程的，而一旦切换到工作线程又会立刻yield出去，结果就是整个系统几乎是不能工作的，而且信号也没有办法响应。
+</p>
+
+
+<div class="figure">
+<p><img src="images/python-signal-handling.png" alt="python-signal-handling.png" />
+</p>
+</div>
+
+<p>
+Frozen Signals
+</p>
+<ul class="org-ul">
+<li>The reason Ctrl-C doesn't work with threaded programs is that the main thread is often blocked on an uninterruptible thread-join or lock</li>
+<li>Since it's blocked, it never gets scheduled to run any kind of signal handler for it</li>
+<li>And as an extra little bonus, the interpreter is left in a state where it tries to thread-switch after every tick (so not only can you not interrupt your program, it runs slow as hell!)</li>
+</ul>
+
+<hr />
+<p>
+GIL Implementation
+</p>
+<ul class="org-ul">
+<li>The GIL is not a simple mutex lock</li>
+<li>The implementation (Unix) is either&#x2026;
+<ul class="org-ul">
+<li>A POSIX unnamed semaphore</li>
+<li>Or a pthreads condition variable</li>
+</ul></li>
+<li>All interpreter locking is based on signaling
+<ul class="org-ul">
+<li>To acquire the GIL, check if it's free. If not, go to sleep and wait for a signal</li>
+<li>To release the GIL, free it and signal</li>
+</ul></li>
+</ul>
+
+
+<div class="figure">
+<p><img src="images/python-thread-scheduling.png" alt="python-thread-scheduling.png" />
+</p>
+</div>
+</div>
+</body>
+</html>

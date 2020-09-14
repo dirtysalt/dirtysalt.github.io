@@ -1,0 +1,95 @@
+#+title: 1505. 最多 K 次交换相邻数位后得到的最小整数
+
+https://leetcode-cn.com/problems/minimum-possible-integer-after-at-most-k-adjacent-swaps-on-digits/
+
+这题目的一些关键难点我都考虑到了，但是在实现步骤上出现了差错。
+- 首先这题需要使用贪心算法，尽可能地选择靠前的小的数字前移
+- 但是每次必须重新选择，而不能先将0全部前移，然后将1全部前移，如此下去
+- 而应该先将一个0前移之后看看下一个0是否可以前移到最开始，否则去测试1是否可以前移到最开始
+- 这个算法的难点是，如果 =nums[i]= 上的数字前移之后，那么所有 =nums[j] (j > i)= 的数字前移的cost都要减1
+
+所以这个算法的难点是，我们要维护一个数据结构，当前移 =nums[j]= 这个数字的时候，知道已经有多少个数字(比如k)是 =nums[i] (i<j)=  的。那么这次移动 =nums[j]= 这个数字的话，cost就是 =j-k=.
+- 简单的话我们可以使用一个排序数组+二分搜索，更新时间复杂度是O(n), 查询时间复杂度是O(lgn) [这种方式提交可以过]
+- 或者是手写二叉树，记录左子树一共有多少个节点，更新和查询时间复杂度都是O(lgn), 但是手写麻烦还有有旋转。
+
+其实这个问题完全可以转换成为求解前缀和
+- 一开始有个数组 =moved[0..n-1]= 内容都是0
+- 如果 =nums[i]= 移动到最开始的话，那么 =moved[i]=1=
+- 对于求解 =# of nums[i] (i<j)= 的话，那么其实就是求解 =sum(moved[0..j-1])=
+如果将这个问题转换成为前缀和的话，那么又会多了两种数据结构：区间树和Fenwick树，其实是一个思想，但是Fenwick写起来更简单。我之前写过一篇 [[file:binary-indexed-tree.org][BIT/Fenwick树]] 的文章。
+
+代码如下，二分搜索或者是Fenwick可以作为一个抽象策略存在：
+
+#+BEGIN_SRC python
+
+class Solution:
+    class BIT:
+        def __init__(self, n):
+            self.n = n
+            self.values = [0] * (n + 1)
+
+        def update(self, x):
+            x += 1
+            n = self.n
+            while x <= n:
+                self.values[x] += 1
+                x += (x & -x)
+
+        def query(self, x):
+            x += 1
+            ans = 0
+            while x > 0:
+                ans += self.values[x]
+                x -= (x & -x)
+            return ans
+
+    class BS:
+        def __init__(self, n):
+            self.bs = []
+
+        def update(self, x):
+            import bisect
+            bisect.insort(self.bs, x)
+
+        def query(self, x):
+            import bisect
+            return bisect.bisect(self.bs, x)
+
+    def minInteger(self, num: str, k: int) -> str:
+
+        qs = [[] for _ in range(10)]
+        buf = []
+        for i in reversed(range(len(num))):
+            c = int(num[i])
+            qs[c].append(i)
+
+        BSClass = self.BIT
+        bs = BSClass(len(num))
+        while k and len(buf) < len(num):
+            ok = False
+            for i in range(10):
+                if not qs[i]: continue
+                q = qs[i][-1]
+                j = bs.query(q)
+                # print(q, j)
+                if (q - j) <= k:
+                    qs[i].pop()
+                    bs.update(q)
+                    k -= (q - j)
+                    buf.append(q)
+                    ok = True
+                    break
+            if not ok: break
+
+        used = set(buf)
+        ans = []
+        for q in buf:
+            ans.append(num[q])
+        for i in range(len(num)):
+            if i in used: continue
+            ans.append(num[i])
+
+        ans = ''.join(ans)
+        return ans
+
+#+END_SRC

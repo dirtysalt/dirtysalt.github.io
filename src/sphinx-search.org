@@ -1,0 +1,153 @@
+#+title: sphinx-search
+- http://sphinxsearch.com/ # GPLv2协议
+- http://www.coreseek.cn/ # 在sphinx-search基础上许多改进包括增加数据源以及中文支持
+- http://www.coreseek.cn/products-install/#doc_cn
+- http://www.coreseek.cn/docs/coreseek_4.1-sphinx_2.0.1-beta.html # 翻译得非常好的中文手册
+- http://sphinxsearch.com/info/articles/
+
+** Introduction
+http://www.coreseek.cn/docs/coreseek_4.1-sphinx_2.0.1-beta.html#features
+
+sphinx主要包括下面几个工具：
+- indexer: 用于创建全文索引
+- search: 命令行检索程序
+- searchd: 守护进程对外提供服务
+- indextool: 用来转储索引文件的调试信息
+这些工具的(几乎)所有配置信息都可以写在 [[http://www.coreseek.cn/docs/coreseek_4.1-sphinx_2.0.1-beta.html#conf-reference][sphinx.conf]] 一个文件里面。
+
+Sphinx在与MySQL衔接方面做的非常好：
+- [[http://www.coreseek.cn/docs/coreseek_4.1-sphinx_2.0.1-beta.html#sql][指定SQL语句作为数据源]] （可以从数据库读取数据导入做批量索引，也可以使用SphinxQL写入数据做实时索引）
+- 提供MySQL协议兼容的searchd，使用SphinxSQL来操作。
+- 提供了 [[http://www.coreseek.cn/docs/coreseek_4.1-sphinx_2.0.1-beta.html#sphinxse][MySQL存储引擎(SphinxSE)]] 来替换MySQL内置的全文检索引擎。
+- http://www.slideshare.net/billkarwin/practical-full-text-search-with-my-sql 比较了几种MySQL FTS(Full Text Search)性能
+
+** Index(索引)
+对于索引程序来说，数据分为全文和属性两类。sphinx只会对全文进行索引，不会对属性索引，但是属性对于结果排序/过滤/分组都非常有用。
+
+目前支持的属性包括下面几种类型：
+- 无符号整数（1-32位宽）; # uint
+- UNIX 时间戳（timestamps）; # timestamp
+- 浮点值（32位，IEEE 754单精度）; # float
+- 字符串序列 (专指尤其计算出来的字符串序列整数值);
+- 字符串 (版本 1.10-beta 开始支持); # string
+- 多值属性 MVA(32位无符号整型值的变长序列). # multi
+
+sphinx有两种方式来存储这些属性信息：
+- 与全文索引数据分开存储（“外部存储extern”，在.spa文件中存储），属性信息会在守护进程(searchd)启动被载入内存并且常驻内存。
+- 在全文索引数据中，每出现一次文档ID就出现相应的文档信息（“内联存储inline”，在.spd文件中存储）。
+
+对于文档来说，最重要的一条限制就是： 我们需要为每个文档分配一个唯一ID，并且 *所有文档的ID必须是唯一的无符号非零整数（根据Sphinx构造时的选项，可能是32位或64位）* 。
+
+sphinx有两种索引方式，一种是基于磁盘索引（批量索引），一种是基于磁盘+内存索引（实时RT索引）。RT索引是在1.10-beta之后才加入，并且只允许使用 [[http://www.coreseek.cn/docs/coreseek_4.1-sphinx_2.0.1-beta.html#sphinxql-reference][SphinxQL]] 写入数据。引入RT索引可能主要还是为了解决索引时效性问题。使用批量索引解决时效性的办法，就是使用delta(on disk) + main索引，但是时效性不太好通常会有30~60s延迟，而使用RT索引延迟可以下降到1~2毫秒。不管是使用批量索引还是RT索引，我们都需要对索引进行合并(merge)来减少查询文件加快查询速度。
+
+RT索引实现方式是: a. 将最新写入的数据缓存在内存并且建立索引 b. 当内存占用超过rt_mem_limit大小之后就会flush到磁盘上形成磁盘索引。为了确保提交到内存中的数据不会丢失，提交到内存之前会先写入二进制日志。每个二进制日志文件大小由binlog_max_log_size来限制(0表示没有限制)，日志刷新策略和MySQL几乎完全相同：
+#+BEGIN_QUOTE
+前有三种不同的二进制日志刷新策略，由binlog_flush选项来控制，设置为0表示每秒将日志刷新一次到操作系统和同步到磁盘，设置为1表示表示每次事务处理都刷新和同步，设置为2（默认模式）表示每次事务处理时刷新单每秒同步一次。同步相对而言是比较慢的，因为他需要将数据物理写入到磁盘，所以模式1是最安全的模式（每次提交的事物处理，都确保是写入到磁盘的）。刷新日志到操作系统是为了防止searchd崩溃时数据丢失，如果操作系统没有崩溃则数据可以安全写入到磁盘。模式2是默认的模式。
+#+END_QUOTE
+
+同时sphinx后台会启动flush线程，定期（启发式地）将内存数据刷新到磁盘上生成磁盘索引文件，这样可以避免二进制文件过大并且崩溃恢复时间过长等问题。
+#+BEGIN_QUOTE
+可以通过rt_flush_period指令配置searchd来周期性刷新内存区块到磁盘以解决这个问题。当周期性刷新启用时，searchd会保留一个独立的线程用于检查RT索引的内存区块是否需要写回到磁盘。一旦写回到磁盘，各个二进制日志都可以（能够）安全的删除。
+
+请注意rt_flush_period 仅控制检查发生的频率。但是这并不保证特别是内存区块一定会得到保存。例如，定期重新保存一个巨大的内存区块但是仅更新了寥寥数行是没有任何意义的。searchd守护进程将会通过某些启发式方法判断是否需要真的执行刷新。
+#+END_QUOTE
+
+** Search(检索)
+所有通过SphinxAPI提供的功能都可以通过SphinxQL访问，不过反过来则不行，例如对RT索引的写操作只能通过SphinxQL. 所以比较推荐尽可能使用SphinxQL，同时大部分语言都有MySQL library.SphinxQL详细语法可以看 [[http://www.coreseek.cn/docs/coreseek_4.1-sphinx_2.0.1-beta.html#sphinxql-reference][这里]] . Sphinx提供的检索语法非常强大可以看 [[http://www.coreseek.cn/docs/coreseek_4.1-sphinx_2.0.1-beta.html#searching][这里]].
+
+searchd支持MySQL二进制网络协议，只需要在配置增加一行"listen = localhost:9306:mysql41", 就可以使用MySQL API来进行访问. searchd使用的SphinxSQL仅仅是SQL一个子集，所以可能执行某些SQL语句会出现错误。
+#+BEGIN_EXAMPLE
+➜  ss  mysql -h 127.0.0.1 -P 9306
+Welcome to the MySQL monitor.  Commands end with ; or \g.
+Your MySQL connection id is 1
+Server version: 2.0.4-id64-release (r3135)
+
+Copyright (c) 2000, 2014, Oracle and/or its affiliates. All rights reserved.
+
+Oracle is a registered trademark of Oracle Corporation and/or its
+affiliates. Other names may be trademarks of their respective
+owners.
+
+Type 'help;' or '\h' for help. Type '\c' to clear the current input statement.
+
+mysql> SELECT * FROM rt WHERE MATCH('hello & test');
+Empty set (0.00 sec)
+
+mysql> SELECT * FROM rt WHERE MATCH('hello | test');
++------+--------+------+
+| id   | weight | gid  |
++------+--------+------+
+|    1 |   1571 | 1345 |
+|    2 |   1571 | 1345 |
++------+--------+------+
+2 rows in set (0.00 sec)
+#+END_EXAMPLE
+
+searchd会将所有的查询记录到日志中。查询日志格式有两种：plain和sphinxql. 第一种plain是纯文本格式比较容易阅读但是不容易回放，而第二种sphinxql则是SQL语句格式比较容易进行回放。具体细节可以看 [[http://www.coreseek.cn/docs/coreseek_4.1-sphinx_2.0.1-beta.html#query-log-format][这里]]
+
+sphinx支持分布式搜索，准确地说是将不同机器上的索引在一次查询中聚合起来。分布式搜索是通过定义分布式索引来完成的，不过分布式索引并不是物理索引而是虚拟索引，不过是对本地和远程物理索引的引用，所以它不能执行重新建立索引的操作。如果要重新建立索引的话，需要对被引用到的物理索引单独重建。分布式搜索的大致过程如下：
+1. 连接到远程代理;
+2. 执行查询;
+3. (在远程代理执行搜索的同时)对本地索引进行查询;
+4. 接收来自远程代理的搜索结果;
+5. 将所有结果合并，删除重复项;
+6. 将合并后的结果返回给客户端.
+在应用程序看来，普通索引和分布式索引完全没有区别。 也就是说，分布式索引对应用程序而言是完全透明的，实际上也无需知道查询使用的索引是分布式的还是本地的。任一个searchd实例可以同时做为主控端（master，对搜索结果做聚合）和从属端（只做本地搜索）。这有如下几点好处：
+- 集群中的每台机器都可以做为主控端来搜索整个集群，搜索请求可以在主控端之间获得负载平衡，相当于实现了一种HA（high availability，高可用性），可以应对某个节点失效的情况。
+- 如果在单台多CPU或多核机器上使用，一个做为代理对本机进行搜索的searchd实例就可以利用到全部的CPU或者核。
+
+配置分布式索引非常容易，只需要指定哪些机器上host了哪些index就可以。
+#+BEGIN_EXAMPLE
+# distributed index example
+#
+# this is a virtual index which can NOT be directly indexed,
+# and only contains references to other local and/or remote indexes
+index dist1
+{
+	# 'distributed' index type MUST be specified
+	type			= distributed
+
+	# local index to be searched
+	# there can be many local indexes configured
+	local			= rt
+	# local			= test1stemmed
+
+	# remote agent
+	# multiple remote agents may be specified
+	# syntax for TCP connections is 'hostname:port:index1,[index2[,...]]'
+	# syntax for local UNIX connections is '/path/to/socket:index1,[index2[,...]]'
+	agent			= localhost:9313:rt
+	# agent			= localhost:9314:remote2,remote3
+	# agent			= /var/run/searchd.sock:remote4
+
+	# blackhole remote agent, for debugging/testing
+	# network errors and search results will be ignored
+	#
+	# agent_blackhole		= testbox:9312:testindex1,testindex2
+
+
+	# remote agent connection timeout, milliseconds
+	# optional, default is 1000 ms, ie. 1 sec
+	agent_connect_timeout	= 1000
+
+	# remote agent query timeout, milliseconds
+	# optional, default is 3000 ms, ie. 3 sec
+	agent_query_timeout	= 3000
+}
+#+END_EXAMPLE
+** Practices
+*** Sphinx in action
+http://www.ivinco.com/blog/tag/sphinx-in-action/
+
+*** real-time-fulltext-search-with-sphinx
+http://www.slideshare.net/AdrianNuta1/real-time-fulltext-search-with-sphinx 给了许多使用例子
+
+- OPTIMIZE INDEX rt # 将所有disk shards合并称为一个shard. 这个合并过程可以通过参数rt_merge_iops/rt_merge_maxiosize来控制IO。
+- ATTACH INDEX classic TO RTINDEX rt # 将磁盘索引变为实时索引，实际内部操作就是重命名文件，所以耗时很短。also see [[http://www.ivinco.com/blog/converting-sphinx-original-indexes-to-real-time-indexes/][here]].
+
+*** Realtime Index Performance Basics
+http://sphinxsearch.com/blog/2014/02/12/rt_performance_basics/ RT索引性能调优
+
+- 即使是经过optimized之后的RT index, 性能也不一定超过plain index. 这是因为RT index通常需要读取RAM chunk以及disk chunk(优化之后只有一个)然后做merge. 解决这个问题的办法就是定时使用"FLUSH RAMCHUNK rtindex"将RAM chunk刷到磁盘上，然后执行"OPTIMIZE INDEX rtindex"将多个disk shards合并称为一个disk chunk. 相当于将RT index变为plain index.
+- 在实践中还可以使用RT index作为delta index, 而使用plain index作为main index. 每天进行一次合并。在合并时候可以使用indexer的选项--merge-dst-range可以指定合并索引的范围，完成之后使用"TRUNCATE RTINDEX rtindex"来删除delta index. #note: 不过感觉这个操作似乎需要停止delta index写入
+- 批量写入也不是越多越好，文章中测试出大约在~100-1000左右是比较好的，QPS基本上是在plain index一半。RAM chunk大小也会轻微地影响插入效率。RT index可以通过多线程插入来使得QPS接近plain index的QPS。

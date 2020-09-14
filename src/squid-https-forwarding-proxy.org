@@ -1,0 +1,53 @@
+#+title: 用squid做http/https正向代理
+
+之前用nginx做前向代理，但是发现不支持https的代理。也就是如果`proxies = {'https': 'http://127.0.0.1:64441'}` 是会出现问题的。好像在一个nginx group里面作者也说到不会支持https代理，因为squid已经很好地完成了这件事情。
+
+用squid做https前向代理也不是特别麻烦的事情，虽然默认配置文件中选项很多，但是如果squid是躲在防火墙后面的话，其实只需要下面几行配置就行。
+#+BEGIN_EXAMPLE
+http_access allow all
+http_port 64441
+#+END_EXAMPLE
+
+允许所有的连接，然后代理端口开在64441上。
+
+配置完成后使用requests来试试
+#+BEGIN_EXAMPLE
+In [9]: import requests
+
+In [10]: ss = requests.session()
+
+In [11]: ss.proxies = {'http': 'http://127.0.0.1:64441', 'https':'http://127.0.0.1:64441'}
+
+In [12]: ss.get('http://www.github.com')
+Out[12]: <Response [200]>
+
+In [13]: ss.get('https://www.github.com')
+Out[13]: <Response [200]>
+#+END_EXAMPLE
+
+-----
+UDPATE @ 2016-06-24
+
+此外squid还有一个非常牛的特性, 就是层次代理
+- http://wiki.squid-cache.org/Features/CacheHierarchy
+- http://www.squid-cache.org/Doc/config/cache_peer/
+
+假设我们需要定期地切换代理服务器的话, 一种方式是定期更新代码(或者配置)并且重启.
+另外一种更好的方式是, 本地启动一个squid代理, 而这个代理会将请求转发到其他代理上面.
+然后我们只需要定时更新本地squid代理的配置文件, 然后重启这个本地代理即可. 
+#+BEGIN_EXAMPLE
+http_access allow all
+http_port 64441
+read_timeout 10 seconds
+request_timeout 10 seconds
+
+cache_peer ec2-52-197-85-24.ap-northeast-1.compute.amazonaws.com parent 64441 0 no-query round-robin
+cache_peer ec2-52-69-241-115.ap-northeast-1.compute.amazonaws.com parent 64441 0 no-query round-robin
+cache_peer ec2-52-197-74-230.ap-northeast-1.compute.amazonaws.com parent 64441 0 no-query round-robin
+cache_peer ec2-52-196-170-84.ap-northeast-1.compute.amazonaws.com parent 64441 0 no-query round-robin
+
+never_direct allow all
+#prefer_direct off
+#nonhierarchical_direct off
+#+END_EXAMPLE
+按照上面这个模板文件, 只需要重新生成`cache-peer`这个部分配置就行. aws-ec2支持脚本批量创建和删除ec2实例. 所以这个自动化应该不难做.

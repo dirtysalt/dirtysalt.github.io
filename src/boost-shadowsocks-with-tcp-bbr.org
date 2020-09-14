@@ -1,0 +1,31 @@
+#+title: 通过TCP BBR为ShadowSocks加速
+
+大约一两月之前看到篇 [[https://www.zhihu.com/question/53559433/answer/135903103][知乎文章]] ，说通过将TCP的拥塞控制策略修改成为BBR，传输效率提升了很多。今天突然想到是否可以将这个和shadowsocks一起使用，因为说实话大部分时候没有下载大文件的需求，并且TCP BBR需要在server端打开这个是我们没有办法控制的。但是翻墙是我们每天进行的活动，而且也经常抱怨浏览youtube或者是instagram, 又或者是从Google Play上面安装应用，速度太慢了，而这些shadowsocks正好又是我们自己搭建的，有完全的控制权，所以正好适合实验。
+
+有了这个想法之后，第一个反应是google下看别人是不是已经做过了这件事情。不出所料，除了TCP BBR之外，还有 [[https://github.com/iMeiji/shadowsocks_install][各种各样]] 的 [[https://github.com/iMeiji/shadowsocks_install/wiki/shadowsocks-optimize][加速方案]] 。再次印证了一个道理，你想到的别人已经都想到了，你想做的别人都已经做了。
+虽然有了各种各样的方案，但是我依然想看看TCP BBR的效果。看到这篇 [[https://fiveyellowmice.com/posts/2016/12/bbr-congestion-algorithm-dark-science.html][文章]] 使用 [[https://github.com/sivel/speedtest-cli][speedtest-cli]] 做速度测试。speedtest-cli可以通过连接speedtest.net服务器列表里面的一个服务器来测量上传和下载速度，但是我觉得还是使用知乎文章里面 =curl= 方式来下载一个大文件会更加直观，方便，简单些。
+
+为了让curl可以走shadowsocks, 我们需要一个socks5 wrapper, 于是找到了 [[https://github.com/haad/proxychains][proxychains]] ，这个工具看上去已经停止开发很长时间了，但是好在功能都非常稳定。这个工具的配置文件可以从 =src/proxychains.conf= 直接拿过来作为默认配置，稍作修改就可以使用了。命令跑起来之后，从日志里面看，curl并没有走shadowsocks, google了一下在github上面发现了这个 [[https://github.com/rofl0r/proxychains-ng/issues/84][issue]], Mac OS X自带的curl和proxchains不能工作，只能自己用 =brew install curl= 安装一个rootless的版本。
+
+安装 [[https://github.com/iMeiji/shadowsocks_install/wiki/%E5%BC%80%E5%90%AFTCP-BBR%E6%8B%A5%E5%A1%9E%E6%8E%A7%E5%88%B6%E7%AE%97%E6%B3%95][wiki]] 里面给出的步骤，很快把阿里云上的vps切换到了linux-4.9.7版本。但是同样的步骤，在linode的节点不工作，每次重启之后 =uname -r= 还是之前的内核版本。原来linode可以直接在dashboard里面修改vps的linux kernel version而不用自己去安装，修改之后重启就能生效，实在太方便了。
+
+#+BEGIN_QUOTE
+echo "net.core.default_qdisc=fq" >> /etc/sysctl.conf
+
+echo "net.ipv4.tcp_congestion_control=bbr" >> /etc/sysctl.conf
+
+sysctl -p
+
+sysctl net.ipv4.tcp_available_congestion_control
+
+sysctl net.ipv4.tcp_congestion_control
+#+END_QUOTE
+
+
+下面是对比的结果，升级之前大约下载速度是5KB/s
+
+file:images/shadowsocks-without-tcp-bbr.png
+
+升级之后下载速度到了3MB/s, 效果非常显著
+
+file:images/shadowsocks-with-tcp-bbr.png

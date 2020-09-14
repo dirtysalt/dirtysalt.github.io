@@ -1,0 +1,285 @@
+#+title: scheme
+
+
+links:
+- https://schemers.org/
+- http://www.scheme.com/
+- SICP http://mitpress.mit.edu/sicp/
+- TSPL http://www.scheme.com/tspl4/
+- Daniel P. Friedman http://www.cs.indiana.edu/~dfried/
+- [[ftp://ftp.cs.utexas.edu/pub/garbage/cs345/schintro-v14/schintro_toc.html][An Introduction to Scheme and its Implementation]]
+
+
+** 两种delay/force实现
+
+第一个是使用闭包，第二个使用mcons可变对象。可能可变对象的开销比较小。
+
+#+BEGIN_SRC scheme
+
+;(define (my-delay f)
+;  (let [(x #f)]
+;    (lambda ()
+;      (or x
+;          (begin
+;            (set! x (f))
+;            x)))))
+;
+;(define (my-force f) (f))
+
+(define (my-delay th)
+  (mcons #f th))
+
+;; 还可以使用macro定义好看一些
+;(require compatibility/defmacro)
+;(define-macro (my-delay th)
+;  `(mcons #f (lambda () ,th)))
+
+(define (my-force p)
+  (if (mcar p)
+      (mcdr p)
+      (begin (set-mcar! p #t)
+             (set-mcdr! p ((mcdr p)))
+             (mcdr p))))
+
+
+#+END_SRC
+
+** define-syntax
+
+`define-syntax` 可能是racket语言专有的，感觉功能上比 `define-macro` 要更简单容易使用：
+1. 支持hygienic变量绑定
+2. 可以在一个special form里面定义多种形式
+3. 不用写,和,@, 宏会自动展开表达式
+
+#+BEGIN_SRC scheme
+
+(define-syntax my-delay ; name
+  (syntax-rules () ; keywords
+    ;; special form cases
+    [(my-delay th) (mcons #f (lambda () th))]))
+
+(define-syntax my-if
+  (syntax-rules (then else)
+    [(my-if e1 then e2 else e3) (if e1 e2 e3)]
+    [(my-if e1 then e2) (if e1 e2 #f)]))
+(my-if #t then 20 else 30)
+(my-if #t then 20)
+
+(define-syntax my-double
+  (syntax-rules ()
+    [(my-double e)
+     (let [(x e)]
+       ; hygienic variable bindings
+       ; no need to call (gensym)
+       (+ x x))]))
+(my-double (begin (printf "hello~n") 10))
+
+(define-syntax while
+  (syntax-rules ()
+    [(while e1 e2)
+     (letrec [(loop (lambda ()
+                   (if e1 (begin e2 (loop)) #f)))]
+       (loop))]))
+
+(let [(x 0)]
+  (while (< x 5)
+         (begin
+           (printf "save~n")
+           (set! x (+ x 1)))))
+
+#+END_SRC
+** 重新认识closure
+
+关于closure的一些问题：
+1. closure包含了什么? closure包含了函数定义，以及创建这个函数时的上下文（或者叫做环境）。
+2. 什么时候创建closure? 在函数定义的时候，此时不仅仅需要保存函数定义，还要保存此时的环境。
+3. closure什么时候被调用? 当被call的时候，closure被调用。
+4. closure是如何计算的?
+   - 首先去除closure的函数定义部分，看这个函数有哪些形式参数;
+   - 在当前的环境current-env下面计算相应的实际参数，并且绑定到形式参数上，形成param-bindings;
+   - 然后将param-bindings添加到closure所在环境closure-env上;
+   - 最后在closure-env上面，计算closure的函数体部分。
+
+下面这段代码是 https://www.coursera.org/learn/programming-languages-part-b/ 这么课程的作业，我摘取了代码片段来帮助说明上面这些问题
+
+#+BEGIN_SRC scheme
+(struct fun  (nameopt formal body) #:transparent) ;; a recursive(?) 1-argument function
+(struct call (funexp actual)       #:transparent) ;; function call
+;; a closure is not in "source" programs but /is/ a MUPL value; it is what functions evaluate to
+(struct closure (env fun) #:transparent)
+
+(define (eval-under-env e env)
+  ;; (display "env = ") (print env) (display ", e = ")(print e) (newline)
+  (cond [(var? e)
+         (envlookup env (var-string e))]
+
+         [(fun? e) (closure env e)] ;; 这里仅仅创建closure对象
+
+         [(call? e)
+         (let ([clj (eval-under-env (call-funexp e) env)])
+           (if (closure? clj)
+               (let* ([fn (closure-fun clj)]
+                      [clj-env (closure-env clj)]
+                      ;; 如果是有名称函数的话，在原有的env基础上增加name->clj的绑定
+                      [ext-env (if (fun-nameopt fn) (extend-env (fun-nameopt fn) clj env) env)]
+                      [ext-clj-env (if (fun-nameopt fn) (extend-env (fun-nameopt fn) clj clj-env) clj-env)]
+                      [new-env (extend-env (fun-formal fn)
+                                           ;; 在当前环境下面对实参求值，这个求值也可以使用当前函数
+                                           (eval-under-env (call-actual e) ext-env)
+                                           ;; 绑定到closure的环境上，对body内部求值
+                                           ext-clj-env)])
+                 (eval-under-env (fun-body fn) new-env))
+               (error "MULP call applied to non-closure")))]))
+#+END_SRC
+
+因为closure实现上需要保存环境，如果翻译成为C语言的话，通常需要在函数参数列表最后面增加一个参数 =void *env=. closure在运行效率上没有什么问题，
+所有对于变量的访问都可以转换成为直接内存访问，而不用去在运行时查表找到内存。closure效率问题主要是在空间上，就是如何来保存这个env.
+
+一种比较有效的实现，就是我们不保存整个env, 而是将函数里面所有使用到的外部符号解析出来，然后只保存这些符号映射表。这些外部符号变量称为自由变量(free variables).
+因为每个函数里面通常使用的外部变量不是很多，所以这些符号映射表并不是很大，相对保存整个env可以节省不少空间。
+
+具体实现上，可以分为两步：1. 首先分析整个函数体，分析出这个函数体使用了哪些外部符号(freevars) 2. 在生成代码或者是解释代码阶段，可以给这些freevars生成映射表。
+如果是生成代码的话，还可以计算这个映射表的大小，以及每个变量所在的偏移。
+
+#+BEGIN_SRC scheme
+;; 检查每个表达式中使用了那些变量，并且返回
+;; 在fun这个表达式中，排除掉形参，就是使用fun的freevars.
+(define (compute-free-vars e)
+  (define (C e)
+    (cond [(var? e) (cons e (set-add (set) (var-string e)))]
+
+          [(add? e)
+           (let ([v1 (C (add-e1 e))]
+                 [v2 (C (add-e2 e))])
+             (cons (add (car v1) (car v2)) (set-union (cdr v1) (cdr v2))))]
+
+          [(fun? e)
+           (let* ([name (fun-nameopt e)]
+                  [formal (fun-formal e)]
+                  [v2 (C (fun-body e))]
+                  ;; body里面可以使用name和formal. 所以排除
+                  [vars (set-remove (set-remove (cdr v2) formal) name)])
+             (cons (fun-challenge name formal (car v2) vars) vars))]
+
+          [(mlet? e)
+           (let* ([v1 (C (mlet-e e))]
+                  [v2 (C (mlet-body e))]
+                  ;; e里面不能使用mlet-var，所以不排除
+                  ;; 但是body里面可以使用mlet-var，所以排除
+                  [vars (set-union (cdr v1) (set-remove (cdr v2) (mlet-var e)))])
+             (cons (mlet (mlet-var e) (car v1) (car v2)) vars))])))
+
+(define (create-env-by-vars env vars)
+  (if (set-empty? vars) null
+      (let ([var (set-first vars)])
+        (extend-env var (envlookup env var)
+                    (create-env-by-vars env (set-rest vars))))))
+
+(define (eval-under-env-c e env)
+  ;; (display "env = ") (print env) (display ", e = ")(print e) (newline)
+  (cond [(var? e)
+         (envlookup env (var-string e))]
+
+        [(fun-challenge? e)
+         (let ([new-env (create-env-by-vars env (fun-challenge-freevars e))])
+           (closure new-env e))] ;; 这里仅仅创建closure对象
+
+        [(call? e)
+         (let ([clj (eval-under-env-c (call-funexp e) env)])
+           (if (closure? clj)
+               (let* ([fn (closure-fun clj)]
+                      [clj-env (closure-env clj)]
+                      ;; 如果是有名称函数的话,在原有的env基础上增加name->clj的绑定
+                      [ext-env (if (fun-challenge-nameopt fn) (extend-env (fun-challenge-nameopt fn) clj env) env)]
+                      [ext-clj-env (if (fun-challenge-nameopt fn) (extend-env (fun-challenge-nameopt fn) clj clj-env) clj-env)]
+                      [new-env (extend-env (fun-challenge-formal fn)
+                                           ;; 在当前环境下面对实参求值,这个求值也可以使用当前函数
+                                           (eval-under-env-c (call-actual e) ext-env)
+                                           ;; 绑定到closure的环境上,对body内部求值
+                                           ext-clj-env)])
+                 ;                 (display "call ....") (newline)
+                 ;                 (display "new-env = ") (print new-env) (newline)
+                 ;                 (display "fun-formal = ") (print (fun-formal fn)) (newline)
+                 ;                 (display "call-actual = ") (print (call-actual e)) (newline)
+                 ;                 (display "fun-body = ") (print (fun-body fn)) (newline)
+                 (eval-under-env-c (fun-challenge-body fn) new-env))
+               (error "MULP call applied to non-closure")))]))
+
+#+END_SRC
+** let,let*,letrec
+
+它们之间的差别是，let是一次性绑定，let*则是顺序绑定。letrec是let的扩展，解决递归函数问题，语义上相同用于一次性现将所有的ids创建好。
+
+let和let*之间的差别可以用下面代码说明
+
+#+BEGIN_SRC scheme
+(define x 10)
+
+(let ([x 5]
+      [y (+ x 1)])
+  y) ;; 11
+
+(let* ([x 5]
+      [y (+ x 1)])
+  y) ;; 6
+#+END_SRC
+
+
+那么letrec是如何解决递归问题的呢？这点我在完成 https://www.coursera.org/learn/programming-languages-part-b/ 这么课程的作业在考虑。
+因为这个作业里面需要使用自己定义的MUPL语言来实现curring map. 一种是直接返回函数，一种则是使用mlet绑定匿名函数到变量，然后返回变量。
+
+#+BEGIN_SRC scheme
+
+;;; 使用scheme语言实现curring map.
+(define (my-map-let f)
+  (letrec ([foo (lambda (xs)
+                  (if (null? xs) null
+                      (cons (f (car xs)) (foo (cdr xs)))))])
+    foo))
+
+(define (my-map f)
+  (define (foo xs)
+    (if (null? xs) null
+        (cons (f (car xs)) (foo (cdr xs)))))
+  foo)
+
+;;; 下面MUPL对应版本
+
+(define mupl-map
+  (let ([xs (var "xs")]
+        [fn (var "fn")]
+        [loop (var "loop")])
+    (fun #f "fn"
+         (fun "loop" "xs"
+              (ifaunit xs (aunit)
+                       (apair (call fn (fst xs)) (call loop (snd xs))))))))
+
+(define mupl-map-mlet
+  (let ([xs (var "xs")]
+        [fn (var "fn")]
+        [loop (var "loop")])
+    (fun #f "fn"
+         (mlet "loop"
+               (fun #f "xs"
+                    (ifaunit xs (aunit)
+                             (apair (call fn (fst xs)) (call loop (snd xs)))))
+               loop))))
+#+END_SRC
+
+但是因为MUPL里面的mlet语义其实类似scheme里面的let而不是letrec, 所以在 =(call loop)= 时候会找不到定义。是否可以将mlet实现成为letrec呢？如何实现呢？
+
+我想了想其实是不需要的，MUPL和scheme不同，MUPL可以将 =(fun ...)= 对象赋值，而scheme没有类似 =(let ([x (define (loop ...))]))= 这样的结构。
+上面函数我们稍作修改其实就可以工作了。
+
+#+BEGIN_SRC scheme
+(define mupl-map-mlet
+  (let ([xs (var "xs")]
+        [fn (var "fn")]
+        [loop (var "loop")])
+    (fun #f "fn"
+         (mlet "anything"
+               (fun "loop" "xs"
+                    (ifaunit xs (aunit)
+                             (apair (call fn (fst xs)) (call loop (snd xs)))))
+               (var "anything")))))
+#+END_SRC

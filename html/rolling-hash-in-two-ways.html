@@ -1,0 +1,131 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>rolling hash的两种实现</title>
+<meta name="generator" content="Org mode" />
+<meta name="author" content="dirtysalt" />
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content">
+<h1 class="title">rolling hash的两种实现</h1>
+<p>
+我想以leetcode这道题目来讲讲rolling hash的两种实现 <a href="https://leetcode.com/problems/longest-duplicate-substring/">https://leetcode.com/problems/longest-duplicate-substring/</a>
+</p>
+
+<p>
+这道题目一个关键点是计算rolling hash. 好的hash算法可以使得冲突减少，减少长字符串的比较。
+什么是好的hash算法不太好说，但是我可以举出一个比较差的hash算法如下：
+</p>
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-py-def-class">def</span> <span class="org-function-name">make_hash</span>(s):
+    <span class="org-py-variable-name">h</span> = <span class="org-py-number">0</span>
+    <span class="org-keyword">for</span> c <span class="org-keyword">in</span> s:
+        <span class="org-py-variable-name">v</span> = <span class="org-py-builtins">ord</span>(c) - <span class="org-py-builtins">ord</span>(<span class="org-string">'a'</span>)
+        <span class="org-py-variable-name">h</span> += v
+    <span class="org-keyword">return</span> h
+
+<span class="org-py-def-class">def</span> <span class="org-function-name">add_hash</span>(h, c):
+    <span class="org-keyword">return</span> h + (ord(c) - <span class="org-py-builtins">ord</span>(<span class="org-string">'a'</span>))
+
+<span class="org-py-def-class">def</span> <span class="org-function-name">sub_hash</span>(h, c):
+    <span class="org-keyword">return</span> h - (ord(c) - <span class="org-py-builtins">ord</span>(<span class="org-string">'a'</span>))
+</pre>
+</div>
+<p>
+这个算法只是去考虑字符串中所有字符的和，那么冲突率自然是比较高的，比如"abcd"和"dcba"就会被计算成为一个hash.
+</p>
+
+<hr />
+<p>
+一个简单的改进就是给每个字符应该考虑相应的位置，算法大致如下。这里需要对hash取模，否则字符串太长的话整数会溢出。
+</p>
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-py-def-class">def</span> <span class="org-function-name">make_hash</span>(s):
+    <span class="org-py-variable-name">P</span> = <span class="org-py-number">10000019</span>
+    <span class="org-py-variable-name">h</span> = <span class="org-py-number">0</span>
+    <span class="org-keyword">for</span> c <span class="org-keyword">in</span> s:
+        <span class="org-py-variable-name">h</span> = h * <span class="org-py-number">26</span> + <span class="org-py-builtins">ord</span>(c) - <span class="org-py-builtins">ord</span>(<span class="org-string">'a'</span>)
+        <span class="org-py-variable-name">h</span> = h % P
+    <span class="org-keyword">return</span> h
+</pre>
+</div>
+<p>
+这里有两个选择lsb(least significant bit)和msb(most significant bit). 以"abcd"来说：
+</p>
+<ul class="org-ul">
+<li>lsb意味着 a * (26**3) + b * (26**2) + c * (26**1) + d</li>
+<li>msb意味着 a + b * (26**1) + c * (26**2) + d * (26**3)</li>
+</ul>
+<p>
+乍看下觉得两者差不多，但是在实现rolling的时候差别还是蛮大的。我一开始使用的msb稍微有点麻烦，而lsb则简单得多。
+</p>
+
+<p>
+简单地说下lsb的实现，假设字符串是[x0,x1&#x2026;,xn-1],下一个字符是xn,当前hash值是h
+</p>
+<ul class="org-ul">
+<li>先将x0移出. x0对应的权重是 (26**(n-1)) % P. 所以 h = h - x0 * (26**(n-1)) % P</li>
+<li>然后整体将[x1,&#x2026;xn-1]左移，h = h * 26</li>
+<li>然后将xn移入，h = h + xn</li>
+</ul>
+
+<p>
+msb的实现过程和lsb接近：
+</p>
+<ul class="org-ul">
+<li>先将x0移出, h = (h - x0 + P) % P</li>
+<li>然后整体将[x1,..xn-1]右移, 这里出现问题？？？，肯定不能 h = h // 26</li>
+<li>然后将xn移入， h = h + xn * (26**(n-1))</li>
+</ul>
+<p>
+但是msb的实现在右移这步出现一个问题，h应该如何计算？？？
+</p>
+
+<hr />
+
+<p>
+假设上面右移之后的值是h', 那么有这个等式 (h'*26) % P = h. 问题就在于我们怎么计算出h'.
+这里可以用到 <a href="extended-gcd.html">扩展欧几里得算法</a>, 上面等式其实就是 h'*26+P*u=h.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-py-def-class">def</span> <span class="org-function-name">ext_gcd</span>(a, b, <span class="org-py-variable-name">init_y2</span> = <span class="org-py-number">0</span>):
+    <span class="org-keyword">if</span> <span class="org-py-variable-name">b</span> == <span class="org-py-number">0</span>:
+        <span class="org-keyword">return</span> a, <span class="org-py-number">1</span>, <span class="org-py-number">0</span>
+    <span class="org-py-variable-name">d</span>, <span class="org-py-variable-name">x2</span>, <span class="org-py-variable-name">y2</span> = ext_gcd(b, a % b, init_y2)
+    <span class="org-py-variable-name">x1</span>, <span class="org-py-variable-name">y1</span> = y2, x2 - (a // b) * y2
+    <span class="org-keyword">return</span> d, x1, y1
+
+</pre>
+</div>
+
+<p>
+我们先求得ext_gcd(26, P)=1的解（因为P是素数）"d, x, y = ext_gcd(26, P)"，然后 h' = x*h.
+另外这里x只需要计算一次就行。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-py-variable-name">P</span> = <span class="org-py-number">10000019</span>
+<span class="org-py-variable-name">C</span> = <span class="org-py-number">26</span>
+<span class="org-py-builtins">_</span>, <span class="org-py-variable-name">AX</span>, <span class="org-py-builtins">_</span> = ext_gcd(C, P)
+
+<span class="org-py-def-class">def</span> <span class="org-function-name">add_hash</span>(h, c, exp_sz):
+    <span class="org-py-variable-name">v</span> = <span class="org-py-builtins">ord</span>(c) - <span class="org-py-builtins">ord</span>(<span class="org-string">'a'</span>)
+    <span class="org-py-variable-name">h</span> = h + (v * exp_sz) % P
+    <span class="org-py-variable-name">h</span> = h % P
+    <span class="org-keyword">return</span> h
+
+<span class="org-py-def-class">def</span> <span class="org-function-name">sub_hash</span>(h, c):
+    <span class="org-py-variable-name">v</span> = <span class="org-py-builtins">ord</span>(c) - <span class="org-py-builtins">ord</span>(<span class="org-string">'a'</span>)
+    <span class="org-py-variable-name">h</span> = (h - v + P) % P
+    <span class="org-py-variable-name">h</span> = (h * AX) % P
+    <span class="org-keyword">return</span> h
+</pre>
+</div>
+</div>
+</body>
+</html>

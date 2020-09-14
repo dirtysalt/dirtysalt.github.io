@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>gunicorn</title>
+<meta name="generator" content="Org mode" />
+<meta name="author" content="dirtysalt" />
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content">
+<h1 class="title">gunicorn</h1>
+<div id="table-of-contents">
+<h2>Table of Contents</h2>
+<div id="text-table-of-contents">
+<ul>
+<li><a href="#org20e1667">1. Design</a></li>
+<li><a href="#orgab59f78">2. Settings</a></li>
+</ul>
+</div>
+</div>
+<p>
+<a href="http://docs.gunicorn.org/en/latest/index.html">http://docs.gunicorn.org/en/latest/index.html</a>
+</p>
+
+<div id="outline-container-org20e1667" class="outline-2">
+<h2 id="org20e1667"><span class="section-number-2">1</span> Design</h2>
+<div class="outline-text-2" id="text-1">
+<p>
+设计上gunicorn和 <a href="nginx.html">nginx</a> 很类似，一个master process和多个worker process. master做绑定端口，监控worker的工作，<a href="http://docs.gunicorn.org/en/latest/signals.html">管理配置和热升级</a> 等，worker来接受连接以及处理连接。
+</p>
+
+<p>
+worker有下面几种可选实现，不过对于用户来说是完全透明的
+</p>
+<ul class="org-ul">
+<li>sync worker # 每个进程同时只处理一个请求</li>
+<li>thread worker # 通过在一个进程里面开辟多个线程来响应多个请求. 对应gthread.py</li>
+<li>greenlet worker # 没有使用python原生线程而是使用eventlet或是gevent协程来响应多个请求，对应geventlet.py和ggevent.py</li>
+<li>tornado worker # <a href="http://www.tornadoweb.org/en/stable/">tornao</a> 提供的asyncio worker, 对应gtornado.py</li>
+<li>aiohttp # <a href="https://github.com/KeepSafe/aiohttp">aiohttp</a> 提供的asyncio worker, 对应gaiohttp.py</li>
+</ul>
+<p>
+thread worker处理请求同时受限于thread number以及max connections, 后面几种实现不受限于thread number仅受限于max connections.
+</p>
+
+<p>
+不过确切地来说，worker选择也不是对用户完全透明的，因为为了效率用户代码也要考虑在阻塞性上尽量和worker不冲突。比如使用greenlet worker但是用户逻辑里面来个后端服务的阻塞式访问，那么greenlet worker就回退到sync worker/thread worker模型了。从这点上说选择thread worker/greenlet worker对用户代码是最友好的，如果选择thread worker那么访问后端服务可以使用阻塞访问，而如何选择greenlet worker则可以利用内置cooperative thread. 为了获得更好性能，gunicorn官方文档还推荐将gunicorn放在 <a href="http://docs.gunicorn.org/en/latest/deploy.html#nginx-configuration">buffering proxy server(比如nginx)</a> 之后，让nginx解析好请求之后交给gunicorn处理。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgab59f78" class="outline-2">
+<h2 id="orgab59f78"><span class="section-number-2">2</span> Settings</h2>
+<div class="outline-text-2" id="text-2">
+<p>
+设置按照优先级排序分别是：命令行，配置文件(python)，框架本身。大部分 <a href="http://docs.gunicorn.org/en/latest/settings.html">设置</a> 比较常规，下面这些设置有点意思：
+</p>
+<ul class="org-ul">
+<li>worker_connections # 单个进程可以同时处理的最大连接数</li>
+<li>max_requests # 单个进程处理最大请求数，超过就会重启，目的是"This is a simple method to help limit the damage of memory leaks"</li>
+<li>max_requests_jitter # 在上面基础上加上random(0, max_requests_jitter)偏差，为了避免所有worker同时重启</li>
+<li>timeout # 单个进程空闲时间超过这个阈值就会重启，可能是为了解决整个worker因为bug挂住导致长时间不响应。</li>
+<li>preload_app # 在master就加载application. 好处是可以加快worker启动速度，但是坏处就是如果代码升级需要将master也重启。</li>
+<li>reload # 代码发生变化就会立即reload. 和preload_app选项冲突，推荐只在开发环境下面使用。</li>
+<li>check_config # 检查配置文件是否正确</li>
+<li>logger_class # 默认使用gunicorn.glogging.Logger.</li>
+<li>statsd_host # 可以向 <a href="https://github.com/etsy/statsd">statsd</a> 汇报服务器性能状况. 具体可以看 <a href="http://docs.gunicorn.org/en/latest/instrumentation.html">这里</a></li>
+<li>Server Hooks # gunicorn定义了一系列hooks允许在各个阶段添加自己代码</li>
+</ul>
+</div>
+</div>
+</div>
+</body>
+</html>

@@ -1,0 +1,58 @@
+#+title: 深入NGINX：我们如何设计它的性能和扩展性
+- http://www.cnbeta.com/articles/402709.htm
+- http://nginx.com/blog/inside-nginx-how-we-designed-for-performance-scale/
+- http://nginx.com/blog/thread-pools-boost-performance-9x/ (从这篇文章上看，nginx也需要使用thread-pool, 来解决某些三方库不支持non-blocking工作方式的问题)
+- [[file:images/nginx-arch.png][nginx architecture]] (1.8M Pic)
+
+*内部架构*
+
+NGINX有一个主进程（master process）（执行特权操作，如读取配置、绑定端口）和一系列工作进程（worker process）和辅助进程（helper process）。
+
+file:images/nginx-process-model.png
+
+这个四核服务器内，NGINX主进程创建了4个工作进程和2个缓存辅助进程（cachehelper processes）来管理磁盘内容缓存（on-disk content cache）。
+
+#+BEGIN_EXAMPLE
+# service nginx restart
+# ps -ef --forest | grep nginx
+root     32475     1  0 13:36 ?        00:00:00 nginx: master process /usr/sbin/nginx \
+                                                -c /etc/nginx/nginx.conf
+nginx    32476 32475  0 13:36 ?        00:00:00  \_ nginx: worker process
+nginx    32477 32475  0 13:36 ?        00:00:00  \_ nginx: worker process
+nginx    32479 32475  0 13:36 ?        00:00:00  \_ nginx: worker process
+nginx    32480 32475  0 13:36 ?        00:00:00  \_ nginx: worker process
+nginx    32481 32475  0 13:36 ?        00:00:00  \_ nginx: cache manager process
+nginx    32482 32475  0 13:36 ?        00:00:00  \_ nginx: cache loader process
+#+END_EXAMPLE
+
+NGINX使用一个了可预见式的（predictable）进程模型，调度可用的硬件资源：
+- 主进程执行特权操作，如读取配置和绑定端口，还负责创建子进程(下面的三种类型)。
+- 缓存加载进程（cache loader process）在启动时运行，把基于磁盘的缓存（disk-based cache）加载到内存中，然后退出。对它的调度很谨慎，所以其资源需求很低。
+- 缓存管理进程（cache manager process）周期性运行，并削减磁盘缓存（prunes entries from the disk caches），以使其保持在配置范围内。
+- 工作进程（worker processes）才是执行所有实际任务的进程：处理网络连接、读取和写入内容到磁盘，与上游服务器通信等。
+多数情况下，NGINX建议每1个CPU核心都运行1个工作进程，使硬件资源得到最有效的利用。你可以在配置中设置如下指令： worker_processes auto. 当NGINX服务器在运行时，只有工作进程在忙碌。每个工作进程都以非阻塞的方式处理多个连接，以消减上下文切换的开销。 每个工作进程都是单线程且独立运行的，抓取并处理新的连接。进程间通过共享内存的方式，来共享缓存数据、会话持久性数据（session persistence data）和其他共享资源。
+
+每个工作进程都有listening socket(使用SO_REUSEPORT). 内部使用事件驱动模型，用状态机来管理每个连接状态。
+
+file:images/nginx-worker-process.png
+
+状态机除了解析请求之外，还包括其他很多组件处理。
+
+file:images/nginx-state-machine.png
+
+NGINX的规模可以很好地支持每个工作进程上数以万计的连接。每个新连接都会创建另一个文件描述符，并消耗工作进程中少量的额外内存。每一个连接的额外消耗都很少。NGINX进程可以保持固定的CPU占用率。当没有工作时，上下文切换也较少。
+
+*更新升级*
+
+仅包含少量工作进程的NGINX进程架构，使得配置、甚至是二进制文件本身的更新都非常高效。
+
+更新NGINX的配置，是一个非常简单的、轻量级的、可靠的操作。运行nginx -s reload命令即可，该命令会检查磁盘上的配置，并给主进程发送一个SIGHUP信号。当主进程接收到SIGHUP信号后，会做两件事：
+- 重新加载配置，fork一套新的工作进程。这些新的工作进程会立即开始接受连接和处理流量（traffic）（使用新的配置）。
+- 发出信号，通知旧的工作进程安静地退出。这些旧进程不会再接受新的连接了。只要它们处理的HTTP请求结束了，它们就会干净地关闭连接。一旦所有的连接都被关闭，工作进程也就退出了。
+这个过程会导致CPU占用率和内存使用的一个小高峰，但相比于从活动连接中加载资源，这个小高峰可忽略不计。你可以在一秒内重新加载配置多次。极少情况下，一代又一代工作进程等待连接关闭时会出现问题，但即便出现问题，它们也会被立即解决掉。
+
+file:images/nginx-update-configuration.png
+
+NGINX的二进制升级过程更加神奇——你可以飞速地升级NGINX本身，服务器不会有任何的丢连接、宕机、或服务中断等情况。二进制升级过程与配置更新相似。新的NGINX主进程与原来的主进程并行，它们共享监听套接字。两个进程都是活跃的（active），它们各自的工作进程处理各自的流量（traffic）。然后，你可以通知旧的主进程与其工作进程完美退出。
+
+file:images/nginx-update-binary.png

@@ -1,0 +1,167 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Processing a Trillion Cells per Mouse Click</title>
+<meta name="generator" content="Org mode" />
+<meta name="author" content="dirtysalt" />
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content">
+<h1 class="title">Processing a Trillion Cells per Mouse Click</h1>
+<div id="table-of-contents">
+<h2>Table of Contents</h2>
+<div id="text-table-of-contents">
+<ul>
+<li><a href="#org31d7f91">1. Abstract</a></li>
+<li><a href="#orga8133e0">2. Introduction</a></li>
+<li><a href="#org4d1ce13">3. Basic Approach</a></li>
+<li><a href="#orga9bc09e">4. Key Optimizations</a></li>
+<li><a href="#org1df234a">5. Distributed Execution</a></li>
+<li><a href="#org53b005a">6. Extensions</a></li>
+<li><a href="#org1e42ce2">7. Performance in Production</a></li>
+<li><a href="#orgfea1691">8. Conclusions</a></li>
+</ul>
+</div>
+</div>
+<p>
+<a href="http://vldb.org/pvldb/vol5/p1436_alexanderhall_vldb2012.pdf">http://vldb.org/pvldb/vol5/p1436_alexanderhall_vldb2012.pdf</a> @ 2012
+</p>
+
+<div id="outline-container-org31d7f91" class="outline-2">
+<h2 id="org31d7f91"><span class="section-number-2">1</span> Abstract</h2>
+</div>
+<div id="outline-container-orga8133e0" class="outline-2">
+<h2 id="orga8133e0"><span class="section-number-2">2</span> Introduction</h2>
+<div class="outline-text-2" id="text-2">
+<p>
+#note: 相对于 <a href="dremel.html">Dremel</a> 来说, PowerDrill针对更小的数据量但是需要达到更加及时的响应. <a href="dremel.html">Dremel</a> 是用来作为内部数据仓库使用的, 响应时间在1~2min, 而PowerDrill则是用来对外服务的(比如GA), 响应时间在~10s.
+</p>
+</div>
+</div>
+
+<div id="outline-container-org4d1ce13" class="outline-2">
+<h2 id="org4d1ce13"><span class="section-number-2">3</span> Basic Approach</h2>
+<div class="outline-text-2" id="text-3">
+<p>
+As mentioned previously, the main advantage column-stores have over traditional row-wise storage, is that only a fraction of the data needs to be accessed when process-ing typical queries (accessing often only ten or less out of thousands of columns). Another important benefit is that columns compress better and therefore reduce the I/O and main memory usage. # 列式存储优势: 减少查询数据. 提高压缩比率, 进而减少IO和内存使用.
+</p>
+
+<p>
+A common characteristic of these system is that they are in most cases highly optimized for efficient full scans of data. In data mining use cases, such as ours, the queries are too diverse for traditional indices being used effectively. The where clause can be free form, allowing to restrict on arbi-trary dimensions or even computated values (e.g., all web-searches that contain the term “cat”). As a rule of thumb, even in large database systems if more than a certain, often small percentage of the data is touched, a full scan is performed as opposed to using any indices. The obvious benefits being less random access I/O, simpler, easier to optimize inner loops, and very good cache local-ity. # 同时这些列式存储系统需要非常高效实现full-scan, 一个是因为传统索引可能比较稀疏, 另外一个是因为查询字段请求可以是任意form. 比如字段A包含"XXX", 这个很难通过有效的索引方式解决. 并且full-scan对于磁盘IO以及cache-locality更加友好.
+</p>
+
+<p>
+The logical next step is to try to combine the benefits of an index data-structure (making it possible to skip data) with the power of full scans. This can be achieved by splitting the data into chunks during import and providing data-structures to quickly decide which chunks can be skipped at query processing time. # power-drill本质是列式存储, 同时通过partition分出多个chunk来减少full-scan的代价.
+</p>
+
+<hr />
+
+<p>
+Partitioning the Data
+</p>
+
+<p>
+Most modern database systems provide multiple options for partitioning tables, see (28) for an overview. In our case we perform a "composite range partitioning" (28) to split the data into chunks during the import.  # 使用composite-range-partitioning方法来完成split.
+</p>
+
+<p>
+Put simply, the user chooses an ordered set of fields which are used to split the data iteratively into smaller and smaller chunks. At the start the data is seen as one large chunk. Suc-cessively, the largest chunk is split into two (ideally evenly balanced) chunks. For such a split the chosen fields are con-sidered in the given order. The first field with at least two remaining distinct values is used to essentially do a range split, i.e., a set of ranges are chosen for the field which de-termine the first and the second chunk. The iteration is stopped once no chunk with more rows than a given thresh-old, e.g., 50’000, exists. # 开始只有一个chunk然后不断分裂. 因为我们有an ordered set of fields可供选择, 但是使用first field来确定是否需要split. 保持每个chunk的行数在50k. #note: 应该和bigtable/hbase分裂方案类似.
+</p>
+
+<p>
+Principally, any other technique of splitting up the data would work as well. In the production system the data is also pre-split into shards as a first step." 分裂技术选择其实没有太大影响. 实际生产中也会预先分片而不是这种惰性分片.
+</p>
+
+<hr />
+
+<p>
+Basic Data-Structures
+</p>
+
+<p>
+数据结构是这样的:
+</p>
+<ul class="org-ul">
+<li>global_dict: 有序地存储列上面所有可能值并且分配global_id.</li>
+<li>chunk#idx: 按照first field分裂出来的一个数据单元块. 作用是可以有效地减少full-scan所touch的数据量.
+<ul class="org-ul">
+<li>chunk_dict: # chunk_id &lt;-&gt; global_id 映射(global_id有序). 增加这个映射有两个好处:
+<ul class="org-ul">
+<li>能够迅速了解当前chunk所有出现过的values.</li>
+<li>将global_id映射成为值范围更小的chunk_id可以提高elements压缩比率.</li>
+</ul></li>
+<li>elements:  # 和rows顺序相同. 表明这个row上的field对应的chunk_id.</li>
+<li>rows: # 整行的完整数据. 每个chunk应该只有一份. 这个数据应该存储在磁盘上.</li>
+</ul></li>
+</ul>
+<p>
+除了rows这个部分, 其他所有数据应该都是存储在内存里面的.
+</p>
+
+
+<div class="figure">
+<p><img src="images/power-drill-illustration.png" alt="power-drill-illustration.png" />
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orga9bc09e" class="outline-2">
+<h2 id="orga9bc09e"><span class="section-number-2">4</span> Key Optimizations</h2>
+<div class="outline-text-2" id="text-4">
+<p>
+减少memory_footprint, 这样系统可以将更多的chunk_metadata放入内存.
+</p>
+<ul class="org-ul">
+<li>Partitioning the Data into Chunks.</li>
+<li>Optimize Encoding of Elements in Columns.</li>
+<li>Optimize Global-Dictionaries. # keys have long common prefixes -&gt; handcrafted trie tree.</li>
+<li>Generic Compression Algorithm. # <a href="snappy.html">Snappy</a> 来压缩不常用的chunk部分.</li>
+<li>Reordering Rows.</li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-org1df234a" class="outline-2">
+<h2 id="org1df234a"><span class="section-number-2">5</span> Distributed Execution</h2>
+</div>
+<div id="outline-container-org53b005a" class="outline-2">
+<h2 id="org53b005a"><span class="section-number-2">6</span> Extensions</h2>
+</div>
+<div id="outline-container-org1e42ce2" class="outline-2">
+<h2 id="org1e42ce2"><span class="section-number-2">7</span> Performance in Production</h2>
+<div class="outline-text-2" id="text-7">
+<p>
+Our productionized system is running on well over 1000 machines, the distributed servers altogether using over 4T of main memory. # 1k节点, 4T内存.
+</p>
+
+<p>
+In a typical use case, a user triggers about 20 SQL queries with a single mouse click in the UI. On average these queries process data corresponsing to 782 billion cells from the un-derlying table in 30–40 seconds; under 2 seconds per query. An individual server on average spends less than 70 millisec-onds on a sub-query. These measurements and those given below are collected over all queries processed during the last three months of 2011. # 平均一个请求20 SQL queries, 30~40s处理完成, 每个请求时间在2s左右, 每个服务器上sub-query时间在70ms.
+</p>
+
+<p>
+On average 92.41% of underlying records were skipped and 5.02% served from cached results, leaving only 2.66% to be scanned. # no. of records. 92.41%没有被touch, 5.02%直接被load(比如chunk所有rows都满足条件), 2.66%被scan.
+</p>
+
+<p>
+Another interesting question to ask is how many queries could be answered from data-structures which were in mem-ory. On average over 70% of the queries do not need to ac-cess any data from disk. They have an average latency of 25 seconds. 96.5% of the queries access only 1 GB or less (cumulative over all servers) of data on disk. The average latency naturally increases with the amount of data which needs to be read from disk into memory. # 70%请求不需要接触磁盘, 96.5%请求数据量在1GB以下. 平均影响时间在25s.
+</p>
+
+
+<div class="figure">
+<p><img src="images/power-drill-latency.png" alt="power-drill-latency.png" />
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgfea1691" class="outline-2">
+<h2 id="orgfea1691"><span class="section-number-2">8</span> Conclusions</h2>
+</div>
+</div>
+</body>
+</html>

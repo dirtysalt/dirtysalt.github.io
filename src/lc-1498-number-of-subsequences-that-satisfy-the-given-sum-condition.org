@@ -1,0 +1,69 @@
+#+title: 1498. Number of Subsequences That Satisfy the Given Sum Condition
+
+https://leetcode.com/problems/number-of-subsequences-that-satisfy-the-given-sum-condition/
+
+第一次看到这题时，直觉告诉我觉得肯定不能对 =nums= 做排序。通常子序列的问题涉及到元素顺序，一般是不会对输入数据做排序的。
+
+我最开始的想法是这样的：
+- 从左向右遍历 =nums= 数组，假设nums[i] = x
+- 假设子序列中包含x，并且x是最大值，那么我们只需要知道在nums[:i]这个数组内：
+  - 有a个元素，它的值小于等于x，并且小于等于target-x
+  - 有b个元素，它的值小于等于x，但是大于target-x
+- 假设a个元素是有序的
+  - 挑选a[0], 然后a[1..], b 可以任意挑选，那么值就是 2^(a+b-1)
+  - 挑选a[1], 然后a[2..], b 可以任意挑选，那么值就是 2^(a+b-2)
+  - ... 直到a[-1], 那么b可以任意挑选，那么值就是 2^0
+- 所以总数是 2^(a+b-1) + ... 2^0 = 2^b * (2 ^a - 1) = 2^(a+b) - 2^b.
+- 最上面查询操作其实可以归纳成为一个操作 =query(value)= ：“查询多少个元素小于等于value”
+  - 我们先查询 c=query(x)
+  - 然后在查询 a=query(min(x, target-x))
+  - 那么 b=c-a. 我们只需要实现一个查询操作就行。
+
+我觉得这个想法非常巧妙，不过可惜是错误的，因为x可能作为最小值存在。当然可以再上面那个算法的基础上稍加修补，不过代码就会很复杂。
+另外查询的时间复杂度也会比较高，最坏情况下面会是O(n).
+
+----------
+
+仔细想想，其实完全可以对 =nums= 做排序，然后使用双指针i, j来遍历：
+- 头指针nums[i]就是可能的最小值，尾指针nums[j]就是可能的最大值
+- 遍历期间确保 nums[i] + nums[j] <= target. 如果大于target的话，那么j--.
+- 假设 nums[i] + nums[j] <= target. 我们分析一下可能的子序列数量，最小值始终是nums[i]
+  - 假设最大值是nums[j], 那么中间nums[i+1 .. j-1]元素都是可选的，那么数量有 2^(j-i-1)
+  - 假设最大值是nums[j-1], 那么中间nums[i+1 .. j-2]元素都是可选的，那么数量有 2^(j-i-2)
+  - 所以总数是 2^(j-i-1) + 2^(j-i-2) + .. 2^0 = 2^(j-i) - 1
+
+除此之外还有一个特殊情况，就是最大值和最小值都是一个元素。这种情况不能纳入到上面的计算过程中(2^(j-i) - 1 = 0)，所以需要单独处理。
+
+#+BEGIN_SRC python
+    def numSubseq(self, nums: List[int], target: int) -> int:
+        def pow(x, mod):
+            ans = 1
+            base = 2
+            while x:
+                if x % 2 == 1:
+                    ans = (ans * base) % mod
+                base = (base * base) % mod
+                x = x >> 1
+            return ans
+
+        MOD = 10 ** 9 + 7
+
+        nums.sort()
+        i, j = 0, len(nums) - 1
+        ans = 0
+        while i < j:
+            if nums[i] + nums[j] > target:
+                j -= 1
+                continue
+            d = pow(j-i ,MOD)
+            ans = (ans + d - 1 + MOD) % MOD
+            i += 1
+
+        for x in nums:
+            if 2 * x <= target:
+                ans = (ans + 1) % MOD
+            else:
+                break
+
+        return ans
+#+END_SRC

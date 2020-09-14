@@ -1,0 +1,89 @@
+#+title: nginx日志解析器优化
+
+过去很长一段时间，我们在用 [[https://github.com/lebinh/ngxtop][ngxtop]] 这个模块里面的log parser对nginx日志进行分析。但是很快发现，
+这个解析器的效率不行，正好组里面一位同学学习Go语言，所以用go语言重写了一版，效率提高了接近10倍。
+
+今天我重新回顾一下这个问题，看看是否可以优化，或者说看看python版本的瓶颈在什么地方。那位同学Go
+语言版本使用的是 [[https://github.com/satyrius/gonx][gonx]] 这个库。我上去看了一下代码，好像和 ngxtop 思路一样，都是根据log_format
+生成正则表达式，然后对日志进行匹配和解析。
+
+我对原来日志解析器进行profiling, 发现大部分时间都还是在正则表达式匹配上。如果是这样的话，那么
+python版本和Go版本性能应该没有这么大的差异才对。在浏览 gonx 文档的时候突然发现下面这段话
+
+#+BEGIN_EXAMPLE
+Format is nginx-like, here is example
+
+`$remote_addr [$time_local] "$request"`
+
+It should contain variables in form $name. The regular expression will be
+created using this string format representation
+
+`^(?P<remote_addr>[^ ]+) \[(?P<time_local>[^]]+)\] "(?P<request>[^"]+)"$`
+#+END_EXAMPLE
+
+在匹配每个variable的时候，正则表达式会根据末尾的字符进行阶段，这应该是很显然的逻辑。比如
+对于上面的 [$time_local], 因为这个变量末尾是], 那么正则可以写成 [^]].
+
+--------------------
+
+回过头来看 ngxtop 生成的正则表达式是有问题的。对于下面这个log_format,
+ngxtop生成的正则表达式是，可以看到没有使用结束符进行优化
+
+#+BEGIN_EXAMPLE
+"$remote_addr - - [$time_local] \"$host\" \"$request\" $status $body_bytes_sent \"$http_referer\"
+ \"$http_user_agent\" \"$http_x_forwarded_for\" \"$upstream_response_time\" \"$request_time\""
+
+(?P<remote_addr>.*) - - \[(?P<time_local>.*)\] "(?P<host>.*)" "(?P<request>.*)" (?P<status>.*) (?P<body_bytes_sent>.*)
+ "(?P<http_referer>.*)" "(?P<http_user_agent>.*)" "(?P<http_x_forwarded_for>.*)" "(?P<upstream_response_time>.*)" "(?P<request_time>.*)"
+#+END_EXAMPLE
+
+如果使用这个版本分析 7w 条nginx日志的话花费差不多9s.
+#+BEGIN_EXAMPLE
+➜  workspace python ngx_log_parser.py
+py 8.90 secs
+#+END_EXAMPLE
+
+我按照gonx的思路重新生成了正则表达式之后，上面log_format生成的正则如下
+#+BEGIN_EXAMPLE
+^(?P<remote_addr>[^ ]*)\ \-\ \-\ \[(?P<time_local>[^]]*)\]\ \"(?P<host>[^"]*)\"\ \"(?P<request>[^"]*)\"\ (?P<status>[^ ]*)\
+(?P<body_bytes_sent>[^ ]*)\ \"(?P<http_referer>[^"]*)\"\ \"(?P<http_user_agent>[^"]*)\"\ \"(?P<http_x_forwarded_for>[^"]*)\"
+\ \"(?P<upstream_response_time>[^"]*)\"\ \"(?P<request_time>[^"]*)\"$
+#+END_EXAMPLE
+
+使用这个版本分析的话，花费时间和Go语言版本差不多，都在1s左右。Great !!!
+#+BEGIN_EXAMPLE
+➜  workspace python ngx_log_parser.py
+go 1.20 secs
+py 1.12 secs
+#+END_EXAMPLE
+
+-----
+附带上生成正则表达式的代码 [[file:codes/py/misc/ngx_log_parser.py][Implementation]]
+
+#+BEGIN_SRC Python
+def custom_build_pattern(log_format):
+    buf = '^'
+    var_name = ''
+    var_mode = False
+    for c in log_format:
+        if c == '$':
+            var_mode = True
+        elif c in string.ascii_letters or c in string.digits or c in '_':
+            if var_mode:
+                var_name += c
+            else:
+                buf += '\{}'.format(c)
+        else:
+            if var_mode:
+                buf += '(?P<{}>[^{}]*)\{}'.format(var_name, c, c)
+                var_mode = False
+                var_name = ''
+            else:
+                buf += '\{}'.format(c)
+    if var_mode:
+        buf += '(?P<{}>[^$]*)'.format(var_name)
+        var_mode = False
+        var_name = ''
+    buf += '$'
+    return buf
+#+END_SRC

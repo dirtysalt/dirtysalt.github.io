@@ -1,0 +1,245 @@
+#+title: Hadoop Benchmark
+
+- [[http://www.michael-noll.com/blog/2011/04/09/benchmarking-and-stress-testing-an-hadoop-cluster-with-terasort-testdfsio-nnbench-mrbench/][Benchmarking and Stress Testing an Hadoop Cluster with TeraSort, TestDFSIO & Co]]
+- intel-hadoop/HiBench · GitHub https://github.com/intel-hadoop/HiBench
+- HBase Performance Testing at hstack http://hstack.org/hbase-performance-testing/
+- [[http://sujee.net/tech/articles/hadoop/hbase-performance-testing/][Performance testing / Benchmarking a HBase cluster]]
+- [[http://blog.lars-francke.de/2010/08/16/performance-testing-hbase-using-ycsb/][new Put("lars".toBytes("UTF-8")) : Performance testing HBase using YCSB]]
+- [[http://wiki.apache.org/hadoop/Hbase/PerformanceEvaluation][Hbase/PerformanceEvaluation]]
+
+** TestDFSIO
+测试hdfs吞吐
+
+#+BEGIN_EXAMPLE
+hdfs@hadoop1:~$ hadoop jar /usr/lib/hadoop/hadoop-test-0.20.2-cdh3u3.jar TestDFSIO
+Usage: TestDFSIO [genericOptions] -read | -write | -append | -clean [-nrFiles N] [-fileSize Size[B|KB|MB|GB|TB]] [-resFile resultFileName] [-bufferSize Bytes] [-rootDir]%
+#+END_EXAMPLE
+- read / write / append / clean 操作类型 *append和write执行效率差别不大，但是write会创建新文件所以使用比较方便* (default read)
+- nrFiles 文件数目(default 1) *启动相同数量的map*
+- fileSize 每个文件大小(1MB)
+- resFile 结果报告文件(TestDFSIO_results.log)
+- bufferSize write buffer size(单次write写入大小）（1000000 bytes)
+- rootDir 操作文件根目录（/benchmarks/TestDFSIO/）
+
+#+BEGIN_EXAMPLE
+----- TestDFSIO ----- : write
+           Date & time: Thu Apr 25 19:14:21 CST 2013
+       Number of files: 2
+Total MBytes processed: 2.0
+     Throughput mb/sec: 7.575757575757576
+Average IO rate mb/sec: 7.61113977432251
+ IO rate std deviation: 0.5189420757292891
+    Test exec time sec: 14.565
+
+----- TestDFSIO ----- : read
+           Date & time: Thu Apr 25 19:15:13 CST 2013
+       Number of files: 2
+Total MBytes processed: 2.0
+     Throughput mb/sec: 27.77777777777778
+Average IO rate mb/sec: 28.125
+ IO rate std deviation: 3.125
+    Test exec time sec: 14.664
+#+END_EXAMPLE
+
+- throughtput = sum(filesize) / sum(time)
+- avaerage io rate = sum(filesize/time) / n
+- io rate std deviation
+
+** TeraSort
+通过排序测试MR执行效率 *我看了一下代码map/reduce都有CPU操作，并且这个也非常依靠shuffle/copy.因此这个测试应该会是比较全面的*
+
+#+BEGIN_EXAMPLE
+hdfs@hadoop1:~$ hadoop jar /usr/lib/hadoop/hadoop-examples-0.20.2-cdh3u3.jar <command>
+#+END_EXAMPLE
+- teragen 产生排序数据
+  - <number of 100-byte rows>
+    - 10 bytes key(random characters)
+    - 10 bytes rowid(right justified row id as a int)
+    - 78 bytes filler
+    - \r\n
+  - <output dir>
+- terasort 对数据排序
+  - <input dir>
+  - <output dir>
+- teravalidate 对排序数据做验证
+
+可以使用hadoop job -history all <job-output-dir>来观察程序运行数据，也可以通过web page来分析。
+
+** nnbench
+测试nn负载能力
+
+#+BEGIN_EXAMPLE
+➜  ~HADOOP_HOME  hadoop jar hadoop-test-0.20.2-cdh3u3.jar nnbench
+NameNode Benchmark 0.4
+Usage: nnbench <options>
+Options:
+	-operation <Available operations are create_write open_read rename delete. This option is mandatory>
+	 * NOTE: The open_read, rename and delete operations assume that the files they operate on, are already available. The create_write operation must be run before running the other operations.
+	-maps <number of maps. default is 1. This is not mandatory>
+	-reduces <number of reduces. default is 1. This is not mandatory>
+	-startTime <time to start, given in seconds from the epoch. Make sure this is far enough into the future, so all maps (operations) will start at the same time>. default is launch time + 2 mins. This is not mandatory
+	-blockSize <Block size in bytes. default is 1. This is not mandatory>
+	-bytesToWrite <Bytes to write. default is 0. This is not mandatory>
+	-bytesPerChecksum <Bytes per checksum for the files. default is 1. This is not mandatory>
+	-numberOfFiles <number of files to create. default is 1. This is not mandatory>
+	-replicationFactorPerFile <Replication factor for the files. default is 1. This is not mandatory>
+	-baseDir <base DFS path. default is /becnhmarks/NNBench. This is not mandatory>
+	-readFileAfterOpen <true or false. if true, it reads the file and reports the average time to read. This is valid with the open_read operation. default is false. This is not mandatory>
+	-help: Display the help statement
+#+END_EXAMPLE
+- startTime 作用是为了能够让所有的map同时启动以便对nn造成压力
+
+#+BEGIN_EXAMPLE
+➜  ~HADOOP_HOME  hadoop jar hadoop-test-0.20.2-cdh3u3.jar nnbench -operation create_write -bytesToWrite 0 -numberOfFiles 1200
+➜  ~HADOOP_HOME  hadoop jar hadoop-test-0.20.2-cdh3u3.jar nnbench -operation open_read
+#+END_EXAMPLE
+
+结果报告文件是 NNBench_results.log
+#+BEGIN_EXAMPLE
+-------------- NNBench -------------- :
+                               Version: NameNode Benchmark 0.4
+                           Date & time: 2013-04-25 19:41:02,873
+
+                        Test Operation: create_write
+                            Start time: 2013-04-25 19:40:21,70
+                           Maps to run: 1
+                        Reduces to run: 1
+                    Block Size (bytes): 1
+                        Bytes to write: 0
+                    Bytes per checksum: 1
+                       Number of files: 1200
+                    Replication factor: 1
+            Successful file operations: 1200
+
+        # maps that missed the barrier: 0
+                          # exceptions: 0
+
+               TPS: Create/Write/Close: 75
+Avg exec time (ms): Create/Write/Close: 26.526666666666667
+            Avg Lat (ms): Create/Write: 13.236666666666666
+                   Avg Lat (ms): Close: 13.164166666666667
+
+                 RAW DATA: AL Total #1: 15884
+                 RAW DATA: AL Total #2: 15797
+              RAW DATA: TPS Total (ms): 31832
+       RAW DATA: Longest Map Time (ms): 31832.0
+                   RAW DATA: Late maps: 0
+             RAW DATA: # of exceptions: 0
+
+-------------- NNBench -------------- :
+                               Version: NameNode Benchmark 0.4
+                           Date & time: 2013-04-25 19:44:42,354
+
+                        Test Operation: open_read
+                            Start time: 2013-04-25 19:44:31,921
+                           Maps to run: 1
+                        Reduces to run: 1
+                    Block Size (bytes): 1
+                        Bytes to write: 0
+                    Bytes per checksum: 1
+                       Number of files: 1
+                    Replication factor: 1
+            Successful file operations: 1
+
+        # maps that missed the barrier: 0
+                          # exceptions: 0
+
+                        TPS: Open/Read: 500
+         Avg Exec time (ms): Open/Read: 2.0
+                    Avg Lat (ms): Open: 2.0
+
+                 RAW DATA: AL Total #1: 2
+                 RAW DATA: AL Total #2: 0
+              RAW DATA: TPS Total (ms): 2
+       RAW DATA: Longest Map Time (ms): 2.0
+                   RAW DATA: Late maps: 0
+             RAW DATA: # of exceptions: 0
+#+END_EXAMPLE
+- maps that missed the barrier 从代码上分析是，在等待到start time期间中,如果sleep出现异常的话。
+- exceptions 表示在操作文件系统时候的exception数量
+- TPS transactions per second
+- exec（execution） 执行时间
+- lat（latency） 延迟时间
+- late maps 和 maps missed the barrier是一个概念。
+对于后面RAW DATA部分的话，从代码上看，就是为了计算出上面那些指标的，所以没有必要关注。
+
+** mrbench
+测试运行small mr jobs执行效率，主要关注响应时间。
+
+#+BEGIN_EXAMPLE
+MRBenchmark.0.0.2
+Usage: mrbench [-baseDir <base DFS path for output/input, default is /benchmarks/MRBench>] [-jar <local path to job jar file containing Mapper and Reducer implementations, default is current jar file>] [-numRuns <number of times to run the job, default is 1>] [-maps <number of maps for each run, default is 2>] [-reduces <number of reduces for each run, default is 1>] [-inputLines <number of input lines to generate, default is 1>] [-inputType <type of input to generate, one of ascending (default), descending, random>] [-verbose]
+#+END_EXAMPLE
+- baseDir 输入输出目录
+- jar 通常不需要指定，用默认即可。
+- inputLines 输入条数
+- inputType 输入是否有序
+
+#+BEGIN_EXAMPLE
+hdfs@hadoop1:~$ hadoop jar /usr/lib/hadoop/hadoop-test-0.20.2-cdh3u3.jar mrbench -verbose
+#+END_EXAMPLE
+
+结果直接输出在终端上面，
+#+BEGIN_EXAMPLE
+Total MapReduce jobs executed: 1
+Total lines of data per job: 1
+Maps per job: 2
+Reduces per job: 1
+Total milliseconds for task: 1 = 16452
+DataLines	Maps	Reduces	AvgTime (milliseconds)
+1		2	1	16452
+#+END_EXAMPLE
+可以看到每个任务平均执行时间在16.452s.
+
+** hbase.PerformanceEvaluation
+#+BEGIN_EXAMPLE
+hdfs@hadoop1:~$ hbase org.apache.hadoop.hbase.PerformanceEvaluation
+Usage: java org.apache.hadoop.hbase.PerformanceEvaluation \
+  [--miniCluster] [--nomapred] [--rows=ROWS] <command> <nclients>
+
+Options:
+ miniCluster     Run the test on an HBaseMiniCluster
+ nomapred        Run multiple clients using threads (rather than use mapreduce)
+ rows            Rows each client runs. Default: One million
+ flushCommits    Used to determine if the test should flush the table.  Default: false
+ writeToWAL      Set writeToWAL on puts. Default: True
+
+Command:
+ filterScan      Run scan test using a filter to find a specific row based on it's value (make sure to use --rows=20)
+ randomRead      Run random read test
+ randomSeekScan  Run random seek and scan 100 test
+ randomWrite     Run random write test
+ scan            Run scan test (read every row)
+ scanRange10     Run random seek scan with both start and stop row (max 10 rows)
+ scanRange100    Run random seek scan with both start and stop row (max 100 rows)
+ scanRange1000   Run random seek scan with both start and stop row (max 1000 rows)
+ scanRange10000  Run random seek scan with both start and stop row (max 10000 rows)
+ sequentialRead  Run sequential read test
+ sequentialWrite Run sequential write test
+
+Args:
+ nclients        Integer. Required. Total number of clients (and HRegionServers)
+                 running: 1 <= value <= 500
+Examples:
+ To run a single evaluation client:
+ $ bin/hbase org.apache.hadoop.hbase.PerformanceEvaluation sequentialWrite 1
+
+#+END_EXAMPLE
+从参数上看还是比较直接的。benchmark每个client通常对应10个mapper, 每个client操作<rows>个row,因此每个mapper操作<rows>/10个row,每个row大约1000bytes.
+- filterScan 随机生成value，然后从头开始scan直到equal
+- randomRead 随机选取key读取
+- randomSeekScan 从某个随机位置开始scan最多100个
+- randomWrite 随即生成key写入
+- scan 每次scan 1个row，start随机
+- scan<num> 每次scan num个row，start随机
+- seqRead 顺序地读取每个key
+- seqWrite 顺序地写入每个key
+- #note: 这里的key都非常简单，10个字符的数字，printf("%010d",row)
+
+#+BEGIN_EXAMPLE
+hdfs@hadoop1:~$ time hbase org.apache.hadoop.hbase.PerformanceEvaluation --rows=1000 sequentialWrite 2
+13/04/25 23:47:56 INFO mapred.JobClient:   HBase Performance Evaluation
+13/04/25 23:47:56 INFO mapred.JobClient:     Row count=2000
+13/04/25 23:47:56 INFO mapred.JobClient:     Elapsed time in milliseconds=258
+#+END_EXAMPLE
+输出结果是在counter里面，这里面row count = 2000, 占用时间为258 ms.

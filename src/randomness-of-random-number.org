@@ -1,0 +1,123 @@
+#+title: 随机数的随机性(randomness of random number)
+
+云风有两篇关于随机性的文章，我觉得挺有意思的：
+- [[https://blog.codingnow.com/2007/11/random.html][云风的 BLOG: 随机数有多随机？]]
+- [[https://blog.codingnow.com/2008/04/quasi-random_sequences.html][云风的 BLOG: 不那么随机的随机数列]]
+- [[https://coolshell.cn/articles/8593.html][如何测试洗牌程序 | | 酷 壳 - CoolShell]]
+
+coolshell里面提到的 `fisher_yates` 算法，让我想起了 [[https://www.geeksforgeeks.org/reservoir-sampling/][`reservior sampling`]] 算法，都是一遍下来和交换N-1次，我隐隐地感觉两者之间是有联系的。
+
+先说下第二篇文章里面的一个问题，在N次实验中，连续出现5次正面的概率多大，云风在最后面给了解法：
+- f(N) = f(N-1) * 2 + 2^(N-6) - f(N-6)
+- f(N-1) 表示前面N-1次已经出现了5次正面
+- 剩余的情况就是最近一次出现正面，那么就要求最近4次必须是正面，最近第5次是反面
+- 对于之前的N-6次情况，只要排除不出现连续5次即可，就是2^(N-6) - f(N-6).
+
+然后是关于文章里面可视化随机性的程序，可以在wiki上参考 [[https://zh.wikipedia.org/wiki/PBM%E6%A0%BC%E5%BC%8F][PBM文件格式]], 它同时支持ASCII和二进制，还支持位图/灰度/彩色(RGB)三种格式。
+
+python下面有个 [[https://github.com/fmder/ghalton][fmder/ghalton: Quasi Random Number Generator]] 准随机数生成器，我对比了一下这个生成器和numpy.random的随机性差异。
+
+这里面有个很小的问题，是如何将(0,1)的浮点数映射成为整数。我没有特别好的办法，采用最简单的概率映射：
+- 假设(0,1)的生成浮点数是概率p
+- 将整数范围[a,b)映射成为(b-a)等分，每一等分的概率是1/(b-a)
+- 然后查找概率p对应的整数
+这个查找可以做成二分，但是如果范围比较小的话，就直接搜索吧。
+
+#+BEGIN_SRC python
+def gen_halton_random(low, high, size):
+    unit = 1 / (high - low)
+    pvts = [i * unit for i in range(1, high - low + 1)]
+    pvts[-1] = 1
+
+    def to_int(p):
+        for i in range(len(pvts)):
+            if p <= pvts[i]:
+                return i
+
+    xs = gahlton_gen.get(size)
+    ys = [to_int(p[0]) for p in xs]
+    return ys
+
+#+END_SRC
+
+--------------------
+
+第一个实现是可视化这两个随机数生成器的随机性 [[file:codes/py/misc/random_graph.py][代码]]
+
+第一张图是numpy产生的，第二张图是halton产生的，差异还是蛮明显的
+
+file:images/numpy_random.jpg file:images/halton_random.jpg
+
+为了更好地产生随机数，ghalton可以指定dimension, 因为我们要产生二维图像所以inDim=2.
+
+#+BEGIN_SRC python
+ghalton_gen = ghalton.Halton(inDim=2)
+
+
+def to_int(ps, n):
+    unit = 1 / n
+    pvts = [i * unit for i in range(1, n)]
+    pvts[-1] = 1
+
+    def fx(p):
+        for i in range(len(pvts)):
+            if p <= pvts[i]:
+                return i
+
+    return [fx(p) for p in ps]
+
+
+def gen_halton_random(n, m, size):
+    zs = ghalton_gen.get(size)
+    xs = to_int([p[0] for p in zs], n)
+    ys = to_int([p[1] for p in zs], m)
+    return zip(xs, ys)
+#+END_SRC
+
+--------------------
+
+第二个实现是对两个随机数分布做卡方检验 [[file:codes/py/misc/random_chisqaure.py][代码]]
+- [[https://zh.wikipedia.org/wiki/%E5%8D%A1%E6%96%B9%E6%A3%80%E9%AA%8C][卡方检验 - 维基百科，自由的百科全书]]
+- [[https://zh.wikipedia.org/wiki/%E5%8D%A1%E6%96%B9%E5%88%86%E4%BD%88][卡方分佈 - 维基百科，自由的百科全书]]
+
+下面函数是计算卡方值，deg是自由度
+#+BEGIN_SRC python
+
+def compute_x2(fn, deg, size):
+    n = deg + 1
+    xs = fn(0, n, size)
+    counter = Counter(xs)
+    res = 0
+    for k in range(n):
+        v = counter[k]
+        res += v * v
+    return res * n / size - size
+#+END_SRC
+
+两个随机数生成器得到的卡方值差别也蛮大的，这个准随机数生成器效果就是好。
+
+#+BEGIN_EXAMPLE
+degree = 5, size = 4000
+===== numpy random =====
+[2.378, 2.891, 3.587, 4.142, 4.97, 6.086, 6.743, 8.852, 11.216, 12.473]
+===== halton random =====
+[0.002, 0.002, 0.002, 0.002, 0.002, 0.002, 0.002, 0.008, 0.008, 0.008]
+#+END_EXAMPLE
+
+卡方分布表可以在wiki里面找到
+
+| 自由度k \ p-value |  0.95 | 0.90 | 0.80 | 0.70 | 0.50 |  0.30 |  0.20 |  0.10 |  0.05 |  0.01 | 0.001 |
+|-------------------+-------+------+------+------+------+-------+-------+-------+-------+-------+-------|
+|                 1 | 0.004 | 0.02 | 0.06 | 0.15 | 0.46 |  1.07 |  1.64 |  2.71 |  3.84 |  6.64 | 10.83 |
+|                 2 |  0.10 | 0.21 | 0.45 | 0.71 | 1.39 |  2.41 |  3.22 |  4.60 |  5.99 |  9.21 | 13.82 |
+|                 3 |  0.35 | 0.58 | 1.01 | 1.42 | 2.37 |  3.66 |  4.64 |  6.25 |  7.82 | 11.34 | 16.27 |
+|                 4 |  0.71 | 1.06 | 1.65 | 2.20 | 3.36 |  4.88 |  5.99 |  7.78 |  9.49 | 13.28 | 18.47 |
+|                 5 |  1.14 | 1.61 | 2.34 | 3.00 | 4.35 |  6.06 |  7.29 |  9.24 | 11.07 | 15.09 | 20.52 |
+|                 6 |  1.63 | 2.20 | 3.07 | 3.83 | 5.35 |  7.23 |  8.56 | 10.64 | 12.59 | 16.81 | 22.46 |
+|                 7 |  2.17 | 2.83 | 3.82 | 4.67 | 6.35 |  8.38 |  9.80 | 12.02 | 14.07 | 18.48 | 24.32 |
+|                 8 |  2.73 | 3.49 | 4.59 | 5.53 | 7.34 |  9.52 | 11.03 | 13.36 | 15.51 | 20.09 | 26.12 |
+|                 9 |  3.32 | 4.17 | 5.38 | 6.39 | 8.34 | 10.66 | 12.24 | 14.68 | 16.92 | 21.67 | 27.88 |
+|                10 |  3.94 | 4.86 | 6.18 | 7.27 | 9.34 | 11.78 | 13.44 | 15.99 | 18.31 | 23.21 | 29.59 |
+
+对于自由度k=5来说，只有值不大于11.07才能在p<0.05置信区间中（这个置信区间应该是单向的）。也就是说，多次试验当中，
+如果卡方值如果出现大于11.07的话，那么说明每个变量并不是相互独立的，反过来说明随机数并不随机。

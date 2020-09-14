@@ -1,0 +1,425 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Sparser: Raw Filtering for Faster Analytics over Raw Data</title>
+<meta name="generator" content="Org mode" />
+<meta name="author" content="dirtysalt" />
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content">
+<h1 class="title">Sparser: Raw Filtering for Faster Analytics over Raw Data</h1>
+<div id="table-of-contents">
+<h2>Table of Contents</h2>
+<div id="text-table-of-contents">
+<ul>
+<li><a href="#orgd81b3a0">1. Paper</a></li>
+<li><a href="#orgd6c8fe5">2. Code</a></li>
+</ul>
+</div>
+</div>
+<ul class="org-ul">
+<li><a href="https://dawn.cs.stanford.edu/2018/08/07/sparser/">https://dawn.cs.stanford.edu/2018/08/07/sparser/</a></li>
+<li><a href="https://github.com/stanford-futuredata/sparser">https://github.com/stanford-futuredata/sparser</a></li>
+</ul>
+
+<div id="outline-container-orgd81b3a0" class="outline-2">
+<h2 id="orgd81b3a0"><span class="section-number-2">1</span> Paper</h2>
+<div class="outline-text-2" id="text-1">
+<p>
+这个项目大致想法就是在正式解析数据之前，先使用代价比较小的filter去进行筛选(scan and search)，并且可能会使用多个filters进行组合筛选，希望经过筛选之后的数据是highly selective的。
+当然经过筛选之后的数据可能会出现false positive, 这时再使用full parser去解析，但是需要解析的数量已经大幅减少了，所以有很高的效率。
+</p>
+
+
+<div class="figure">
+<p><img src="images/sparser-overview.png" alt="sparser-overview.png" />
+</p>
+</div>
+
+
+<p>
+Because the best RF cascade is datadependent, we propose an optimizer that dynamically selects the combination of RFs with the best expected throughput, achieving
+within 10% of the global optimum cascade while adding less than 1.2% overhead. We implement these techniques in a system called Sparser, which automatically manages a parsing cascade given a
+data stream in a supported format (e.g., JSON, Avro, Parquet) and a user query. We show that many real-world applications are highly selective
+and benefit from Sparser. Across diverse workloads, Sparser accelerates state-of-the-art parsers such as Mison by up to 22X and improves end-to-end application performance by up to 9X.
+</p>
+
+<p>
+One such example is the Mison JSON parser, which uses SIMD instructions to find special characters such as brackets and colons to build a structural index over a raw
+JSON string, enabling efficient field projection without deserializing the record completely. This approach delivers substantial speedups:
+we found that Mison can parse highly nested in-memory data at over 2GB/s per core, over 5X faster than RapidJSON [49], the fastest traditional
+state-machine-based parser available [32]. Even with these new techniques, however, we still observe a large memory-compute performance gap: a single core can scan a raw bytestream of JSON
+data 10X faster than Mison parses it. Perhaps surprisingly, similar gaps can even occur when parsing binary formats that require byte-level processing, such as Avro and Parquet.
+（Milson使用SIMD指令来加速json parser, 可以达到每个core处理到2GB/s，是RapidJSON的5倍。但是即便如此，Milson和单纯的scan相比，依然相差很多）
+</p>
+
+
+<div class="figure">
+<p><img src="images/sparser-speedup.png" alt="sparser-speedup.png" />
+</p>
+</div>
+
+<p>
+Sparser occasionally recalibrates its cascade to account for data skew or sorting in the underlying input file. §7 shows that recalibration
+is important for minimizing parsing runtime over the entire input, because a cascade chosen at the beginning of the dataset may
+not be effective at the end. For instance, consider an RF that filters on a particular date, and the underlying input records are also sorted
+by date. The RF may be highly ineffective for one range of the file (e.g., the range of records that all match the given date in the filter)
+and very effective for other ranges. To address this issue, Sparser maintains an exponentially weighted moving average of its own
+parsing throughput. In our implementation, we update this average on every 100MB block of input data. If the average throughput
+deviates significantly (e.g., 20% in our implementation), Sparser reruns its optimizer algorithm to select a new RF cascade.
+（对每100MB block计算一下throughput, 然后使用EWMA来做修正。如果发现偏离太远的话，那么会重新挑选新的RFs层次）
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgd6c8fe5" class="outline-2">
+<h2 id="orgd6c8fe5"><span class="section-number-2">2</span> Code</h2>
+<div class="outline-text-2" id="text-2">
+<p>
+@201809
+</p>
+
+<p>
+demo_repl 给出的例子是使用如下SQL
+</p>
+<div class="org-src-container">
+<pre class="src src-SQL">SELECT count(*)\n\
+FROM tweets\n\
+WHERE text contains \"Trump\" AND text contains \"Putin\"";
+</pre>
+</div>
+
+<p>
+对应地这个SQL会有两个关键字符串在filter时候会用到
+</p>
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-keyword">static</span> <span class="org-keyword">const</span> <span class="org-type">char</span> **<span class="org-function-name">sparser_demo_query1</span>(<span class="org-type">int</span> *<span class="org-variable-name">count</span>) {
+    <span class="org-keyword">static</span> <span class="org-keyword">const</span> <span class="org-type">char</span> *<span class="org-variable-name">_1</span> = <span class="org-string">"Trump"</span>;
+    <span class="org-keyword">static</span> <span class="org-keyword">const</span> <span class="org-type">char</span> *<span class="org-variable-name">_2</span> = <span class="org-string">"Putin"</span>;
+    <span class="org-keyword">static</span> <span class="org-keyword">const</span> <span class="org-type">char</span> *<span class="org-variable-name">predicates</span>[] = {_1, _2, <span class="org-constant">NULL</span>};
+
+    *count = 2;
+    <span class="org-keyword">return</span> predicates;
+}
+</pre>
+</div>
+
+<p>
+但是如果仅仅是使用关键字符串去scan的话，如果字符串很长那么开销依然很大，所以考虑是否可以只scan关键字符串的substring, 这些substring不能太长。
+长度的话最好可以使用SIMD，所以类似长度为4/8/16字节比较好。所有可能的substring加上关键字符串都变成了rawfilters, 然后我们在从这些rawfilters中挑出最好的组合。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-comment-delimiter">// </span><span class="org-comment">The length of produced substrings.</span>
+<span class="org-preprocessor">#define</span> <span class="org-variable-name">REGSZ</span> 4
+
+<span class="org-keyword">typedef</span> <span class="org-keyword">struct</span> <span class="org-type">ascii_rawfilters</span> {
+    <span class="org-comment-delimiter">// </span><span class="org-comment">The ascii_rawfilters strings. Each pointer points into region.</span>
+    <span class="org-keyword">const</span> <span class="org-type">char</span> **<span class="org-variable-name">strings</span>;
+    <span class="org-comment-delimiter">// </span><span class="org-comment">The source of the string.</span>
+    <span class="org-keyword">const</span> <span class="org-type">int</span> *<span class="org-variable-name">sources</span>;
+    <span class="org-keyword">const</span> <span class="org-type">int</span> *<span class="org-variable-name">lens</span>;
+    <span class="org-comment-delimiter">// </span><span class="org-comment">Region where strings are allocated.</span>
+    <span class="org-type">char</span> *<span class="org-variable-name">region</span>;
+    <span class="org-comment-delimiter">// </span><span class="org-comment">Number of strings created.</span>
+    <span class="org-type">int</span> <span class="org-variable-name">num_strings</span>;
+} <span class="org-type">ascii_rawfilters_t</span>;
+
+<span class="org-comment-delimiter">// </span><span class="org-comment">Decomposes each string into substrings of length REGSZ or less as search</span>
+<span class="org-comment-delimiter">// </span><span class="org-comment">tokens. NOTE(yan): trump -&gt; trump, trum, rump</span>
+<span class="org-type">ascii_rawfilters_t</span> <span class="org-function-name">decompose</span>(<span class="org-keyword">const</span> <span class="org-type">char</span> **<span class="org-variable-name">predicates</span>, <span class="org-type">int</span> <span class="org-variable-name">num_predicates</span>) {
+    <span class="org-type">int</span> <span class="org-variable-name">num_ascii_rawfilters</span> = 0;
+    <span class="org-type">int</span> <span class="org-variable-name">region_bytes</span> = 0;
+
+    <span class="org-keyword">for</span> (<span class="org-type">int</span> <span class="org-variable-name">i</span> = 0; i &lt; num_predicates; i++) {
+        <span class="org-type">int</span> <span class="org-variable-name">len</span> = (<span class="org-type">int</span>)strlen(predicates[i]);
+
+        <span class="org-comment-delimiter">// </span><span class="org-comment">How many REGSZ-length substrings are possible from this string?</span>
+        <span class="org-type">int</span> <span class="org-variable-name">possible_substrings</span> = len - REGSZ &gt; 0 ? len - REGSZ + 1 : 1;
+        <span class="org-comment-delimiter">// </span><span class="org-comment">Include the full string in the count.</span>
+        num_ascii_rawfilters += possible_substrings + 1;
+
+        region_bytes += (possible_substrings * 5);
+    }
+
+    <span class="org-keyword">const</span> <span class="org-type">char</span> **<span class="org-variable-name">result</span> =
+        (<span class="org-keyword">const</span> <span class="org-type">char</span> **)malloc(<span class="org-keyword">sizeof</span>(<span class="org-type">char</span> *) * num_ascii_rawfilters);
+    <span class="org-type">int</span> *<span class="org-variable-name">sources</span> = (<span class="org-type">int</span> *)malloc(<span class="org-keyword">sizeof</span>(<span class="org-type">int</span>) * num_ascii_rawfilters);
+    <span class="org-type">int</span> *<span class="org-variable-name">lens</span> = (<span class="org-type">int</span> *)malloc(<span class="org-keyword">sizeof</span>(<span class="org-type">int</span>) * num_ascii_rawfilters);
+    <span class="org-type">char</span> *<span class="org-variable-name">region</span> = (<span class="org-type">char</span> *)malloc(<span class="org-keyword">sizeof</span>(<span class="org-type">char</span>) * region_bytes);
+
+    <span class="org-comment-delimiter">// </span><span class="org-comment">index into result.</span>
+    <span class="org-type">int</span> <span class="org-variable-name">i</span> = 0;
+    <span class="org-comment-delimiter">// </span><span class="org-comment">pointer into region.</span>
+    <span class="org-type">char</span> *<span class="org-variable-name">region_ptr</span> = region;
+
+    <span class="org-keyword">for</span> (<span class="org-type">int</span> <span class="org-variable-name">j</span> = 0; j &lt; num_predicates; j++) {
+        <span class="org-comment-delimiter">// </span><span class="org-comment">Add the first string.</span>
+        result[i] = predicates[j];
+        lens[i] = strlen(predicates[j]);
+        sources[i] = j;
+        i++;
+
+        <span class="org-type">int</span> <span class="org-variable-name">pred_length</span> = strlen(predicates[j]);
+        <span class="org-keyword">for</span> (<span class="org-type">int</span> <span class="org-variable-name">start</span> = 0; start &lt;= pred_length - REGSZ; start++) {
+            <span class="org-keyword">if</span> (pred_length == REGSZ &amp;&amp; start == 0) <span class="org-keyword">continue</span>;
+
+            memcpy(region_ptr, predicates[j] + start, REGSZ);
+            region_ptr[REGSZ] = <span class="org-string">'\0'</span>;
+
+            printf(<span class="org-string">"add region: %s, predication #%d\n"</span>, region_ptr, j);
+            result[i] = region_ptr;
+            sources[i] = j;
+            lens[i] = REGSZ;
+
+            region_ptr += 5;
+            i++;
+        }
+    }
+
+    <span class="org-type">ascii_rawfilters_t</span> <span class="org-variable-name">d</span>;
+    d.strings = result;
+    d.sources = sources;
+    d.lens = lens;
+    d.region = region;
+    d.num_strings = i;
+
+    <span class="org-keyword">return</span> d;
+}
+</pre>
+</div>
+
+<p>
+接下来要考虑的是如何评估每个rawfilter的开销，最好的办法就是在真实数据集合上跑一把。不仅仅需要评估rawfilter的开销，还要考虑full parser的开销，以便后面挑选最优组合。
+这个函数叫做 `sparser_calibrate`. 代码有点长，但是还算是清晰易懂
+</p>
+
+<ul class="org-ul">
+<li>MAX_SAMPLES=1000 评估rawfilter的样本数量</li>
+<li>MAX_SUBSTRINGS=32 只选择前面32个substrings/rawfilters进行评估</li>
+<li>PARSER_MEASUREMENT_SAMPLES=10 评估fullparser的样本数量</li>
+<li>passthrough_masks 每个rawfilter匹配到了那些sample records, 这个在挑选最优组合时有用</li>
+<li>calibrate_timing
+<ul class="org-ul">
+<li>sampling_total. 前期sampling花费时间，包括RF grepping的的时间</li>
+<li>grepping_total. 使用rawfilters做grepping花费时间</li>
+<li>cycles_per_parse_avg 执行full parser的平均CPU cycles</li>
+<li>searching_total. 挑选最优组合所花费时间</li>
+<li>cycles_per_schedule_avg 挑选最优组合花费的平均CPU cycles</li>
+<li>processed/skipped. 评估最优组合的数量</li>
+<li>total 执行calibrate的时间</li>
+</ul></li>
+</ul>
+
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-comment-delimiter">/** </span><span class="org-comment">Returns a search query given a sample input and a set of predicates. The</span>
+<span class="org-comment"> * returned search query</span>
+<span class="org-comment"> * attempts to jointly minimize the search time and false positive rate.</span>
+<span class="org-comment"> *</span>
+<span class="org-comment"> * @param sample the sample to test.</span>
+<span class="org-comment"> * @param length the length of the sample.</span>
+<span class="org-comment"> * @param predicates a set of full predicates.</span>
+<span class="org-comment"> * @param count the number of predicates to test.</span>
+<span class="org-comment"> * @param callback the callback, which specifies whether a query passes.</span>
+<span class="org-comment"> *</span>
+<span class="org-comment"> * @return a search query, or NULL if an error occurred. The returned query</span>
+<span class="org-comment"> * should be returned with free().</span>
+<span class="org-comment"> */</span>
+<span class="org-type">sparser_query_t</span> *<span class="org-function-name">sparser_calibrate</span>(<span class="org-type">BYTE</span> *<span class="org-variable-name">sample</span>, <span class="org-type">long</span> <span class="org-variable-name">length</span>, <span class="org-type">BYTE</span> <span class="org-variable-name">delimiter</span>,
+                                   <span class="org-type">ascii_rawfilters_t</span> *<span class="org-variable-name">predicates</span>,
+                                   <span class="org-type">sparser_callback_t</span> <span class="org-variable-name">callback</span>,
+                                   <span class="org-type">void</span> *<span class="org-variable-name">callback_arg</span>) {
+    <span class="org-keyword">struct</span> <span class="org-type">calibrate_timing</span> <span class="org-variable-name">timing</span>;
+    memset(&amp;timing, 0, <span class="org-keyword">sizeof</span>(timing));
+    <span class="org-type">bench_timer_t</span> <span class="org-variable-name">start_e2e</span> = time_start();
+
+    <span class="org-comment-delimiter">// </span><span class="org-comment">Stores false positive mask for each predicate.</span>
+    <span class="org-comment-delimiter">// </span><span class="org-comment">Bit `i` is set if the ith false positive record was *passed* by the</span>
+    <span class="org-comment-delimiter">// </span><span class="org-comment">predicate.</span>
+    <span class="org-type">bitmap_t</span> <span class="org-variable-name">passthrough_masks</span>[MAX_SUBSTRINGS];
+    <span class="org-keyword">for</span> (<span class="org-type">int</span> <span class="org-variable-name">i</span> = 0; i &lt; MAX_SUBSTRINGS; i++) {
+        passthrough_masks[i] = bitmap_new(MAX_SAMPLES);
+    }
+
+    <span class="org-comment-delimiter">// </span><span class="org-comment">The number of substrings to process.</span>
+    <span class="org-type">int</span> <span class="org-variable-name">num_substrings</span> = predicates-&gt;num_strings &gt; MAX_SUBSTRINGS
+                             ? MAX_SUBSTRINGS
+                             : predicates-&gt;num_strings;
+
+    <span class="org-comment-delimiter">// </span><span class="org-comment">Counts number of records processed thus far.</span>
+    <span class="org-type">long</span> <span class="org-variable-name">records</span> = 0;
+    <span class="org-type">long</span> <span class="org-variable-name">parsed_records</span> = 0;
+    <span class="org-type">long</span> <span class="org-variable-name">passed</span> = 0;
+    <span class="org-type">unsigned</span> <span class="org-type">long</span> <span class="org-variable-name">parse_cost</span> = 0;
+
+    <span class="org-type">bench_timer_t</span> <span class="org-variable-name">start</span> = time_start();
+
+    <span class="org-comment-delimiter">// </span><span class="org-comment">Now search for each substring in up to MAX_SAMPLES records.</span>
+    <span class="org-type">char</span> *<span class="org-variable-name">line</span>, *<span class="org-variable-name">newline</span>;
+    <span class="org-type">size_t</span> <span class="org-variable-name">remaining_length</span> = length;
+    <span class="org-keyword">while</span> (records &lt; MAX_SAMPLES &amp;&amp;
+           (newline = (<span class="org-type">char</span> *)memchr(sample, delimiter, remaining_length)) !=
+               <span class="org-constant">NULL</span>) {
+        <span class="org-comment-delimiter">// </span><span class="org-comment">Emulates behavior of strsep, but uses memchr's faster implementation.</span>
+        line = sample;
+        sample = newline + 1;
+        remaining_length -= (sample - line);
+
+        <span class="org-type">bench_timer_t</span> <span class="org-variable-name">grep_timer</span> = time_start();
+        <span class="org-comment-delimiter">// </span><span class="org-comment">NOTE(yan): &#20351;&#29992;&#21508;&#31181;substring&#21435;&#23581;&#35797;&#21305;&#37197;&#27599;&#34892;&#21407;&#22987;&#23383;&#31526;&#20018;&#65292;&#35760;&#24405;&#21305;&#37197;&#21040;&#21738;&#20123;&#35760;&#24405;</span>
+        <span class="org-keyword">for</span> (<span class="org-type">int</span> <span class="org-variable-name">i</span> = 0; i &lt; num_substrings; i++) {
+            <span class="org-keyword">const</span> <span class="org-type">char</span> *<span class="org-variable-name">predicate</span> = predicates-&gt;strings[i];
+            SPARSER_DBG(<span class="org-string">"grepping for %s..."</span>, predicate);
+
+            <span class="org-keyword">if</span> (memmem(line, newline - line, predicate, predicates-&gt;lens[i])) {
+                <span class="org-comment-delimiter">// </span><span class="org-comment">Set this record to found for this substring.</span>
+                bitmap_set(&amp;passthrough_masks[i], records);
+                SPARSER_DBG(<span class="org-string">"found!\n"</span>);
+            } <span class="org-keyword">else</span> {
+                SPARSER_DBG(<span class="org-string">"not found.\n"</span>);
+            }
+        }
+        <span class="org-type">double</span> <span class="org-variable-name">grep_time</span> = time_stop(grep_timer);
+        timing.grepping_total += grep_time;
+
+        <span class="org-comment-delimiter">// </span><span class="org-comment">To estimate the full parser's cost.</span>
+        <span class="org-comment-delimiter">// </span><span class="org-comment">NOTE(yan): &#21069;&#38754;&#19968;&#37096;&#20998;&#30340;records&#36827;&#34892;&#23436;&#20840;&#35299;&#26512;</span>
+        <span class="org-keyword">if</span> (records &lt; PARSER_MEASUREMENT_SAMPLES) {
+            <span class="org-type">unsigned</span> <span class="org-type">long</span> <span class="org-variable-name">start</span> = rdtsc();
+            <span class="org-comment-delimiter">// </span><span class="org-comment">NOTE(yan): callback&#26159;&#23436;&#20840;&#35299;&#26512;.</span>
+            <span class="org-comment-delimiter">// </span><span class="org-comment">&#22914;&#26524;substring&#21305;&#37197;&#30340;&#35805;&#65292;&#23581;&#35797;&#21435;&#23436;&#20840;&#35299;&#26512;</span>
+            passed += callback(line, callback_arg);
+            <span class="org-type">unsigned</span> <span class="org-type">long</span> <span class="org-variable-name">end</span> = rdtsc();
+            parse_cost += (end - start);
+            parsed_records++;
+        }
+
+        records++;
+
+        timing.cycles_per_parse_avg = parse_cost;  <span class="org-comment-delimiter">// </span><span class="org-comment">NOTE(yan): &#24635;&#20307;parse&#26102;&#38388;</span>
+    }
+
+    timing.sampling_total = time_stop(start);
+    start = time_start();
+
+    SPARSER_DBG(<span class="org-string">"%lu passed\n"</span>, passed);
+
+    <span class="org-comment-delimiter">// </span><span class="org-comment">The average parse cost.</span>
+    parse_cost = parse_cost / parsed_records;
+
+    <span class="org-type">search_data_t</span> <span class="org-variable-name">sd</span>;
+    memset(&amp;sd, 0, <span class="org-keyword">sizeof</span>(sd));
+    sd.num_records = records;
+    sd.passthrough_masks = passthrough_masks;
+    sd.full_parse_cost = parse_cost;
+    sd.best_cost = 0xffffffff;
+    sd.joint = bitmap_new(MAX_SAMPLES);
+
+    <span class="org-comment-delimiter">// </span><span class="org-comment">temp buffer to store the result.</span>
+    <span class="org-type">int</span> <span class="org-variable-name">result</span>[MAX_SCHEDULE_SIZE];
+
+    <span class="org-comment-delimiter">// </span><span class="org-comment">Get the best schedule.</span>
+    <span class="org-comment-delimiter">// </span><span class="org-comment">NOTE(yan): &#26522;&#20030;length = i&#30340;&#26368;&#20339;&#24320;&#38144;</span>
+    <span class="org-keyword">for</span> (<span class="org-type">int</span> <span class="org-variable-name">i</span> = 1; i &lt;= MAX_SCHEDULE_SIZE; i++) {
+        search_schedules(predicates, &amp;sd, i, 0, result, i);
+    }
+
+    timing.searching_total = time_stop(start);
+    timing.cycles_per_schedule_avg = sd.total_cycles / sd.processed;
+
+    timing.processed = sd.processed;
+    timing.skipped = sd.skipped;
+
+    <span class="org-keyword">static</span> <span class="org-type">char</span> <span class="org-variable-name">printer</span>[4096];
+    printer[0] = 0;
+    <span class="org-keyword">for</span> (<span class="org-type">int</span> <span class="org-variable-name">i</span> = 0; i &lt; sd.schedule_len; i++) {
+        strcat(printer, predicates-&gt;strings[sd.best_schedule[i]]);
+        strcat(printer, <span class="org-string">" "</span>);
+    }
+    SPARSER_DBG(<span class="org-string">"Best schedule: %s\n"</span>, printer);
+
+    <span class="org-comment-delimiter">// </span><span class="org-comment">NOTE(yan): &#20026;sparser_query_t &#28155;&#21152; best_scheduler&#20449;&#24687;</span>
+    <span class="org-type">sparser_query_t</span> *<span class="org-variable-name">squery</span> = sparser_new_query();
+    memset(squery, 0, <span class="org-keyword">sizeof</span>(sparser_query_t));
+    <span class="org-keyword">for</span> (<span class="org-type">int</span> <span class="org-variable-name">i</span> = 0; i &lt; sd.schedule_len; i++) {
+        sparser_add_query(squery, predicates-&gt;strings[sd.best_schedule[i]],
+                          predicates-&gt;lens[sd.best_schedule[i]]);
+    }
+
+    <span class="org-keyword">for</span> (<span class="org-type">int</span> <span class="org-variable-name">i</span> = 0; i &lt; MAX_SUBSTRINGS; i++) {
+        bitmap_free(&amp;passthrough_masks[i]);
+    }
+
+    timing.total = time_stop(start_e2e);
+    print_timing(&amp;timing);
+
+    bitmap_free(&amp;sd.joint);
+
+    <span class="org-keyword">return</span> squery;
+}
+</pre>
+</div>
+
+<p>
+在 `calibrate` 函数里面还有个 `search_schedules` 的函数，就是要找出rawfilters的最佳组合，通过枚举的方式来找到最佳组合。
+这里面最重要的逻辑就是评估rawfilters组合的cost. 在寻找rawfilters组合的时候，还考虑了这些RFs的顺序，因为不同的顺序带来scan
+的开销是不同的。一个RF的开销很简单，就是 `8.0 * len`.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-comment-delimiter">/** </span><span class="org-comment">Cost in CPU cycles of a raw filter which searches for a term of length</span>
+<span class="org-comment"> * `len`. */</span>
+<span class="org-type">double</span> <span class="org-function-name">rf_cost</span>(<span class="org-keyword">const</span> <span class="org-type">size_t</span> <span class="org-variable-name">len</span>) { <span class="org-keyword">return</span> len * 8.0; }
+
+
+<span class="org-comment-delimiter">// </span><span class="org-comment">search_schedules.</span>
+        <span class="org-comment-delimiter">// </span><span class="org-comment">NOTE(yan): &#27169;&#25311;&#27599;&#19968;&#20010;filter&#24102;&#26469;&#30340;&#24320;&#38144;</span>
+        <span class="org-type">int</span> <span class="org-variable-name">first_index</span> = result[0];
+        <span class="org-type">bitmap_t</span> *<span class="org-variable-name">joint</span> = &amp;sd-&gt;joint;
+        bitmap_copy(joint, &amp;sd-&gt;passthrough_masks[first_index]);
+
+        <span class="org-comment-delimiter">// </span><span class="org-comment">First filter runs unconditionally.</span>
+        <span class="org-type">double</span> <span class="org-variable-name">total_cost</span> = rf_cost(predicates-&gt;lens[first_index]);
+
+        <span class="org-keyword">for</span> (<span class="org-type">int</span> <span class="org-variable-name">i</span> = 1; i &lt; result_len; i++) {
+            <span class="org-type">int</span> <span class="org-variable-name">index</span> = result[i];
+            <span class="org-type">uint64_t</span> <span class="org-variable-name">joint_rate</span> = bitmap_count(joint);
+            <span class="org-type">double</span> <span class="org-variable-name">filter_cost</span> = rf_cost(predicates-&gt;lens[index]);
+            <span class="org-type">double</span> <span class="org-variable-name">rate</span> = ((<span class="org-type">double</span>)joint_rate) / sd-&gt;num_records;
+            SPARSER_DBG(<span class="org-string">"\t Rate after %s: %f\n"</span>,
+                        predicates-&gt;strings[result[i - 1]], rate);
+            total_cost += filter_cost * rate;
+
+            bitmap_and(joint, joint, &amp;sd-&gt;passthrough_masks[index]);
+        }
+
+        <span class="org-comment-delimiter">// </span><span class="org-comment">NOTE(yan): &#27169;&#25311;full parser&#24102;&#26469;&#30340;&#24320;&#38144;</span>
+        <span class="org-comment-delimiter">// </span><span class="org-comment">Account for full parser.</span>
+        <span class="org-type">uint64_t</span> <span class="org-variable-name">joint_rate</span> = bitmap_count(joint);
+        <span class="org-type">double</span> <span class="org-variable-name">filter_cost</span> = sd-&gt;full_parse_cost;
+        <span class="org-type">double</span> <span class="org-variable-name">rate</span> = ((<span class="org-type">double</span>)joint_rate) / sd-&gt;num_records;
+        SPARSER_DBG(<span class="org-string">"\t Rate after %s (rate of full parse): %f\n"</span>,
+                    predicates-&gt;strings[result[result_len - 1]], rate);
+        total_cost += filter_cost * rate;
+        SPARSER_DBG(<span class="org-string">"\tCost: %f\n"</span>, total_cost);
+
+        <span class="org-keyword">if</span> (total_cost &lt; sd-&gt;best_cost) {
+            assert(result_len &lt;= MAX_SCHEDULE_SIZE);
+            memcpy(sd-&gt;best_schedule, result, <span class="org-keyword">sizeof</span>(<span class="org-type">int</span>) * result_len);
+            sd-&gt;schedule_len = result_len;
+        }
+
+        <span class="org-type">long</span> <span class="org-variable-name">end</span> = rdtsc();
+        sd-&gt;processed++;
+        sd-&gt;total_cycles += end - start;
+</pre>
+</div>
+</div>
+</div>
+</div>
+</body>
+</html>

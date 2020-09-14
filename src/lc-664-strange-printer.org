@@ -1,0 +1,128 @@
+#+title: 664. Strange Printer
+
+https://leetcode.com/problems/strange-printer/
+
+DP问题最重要的就是状态转移方程。这题我最开始考虑的状态转移方程如下：
+- dp[i][j][c]. 打印从s[i..j], 并且之前打印的字符是c，
+- dp[i][j][c]的状态转移方程是
+  - 我们先找到k, 其中s[i..k]这里面所有的字符都是s[i]
+  - 如果s[i] == c, 那么说明其实c可以直接打印到k这个位置，所以就是打印剩余字符了 dp[k+1][i][j][c]
+  - 如果s[i] != c的话，那么可以分为两段打印，假设 k<= k2 <= j + 1
+    - 1 + dp[k+1][k2-1][s[i]] 前面一段先用s[i]打印一次，然后解决s[k+1..k2-1]这段
+    - dp[k2][j][c] 剩余的还是使用字符c来打印
+
+这样的时间复杂度是O(n^2 * 26 * n)，空间复杂度是O(n^2 * 26). 用Python实现是超时的，但是使用Java实现没有问题。这个我在后面附上第一种解法。
+
+--------------------
+
+事实证明是我想复杂了，讨论区里面有人给出了解法
+
+#+BEGIN_EXAMPLE
+第一种：dp[i][j] = 1 + dp[i + 1][j].
+i单独打印， s[i + 1, j]段另外打印
+
+第二种：dp[i][j] = min(dp[i][j], dp[i + 1][k] + dp[k + 1][j]);
+dp[i + 1][k]代表将i放到[i+ 1, k]一起打印，dp[k + 1][j]代表[k + 1, j]另外打印，（s[i] == s[k])
+
+第三种：dp[i][j] = min(dp[i][j], dp[i + 1][j]);
+dp[i + 1][j]代表将i放入[j + 1, i]一起打印(s[i] == s[j])
+#+END_EXAMPLE
+
+其实case3是case2的特殊情况，所以其实只要考虑两种。我觉得case2里面这点很重要 "将i放到[i+ 1, k]一起打印"，这可以理解成某种逆向思维的解法：
+"因为s[k]==s[i],所以其实可以在某次打印s[k]的时候，顺带把s[i]打印了。"不过其实操作应该是先以s[i]打印s[i..k]这段。
+
+这种逆向思维解法有个好处是，将打印计算的成本后移了，避免了去考虑"上次打印的字符"是什么这个问题。如果我们之前的考虑是"先以s[i]打印s[i..k]"这段的话，
+那么很容易会写出代价是 1 + s[i+1..k-1], 不过这个是错误的，因为在s[i+1..k-1]里面还需要考虑上次打印的字符是什么。
+
+这题状态转移方程有点奇怪，后面可以在继续考虑考虑。另外在解决问题之前，可以先对字符串做压缩将相同字符使用一个表示，比如"aaaabbbbc" -> "abc".
+
+#+BEGIN_SRC python
+
+class Solution:
+    def strangePrinter(self, s: str) -> int:
+        if not s:
+            return 0
+
+        p = s[0]
+        ss = []
+        for c in s:
+            if c != p:
+                ss.append(p)
+                p = c
+        ss.append(p)
+        print(''.join(ss))
+
+        import functools
+
+        @functools.lru_cache(None)
+        def fun(i, j):
+            if i > j:
+                return 0
+
+            ans = 1 + fun(i + 1, j)
+            for k in range(i + 1, j + 1):
+                if ss[i] == ss[k]:
+                    ans = min(ans, fun(i + 1, k) + fun(k + 1, j))
+            return ans
+
+        ans = fun(0, len(ss) - 1)
+        return ans
+#+END_SRC
+
+--------------------
+
+然后我在粘贴下第一种解法
+
+#+BEGIN_SRC java
+import java.util.*;
+
+class Solution {
+    int[][][] dp;
+
+    public int query(char[] cs, int i, int j, int c) {
+        if (i > j) {
+            return 0;
+        }
+        int ans = dp[i][j][c];
+        if (ans != -1) {
+            return ans;
+        }
+        ans = 1 << 30;
+        int k = i;
+        while ((k <= j) && (cs[k] == cs[i])) {
+            k += 1;
+        }
+        if (cs[i] == c) {
+            ans = query(cs, k, j, c);
+        } else {
+            for (int k2 = k; k2 <= j + 1; k2++) {
+                int res = 1 + query(cs, k, k2 - 1, cs[i]) + query(cs, k2, j, c);
+                ans = Math.min(ans, res);
+            }
+        }
+        dp[i][j][c] = ans;
+        return ans;
+    }
+
+    public int strangePrinter(String s) {
+        int n = s.length();
+        if (n == 0) {
+            return 0;
+        }
+        char[] cs = s.toCharArray();
+        for (int i = 0; i < cs.length; i++) {
+            cs[i] -= 'a';
+        }
+        dp = new int[n][n][26];
+        for (int i = 0; i < n; i++) {
+            for (int j = 0; j < n; j++) {
+                for (int c = 0; c < 26; c++) {
+                    dp[i][j][c] = -1;
+                }
+            }
+        }
+        int ans = query(cs, 0, n - 1, cs[0]) + 1;
+        return ans;
+    }
+}
+#+END_SRC

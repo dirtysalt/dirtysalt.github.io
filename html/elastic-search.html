@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ElasticSearch</title>
+<meta name="generator" content="Org mode" />
+<meta name="author" content="dirtysalt" />
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content">
+<h1 class="title">ElasticSearch</h1>
+<ul class="org-ul">
+<li><a href="https://www.elastic.co/">https://www.elastic.co/</a></li>
+<li><a href="https://www.gitbook.com/book/looly/elasticsearch-the-definitive-guide-cn/details">Elasticsearch 权威指南（中文版）</a></li>
+</ul>
+
+<p>
+已经有网友整理出了一个cheatsheet <a href="http://elasticsearch-cheatsheet.jolicode.com">http://elasticsearch-cheatsheet.jolicode.com</a>
+</p>
+
+<p>
+了解当前集群健康状态 <a href="http://localhost:9200/_cat/health?v">http://localhost:9200/_cat/health?v</a>
+</p>
+
+<p>
+了解各个index-shard状态 <a href="http://localhost:9200/_cat/shards/">http://localhost:9200/_cat/shards/</a>
+</p>
+
+<p>
+查看是因为什么原因导致某个shard出于unassigned状态(?help查看有哪些可选字段)  <a href="http://localhost:9200/_cat/shards/?h=share,index,unassigned.reason">http://localhost:9200/_cat/shards/?h=share,index,unassigned.reason</a>
+</p>
+
+<p>
+如果只有一台机器serve的话，可以将replication number设置为0
+</p>
+<pre class="example">
+curl -XPUT http://localhost:9200/_settings -d '{ "number_of_replicas" :0 }'
+</pre>
+
+<p>
+如果shard处于unassigned状态，并且是primary shard的话，可以使用下面这个脚本强制assigned.
+</p>
+<ul class="org-ul">
+<li><a href="https://gist.github.com/ianblenke/6422bed17090bb4f1712">https://gist.github.com/ianblenke/6422bed17090bb4f1712</a>.</li>
+<li><a href="http://stackoverflow.com/questions/23656458/elasticsearch-what-to-do-with-unassigned-shards">http://stackoverflow.com/questions/23656458/elasticsearch-what-to-do-with-unassigned-shards</a></li>
+</ul>
+<pre class="example">
+curl -XPUT localhost:9200/_cluster/settings -d '{
+                "transient" : {
+                    "cluster.routing.allocation.enable" : "all"
+                }
+        }'
+
+curl -s localhost:9200/_cat/shards | grep UNASS | while read line ; do \
+  read -a fields &lt;&lt;&lt;"$line" ;
+  curl -XPOST -d '{
+    "commands" : [
+      {
+        "allocate" : {
+          "index" : "'${fields[0]}'",
+          "shard" : '${fields[1]}',
+          "node" : "elasticsearch-'$(hostname)'",
+          "allow_primary": "true"
+        }
+      }
+    ]
+  }' http://localhost:9200/_cluster/reroute?pretty ; done
+</pre>
+</div>
+</body>
+</html>

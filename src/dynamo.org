@@ -1,0 +1,357 @@
+#+title: Dynamo: Amazon’s Highly Available Key-value Store
+- https://www.allthingsdistributed.com/2007/10/amazons_dynamo.html
+- http://s3.amazonaws.com/AllThingsDistributed/sosp/amazon-dynamo-sosp2007.pdf
+- http://duanple.blog.163.com/blog/static/709717672011513111427410/
+- http://untyped.com/untyping/2011/01/21/all-about-amazons-dynamo/
+- http://blog.nosqlfan.com/html/1257.html
+
+#+BEGIN_QUOTE
+We submitted the technology for publication in SOSP because many of the techniques used in Dynamo originate in the operating systems and distributed systems research of the past years; DHTs, consistent hashing, versioning, vector clocks, quorum, anti-entropy based recovery, etc. As far as I know Dynamo is the first production system to use the synthesis of all these techniques, and there are quite a few lessons learned from doing so. The paper is mainly about these lessons.
+
+We are extremely fortunate that the paper was selected for publication in SOSP; only a very few true production systems have made it into the conference and as such it is a recognition of the quality of the work that went into building a real incrementally scalable storage system in which the most important properties can be appropriately configured.
+#+END_QUOTE
+
+** ABSTRACT
+- This paper presents the design and implementation of Dynamo, a highly available key-value storage system that some of Amazon’s core services use to provide an “always-on” experience.
+- To achieve this level of availability, Dynamo sacrifices consistency under certain failure scenarios. It makes extensive use of object versioning and application-assisted conflict resolution in a manner that provides a novel interface for developers to use.（牺牲一致性）
+
+** INTRODUCTION
+- One of the lessons our organization has learned from operating Amazon’s platform is that the reliability and scalability of a system is dependent on how its application state is managed. （可靠性和扩展性取决于如何管理应用状态）
+- Amazon uses a highly decentralized, loosely coupled, service oriented architecture consisting of hundreds of services. In this environment there is a particular need for storage technologies that are always available. （大量服务的状态依赖可靠存储）
+- Dealing with failures in an infrastructure comprised of millions of components is our standard mode of operation; there are always a small but significant number of server and network components that are failing at any given time. As such Amazon’s software systems need to be constructed in a manner that treats failure handling as the normal case without impacting availability or performance.
+- Dynamo is used to manage the state of services that have very high reliability requirements and need *tight control over the tradeoffs between availability, consistency, cost-effectiveness and performance.*
+- Dynamo provides a simple primary-key only interface to meet the requirements of these applications.（最简单的kv存储接口）
+- Dynamo uses a synthesis of well known techniques to achieve scalability and availability:
+  - Data is partitioned and replicated using consistent hashing,（数据分片和副本使用一致性hash）
+  - and consistency is facilitated by object versioning.（对象一致性使用版本控制）
+  - The consistency among replicas during updates is maintained by a quorum-like technique and a decentralized replica synchronization protocol. （副本一致性使用quorum-like技术和去中心化副本同步协议）
+  - Dynamo employs a gossip based distributed failure detection and membership protocol. （gossip-based的分布式故障检测以及成员协议）
+- Dynamo is a completely decentralized system with minimal need for manual administration. Storage nodes can be added and removed from Dynamo without requiring any manual partitioning or redistribution.
+- The main contribution of this work for the research community is the evaluation of how different techniques can be combined to provide a single highly-available system. It demonstrates that an eventually-consistent storage system can be used in production with demanding applications. It also provides insight into the tuning of these techniques to meet the requirements of production systems with very strict performance demands.
+
+** BACKGROUND
+*** System Assumptions and Requirements
+- Query Model: simple read and write operations to a data item that is uniquely identified by a key. State is stored as binary objects (i.e., blobs) identified by unique keys. No operations span multiple data items and there is no need for relational schema. This requirement is based on the observation that a significant portion of Amazon’s services can work with this simple query model and do not need any relational schema. Dynamo targets applications that need to store objects that are relatively small (usually less than 1 MB).
+
+- ACID Properties: ACID (Atomicity, Consistency, Isolation, Durability) is a set of properties that guarantee that database transactions are processed reliably. In the context of databases, a single logical operation on the data is called a transaction. Experience at Amazon has shown that data stores that provide ACID guarantees tend to have poor availability. This has been widely acknowledged by both the industry and academia. Dynamo targets applications that operate with weaker consistency (the “C” in ACID) if this results in high availability. Dynamo does not provide any isolation guarantees and permits only single key updates.
+
+- Efficiency: The system needs to function on a commodity hardware infrastructure. *In Amazon’s platform, services have stringent latency requirements which are in general measured at the 99.9th percentile of the distribution.* Given that state access plays a crucial role in service operation the storage system must be capable of meeting such stringent SLAs (see Section 2.2 below). Services must be able to configure Dynamo such that they consistently achieve their latency and throughput requirements. The tradeoffs are in performance, cost efficiency, availability, and durability guarantees.
+
+- Other Assumptions: Dynamo is used only by Amazon’s internal services. *Its operation environment is assumed to be non-hostile and there are no security related requirements such as authentication and authorization.* Moreover, since each service uses its distinct instance of Dynamo, its initial design targets a scale of up to hundreds of storage hosts. We will discuss the scalability limitations of Dynamo and possible scalability related extensions in later sections.
+
+*** Service Level Agreements (SLA)
+- To guarantee that the application can deliver its functionality in a bounded time, each and every dependency in the platform needs to deliver its functionality with even tighter bounds.
+- Clients and services engage in a Service Level Agreement (SLA), a formally negotiated contract where a client and a service agree on several system-related characteristics, which most prominently include the client’s expected request rate distribution for a particular API and the expected service latency under those conditions. An example of a simple SLA is a service guaranteeing that it will provide a response within 300ms for 99.9% of its requests for a peak client load of 500 requests per second.
+- In Amazon’s decentralized service oriented infrastructure, SLAs play an important role. For example a page request to one of the e-commerce sites typically requires the rendering engine to construct its response by sending requests to over 150 services. These services often have multiple dependencies, which frequently are other services, and as such it is not uncommon for the call graph of an application to have more than one level. To ensure that the page rendering engine can maintain a clear bound on page delivery each service within the call chain must obey its performance contract.（SLA对于SOA的重要性）
+
+file:images/soa-amazon-platform.png
+
+-----
+- A common approach in the industry for forming a performance oriented SLA is to describe it using average, median and expected variance. *At Amazon we have found that these metrics are not good enough if the goal is to build a system where all customers have a good experience, rather than just the majority.* For example if extensive personalization techniques are used then customers with longer histories require more processing which impacts performance at the high-end of the distribution.
+- An SLA stated in terms of mean or median response times will not address the performance of this important customer segment. To address this issue, at Amazon, SLAs are expressed and measured at the 99.9th percentile of the distribution. *The choice for 99.9% over an even higher percentile has been made based on a cost-benefit analysis which demonstrated a significant increase in cost to improve performance that much.* （选择在99.9%是因为这是cost-benifit平衡点）
+- Storage systems often play an important role in establishing a service’s SLA, especially if the business logic is relatively lightweight, as is the case for many Amazon services. State management then becomes the main component of a service’s SLA. *One of the main design considerations for Dynamo is to give services control over their system properties, such as durability and consistency, and to let services make their own tradeoffs between functionality, performance and cost-effectiveness.*
+
+*** Design Considerations
+- For systems prone to server and network failures, availability can be increased by using optimistic replication techniques, where changes are allowed to propagate to replicas in the background, and concurrent, disconnected work is tolerated.（即使在网络分裂的情况下面也可以工作）
+- The challenge with this approach is that it can lead to conflicting changes which must be detected and resolved. This process of conflict resolution introduces two problems: （但是这样存在内容冲突）
+  - when to resolve them（在读的时候来处理冲突）
+    - An important design consideration is to decide when to perform the process of resolving update conflicts, i.e., whether conflicts should be resolved during reads or writes.
+    - Many traditional data stores execute conflict resolution during writes and keep the read complexity simple. In such systems, writes may be rejected if the data store cannot reach all (or a majority of) the replicas at a given time.
+    - On the other hand, Dynamo targets the design space of an “always writeable” data store (i.e., a data store that is highly available for writes). This requirement forces us to push the complexity of conflict resolution to the reads in order to ensure that writes are never rejected.
+  - and who resolves them. （client来处理冲突，允许不同的冲突解决方案）
+    - The next design choice is who performs the process of conflict resolution. This can be done by the data store or the application.
+    - If conflict resolution is done by the data store, its choices are rather limited. In such cases, the data store can only use simple policies, such as “last write wins”, to resolve conflicting updates.
+    - On the other hand, since the application is aware of the data schema it can decide on the conflict resolution method that is best suited for its client’s experience.
+    - Despite this flexibility, some application developers may not want to write their own conflict resolution mechanisms and choose to push it down to the data store, which in turn chooses a simple policy such as “last write wins”.
+- Dynamo is designed to be an eventually consistent data store; that is all updates reach all replicas eventually.（最终一致性）
+
+-----
+
+*Other key principles embraced in the design are:* （其实这些都是分布式系统里面重要的问题）
+- Incremental scalability: Dynamo should be able to scale out one storage host (henceforth, referred to as “node”) at a time, with minimal impact on both operators of the system and the system itself.（增量扩展）
+- Symmetry: Every node in Dynamo should have the same set of responsibilities as its peers; there should be no distinguished node or nodes that take special roles or extra set of responsibilities. In our experience, symmetry simplifies the process of system provisioning and maintenance.（对称节点）
+- Decentralization: An extension of symmetry, the design should favor decentralized peer-to-peer techniques over centralized control. In the past, centralized control has resulted in outages and the goal is to avoid it as much as possible. This leads to a simpler, more scalable, and more available system.（去中心化）
+- Heterogeneity: The system needs to be able to exploit heterogeneity in the infrastructure it runs on. e.g. the work distribution must be proportional to the capabilities of the individual servers. This is essential in adding new nodes with higher capacity without having to upgrade all hosts at once.（节点异构，带来许多资源管理的挑战。我相信yarn，mesos这样的资源管理系统在很大程度上解决了这个问题）
+
+** RELATED WORK
+*** Peer to Peer Systems
+*** Distributed File Systems and Databases
+*** Discussion
+Dynamo differs from the aforementioned decentralized storage systems in terms of its target requirements.
+- First, Dynamo is targeted mainly at applications that need an “always writeable” data store where no updates are rejected due to failures or concurrent writes. This is a crucial requirement for many Amazon applications.
+- Second, as noted earlier, Dynamo is built for an infrastructure within a single administrative domain where all nodes are assumed to be trusted. （可信节点）
+- Third, applications that use Dynamo do not require support for hierarchical namespaces (a norm in many file systems) or complex relational schema (supported by traditional databases).
+- Fourth, Dynamo is built for latency sensitive applications that require at least 99.9% of read and write operations to be performed within a few hundred milliseconds. （对于延迟要求很高，99.9%的延迟在百毫秒以下）
+  - To meet these stringent latency requirements, it was imperative for us to avoid routing requests through multiple nodes (which is the typical design adopted by several distributed hash table systems such as Chord and Pastry). This is because multi-hop routing increases variability in response times, thereby increasing the latency at higher percentiles.
+  - Dynamo can be characterized as a zero-hop DHT, where each node maintains enough routing information locally to route a request to the appropriate node directly（因此不允许multi-hop的设计，而必须是zero-hop的）
+
+** SYSTEM ARCHITECTURE
+The architecture of a storage system that needs to operate in a production setting is complex. In addition to the actual data persistence component, the system needs to have scalable and robust solutions for
+- load balancing,
+- membership and failure detection,
+- failure recovery,
+- replica synchronization,
+- overload handling,
+- state transfer,
+- concurrency
+- and job scheduling,
+- request marshalling,
+- request routing,
+- system monitoring and alarming,
+- and configuration management.
+ Describing the details of each of the solutions is not possible, so this paper focuses on the core distributed systems techniques used in Dynamo:
+1. partitioning,
+2. replication,
+3. versioning,
+4. membership,
+5. failure handling
+6. and scaling.
+
+file:images/dynamo-techniques-summary.png
+
+*** System Interface
+Dynamo stores objects associated with a key through a simple interface; it exposes two operations: get() and put().
+- The get(key) operation locates the object replicas associated with the key in the storage system and returns a single object or a list of objects with conflicting versions along with a context.
+- The put(key, context, object) operation determines where the replicas of the object should be placed based on the associated key, and writes the replicas to disk.
+- The context encodes system metadata about the object that is opaque to the caller and includes information such as the version of the object. The context information is stored along with the object so that the system can verify the validity of the context object supplied in the put request.（context应该包括了路由和版本信息）
+- Dynamo treats both the key and the object supplied by the caller as an opaque array of bytes. It applies a MD5 hash on the key to generate a 128-bit identifier, which is used to determine the storage nodes that are responsible for serving the key.（通过MD5来做hash）
+
+*** Partitioning Algorithm
+Dynamo’s partitioning scheme relies on consistent hashing to distribute the load across multiple storage hosts.（一致性hash来解决分布问题）
+- Each node in the system is assigned a random value within this space which represents its “position” on the ring. Each data item identified by a key is assigned to a node by hashing the data item’s key to yield its position on the ring, and then walking the ring clockwise to find the first node with a position larger than the item’s position.
+- Thus, each node becomes responsible for the region in the ring between it and its predecessor node on the ring. The principle advantage of consistent hashing is that departure or arrival of a node only affects its immediate neighbors and other nodes remain unaffected.
+
+The basic consistent hashing algorithm presents some challenges.（简单的一致性hash实现存在下面问题）
+- First, the random position assignment of each node on the ring leads to non-uniform data and load distribution. （分布不均匀）
+- Second, the basic algorithm is oblivious to the heterogeneity in the performance of nodes.（没有考虑异构性）
+
+To address these issues, Dynamo uses a variant of consistent hashing (similar to the one used in [10, 20]): instead of mapping a node to a single point in the circle, each node gets assigned to multiple points in the ring. To this end, Dynamo uses the concept of “virtual nodes”.（引入虚拟节点来解决上面问题）
+- A virtual node looks like a single node in the system, but each node can be responsible for more than one virtual node.
+- Effectively, when a new node is added to the system, it is assigned multiple positions (henceforth, “tokens”) in the ring.
+- Using virtual nodes has the following advantages:
+  - If a node becomes unavailable (due to failures or routine maintenance), the load handled by this node is evenly dispersed across the remaining available nodes.
+  - When a node becomes available again, or a new node is added to the system, the newly available node accepts a roughly equivalent amount of load from each of the other available nodes.
+  - The number of virtual nodes that a node is responsible can decided based on its capacity, accounting for heterogeneity in the physical infrastructure.
+
+*** Replication
+- To achieve high availability and durability, Dynamo replicates its data on multiple hosts. Each data item is replicated at N hosts, where N is a parameter configured “per-instance”.
+- Each key, k, is assigned to a coordinator node (described in the previous section). The coordinator is in charge of the replication of the data items that fall within its range.
+- In addition to locally storing each key within its range, the coordinator replicates these keys at the N-1 clockwise successor nodes in the ring. This results in a system where each node is responsible for the region of the ring between it and its Nth predecessor.（在顺时针方向的N个节点上保存副本）
+
+file:images/dynamo-partition-and-replication.png
+
+The list of nodes that is responsible for storing a particular key is called the *preference list*. The system is designed, as will be explained in Section 4.8, so that every node in the system can determine which nodes should be in this list for any particular key.
+- To account for node failures, preference list contains more than N nodes. Note that with the use of virtual nodes, it is possible that the first N successor positions for a particular key may be owned by less than N distinct physical nodes (i.e. a node may hold more than one of the first N positions). （因为引入了虚拟节点，所以preference list的长度会比N要大。副本必须确保在N个不同的物理机器上）
+- To address this, the preference list for a key is constructed by skipping positions in the ring to ensure that the list contains only distinct physical nodes.
+
+*** Data Versioning
+Dynamo provides eventual consistency, which allows for updates to be propagated to all replicas asynchronously. A put() call may return to its caller before the update has been applied at all the replicas, which can result in scenarios where a subsequent get() operation may return an object that does not have the latest updates.. If there are no failures then there is a bound on the update propagation times. However, under certain failure scenarios (e.g., server outages or network partitions), updates may not arrive at all replicas for an extended period of time.（异步replication）
+
+In order to provide this kind of guarantee, Dynamo treats the result of each modification as a new and immutable version of the data. It allows for multiple versions of an object to be present in the system at the same time. Most of the time, new versions subsume the previous version(s), and the system itself can determine the authoritative version (*syntactic reconciliation*). However, *version branching* may happen, in the presence of failures combined with concurrent updates, resulting in conflicting versions of an object. In these cases, the system cannot reconcile the multiple versions of the same object and the client must perform the reconciliation in order to collapse multiple branches of data evolution back into one (*semantic reconciliation*).
+
+It is important to understand that certain failure modes can potentially result in the system having not just two but several versions of the same data. Updates in the presence of network partitions and node failures can potentially result in an object having distinct version sub-histories, which the system will need to reconcile in the future. This requires us to design applications that explicitly acknowledge the possibility of multiple versions of the same data (in order to never lose any updates).
+
+Dynamo uses vector clocks in order to capture causality between different versions of the same object. A vector clock is effectively a list of (node, counter) pairs. *One vector clock is associated with every version of every object. One can determine whether two versions of an object are on parallel branches or have a causal ordering, by examine their vector clocks*. If the counters on the first object’s clock are less-than-or-equal to all of the nodes in the second clock, then the first is an ancestor of the second and can be forgotten. Otherwise, the two changes are considered to be in conflict and require reconciliation.（通过vector clock来解决版本冲突问题）
+
+In Dynamo, when a client wishes to update an object, it must specify which version it is updating. This is done by passing the context it obtained from an earlier read operation, which contains the vector clock information. Upon processing a read request, if Dynamo has access to multiple branches that cannot be syntactically reconciled, it will return all the objects at the leaves, with the corresponding version information in the context. An update using this context is considered to have reconciled the divergent versions and the branches are collapsed into a single new version.
+
+file:images/dynamo-version-evolution-illustration.png
+
+A possible issue with vector clocks is that the size of vector clocks may grow if many servers coordinate the writes to an object. In practice, this is not likely because the writes are usually handled by one of the top N nodes in the preference list. In case of network partitions or multiple server failures, write requests may be handled by nodes that are not in the top N nodes in the preference list causing the size of vector clock to grow. In these scenarios, it is desirable to limit the size of vector clock. To this end, Dynamo employs the following clock truncation scheme: *Along with each (node, counter) pair, Dynamo stores a timestamp that indicates the last time the node updated the data item. When the number of (node, counter) pairs in the vector clock reaches a threshold (say 10), the oldest pair is removed from the clock.* Clearly, this truncation scheme can lead to inefficiencies in reconciliation as the descendant relationships cannot be derived accurately. However, this problem has not surfaced in production and therefore this issue has not been thoroughly investigated.（通过删除历史来确保vector clock大小保持在合适的范围。每个vector clock包括若干个(node,counter)的组合，表明在node这个节点上发生过多少次更新。同时在这个组合上保存timestamp，如果这个组合历史超过一定数目的话，那么就会考虑删除历史）
+
+*** Execution of get () and put () operations
+- Both get and put operations are invoked using Amazon’s infrastructure-specific request processing framework over HTTP. There are two strategies that a client can use to select a node:
+  - *(1) route its request through a generic load balancer that will select a node based on load information, or* （HTTP代理）
+  - *(2) use a partition-aware client library that routes requests directly to the appropriate coordinator nodes.*
+  - The advantage of the first approach is that the client does not have to link any code specific to Dynamo in its application, whereas the second strategy can achieve lower latency because it skips a potential forwarding step.
+- *A node handling a read or write operation is known as the coordinator.* Typically, this is the first among the top N nodes in the preference list. If the requests are received through a load balancer, requests to access a key may be routed to any random node in the ring. In this scenario, the node that receives the request will not coordinate it if the node is not in the top N of the requested key’s preference list. Instead, that node will forward the request to the first among the top N nodes in the preference list. （通常是选择perference list上的第一个节点作为coordinator来处理read/write操作. *如果有load balance的话，那么会选择任意preference list top N nodes里面的任意一个节点来做* , client-library可能会内置load-balance功能比如round-robin）
+- Read and write operations involve the first N healthy nodes in the preference list, skipping over those that are down or inaccessible. When all nodes are healthy, the top N nodes in a key’s preference list are accessed. *When there are node failures or network partitions, nodes that are lower ranked in the preference list are accessed.*
+- To maintain consistency among its replicas, Dynamo uses a consistency protocol similar to those used in quorum systems. This protocol has two key configurable values: R and W. R is the minimum number of nodes that must participate in a successful read operation. W is the minimum number of nodes that must participate in a successful write operation. Setting R and W such that R + W > N yields a quorum-like system. In this model, the latency of a get (or put) operation is dictated by the slowest of the R (or W) replicas. For this reason, R and W are usually configured to be less than N, to provide better latency.（从N个节点里面，至少读取R个节点，至少写入W个节点，通过满足R+W>N这个条件来得到一致性）
+- Upon receiving a put() request for a key, the coordinator generates the vector clock for the new version and writes the new version locally. The coordinator then sends the new version (along with the new vector clock) to the N highest-ranked reachable nodes. If at least W-1 nodes respond then the write is considered successful.
+- Similarly, for a get() request, the coordinator requests all existing versions of data for that key from the N highest-ranked reachable nodes in the preference list for that key, and then waits for R responses before returning the result to the client. If the coordinator ends up gathering multiple versions of the data, it returns all the versions it deems to be causally unrelated. *The divergent versions are then reconciled and the reconciled version superseding the current versions is written back.* （协调完成之后由client-library将合并后的数据写回）
+
+*** Handling Failures: Hinted Handoff
+*节点临时挂掉*
+
+#todo: 这里还有一个问题就是，在完全去中心化的情况下面，如何判断一个节点是否挂掉
+
+#note: 按照我的理解，这个判断应该是由coordinator来判断的。coordinator来判断下面的A，D是否healthy. 而之后write-back则是D来判断A是否healthy的。也就是说在极端的情况下面，如果coordinator和D联通，但是和A不联通，D和A联通的话，那么所有的write都会以D为proxy，转发到A上。coordinator不可用的情况则是通过client来发现的。
+
+- If Dynamo used a traditional quorum approach it would be unavailable during server failures and network partitions, and would have reduced durability even under the simplest of failure conditions.
+- To remedy this it does not enforce strict quorum membership and instead it uses a “sloppy quorum”; all read and write operations are performed on the first N healthy nodes from the preference list, which may not always be the first N nodes encountered while walking the consistent hashing ring.（每次读写操作不是涉及到perference list的最开始的N个节点，而应该是最开始的N个健康节点）
+- Consider the example of Dynamo configuration given in Figure 2 with N=3. In this example, *if node A is temporarily down or unreachable during a write operation then a replica that would normally have lived on A will now be sent to node D.* This is done to maintain the desired availability and durability guarantees. The replica sent to D will have a hint in its metadata that suggests which node was the intended recipient of the replica (in this case A). *Nodes that receive hinted replicas will keep them in a separate local database that is scanned periodically. Upon detecting that A has recovered, D will attempt to deliver the replica to A. Once the transfer succeeds, D may delete the object from its local store without decreasing the total number of replicas in the system.* （如果A节点不认为down的话，那么会将对A的操作全部转移到clockwise的下一个节点上比如D，D单独维护所有这些操作。然后如果D检测到A是正常的话，那么D会将这些数据同步给A）
+- Using hinted handoff, Dynamo ensures that the read and write operations are not failed due to temporary node or network failures. Applications that need the highest level of availability can set W to 1, which ensures that a write is accepted as long as a single node in the system has durably written the key it to its local store. Thus, the write request is only rejected if all nodes in the system are unavailable. However, in practice, most Amazon services in production set a higher W to meet the desired level of durability.
+
+*** Handling permanent failures: Replica synchronization
+*节点永久下线*
+
+#note：这样看来node不仅仅要存放key-value data，还必须维持对应的merkle tree？这个数据结构存放在什么地方？
+
+- Hinted handoff works best if the system membership churn is low and node failures are transient. There are scenarios under which hinted replicas become unavailable before they can be returned to the original replica node. To handle this and other threats to durability, Dynamo implements an anti-entropy (replica synchronization) protocol to keep the replicas synchronized.
+- *To detect the inconsistencies between replicas faster and to minimize the amount of transferred data, Dynamo uses Merkle trees. A Merkle tree is a hash tree where leaves are hashes of the values of individual keys. Parent nodes higher in the tree are hashes of their respective children.*
+  - The principal advantage of Merkle tree is that each branch of the tree can be checked independently without requiring nodes to download the entire tree or the entire data set. Moreover, Merkle trees help in reducing the amount of data that needs to be transferred while checking for inconsistencies among replicas.
+  - For instance, if the hash values of the root of two trees are equal, then the values of the leaf nodes in the tree are equal and the nodes require no synchronization. If not, it implies that the values of some replicas are different. In such cases, the nodes may exchange the hash values of children and the process continues until it reaches the leaves of the trees, at which point the hosts can identify the keys that are “out of sync”.
+  - Merkle trees minimize the amount of data that needs to be transferred for synchronization and reduce the number of disk reads performed during the anti-entropy process.
+- Dynamo uses Merkle trees for anti-entropy as follows:
+  - *Each node maintains a separate Merkle tree for each key range (the set of keys covered by a virtual node) it hosts. This allows nodes to compare whether the keys within a key range are up-to-date.*
+  - In this scheme, two nodes exchange the root of the Merkle tree corresponding to the key ranges that they host in common. Subsequently, using the tree traversal scheme described above the nodes determine if they have any differences and perform the appropriate synchronization action.
+  - The disadvantage with this scheme is that many key ranges change when a node joins or leaves the system thereby requiring the tree(s) to be recalculated. This issue is addressed, however, by the refined partitioning scheme described in Section 6.2（如何快速更新Merkle Tree）
+
+*** Membership and Failure Detection
+*成员关系以及故障检测*
+
+**** Ring Membership
+- In Amazon’s environment node outages (due to failures and maintenance tasks) are often transient but may last for extended intervals. A node outage rarely signifies a permanent departure and therefore should not result in rebalancing of the partition assignment or repair of the unreachable replicas. Similarly, manual error could result in the unintentional startup of new Dynamo nodes. （大部分情况下节点都只是暂时下线，而不是永久下线，不会造成partition发生变化）
+- For these reasons, it was deemed appropriate to use an explicit mechanism to initiate the addition and removal of nodes from a Dynamo ring. An administrator uses a command line tool or a browser to connect to a Dynamo node and issue a membership change to join a node to a ring or remove a node from a ring. The node that serves the request writes the membership change and its time of issue to persistent store. The membership changes form a history because nodes can be removed and added back multiple times. （所以如果需要永久下线的话需要人工来显式操作，对于上线节点也是如此。上下节点这个过程非常重要是因为会改变成员关系）
+- A gossip-based protocol propagates membership changes and maintains an eventually consistent view of membership. Each node contacts a peer chosen at random every second and the two nodes efficiently reconcile their persisted membership change histories.（membership传播使用gossio-based协议来完成。原理是每个节点会定时和其他节点通信交换各自的membership, 来发现membership的改变然后同步）
+- When a node starts for the first time, it chooses its set of tokens (virtual nodes in the consistent hash space) and maps nodes to their respective token sets. The mapping is persisted on disk and initially contains only the local node and token set. （一个节点最初上线的时候，也会随机选择一些节点来做membership的交换。初始这个节点的membership里面只有自己，但是经过一定次数的交换之后就能够获得big picture。这个mapping关系最终会被持久化到磁盘上）
+- The mappings stored at different Dynamo nodes are reconciled during the same communication exchange that reconciles the membership change histories. Therefore, partitioning and placement information also propagates via the gossip-based protocol and each storage node is aware of the token ranges handled by its peers. This allows each node to forward a key’s read/write operations to the right set of nodes directly
+
+**** External Discovery
+- The mechanism described above could temporarily result in a logically partitioned Dynamo ring. （上面这种自动化方案可能造成临时的逻辑分割）
+- For example, the administrator could contact node A to join A to the ring, then contact node B to join B to the ring. In this scenario, nodes A and B would each consider itself a member of the ring, yet neither would be immediately aware of the other. （比如A，B两个节点独立上线，那么在一段时间内A，B两个节点可能都不会认为对方在这个ring上）
+- To prevent logical partitions, some Dynamo nodes play the role of seeds. Seeds are nodes that are discovered via an external mechanism and are known to all nodes. Because all nodes eventually reconcile their membership with a seed, logical partitions are highly unlikely. Seeds can be obtained either from static configuration or from a configuration service. Typically seeds are fully functional nodes in the Dynamo ring. （解决办法是选择几个seed nodes，这几个seed nodes有点类似public service。节点一旦加入ring之前需要在上面注册。这样如果两个节点上线的话那么很快就会发现对方的存在）
+
+**** Failure Detection
+- Failure detection in Dynamo is used to avoid attempts to communicate with unreachable peers during get() and put() operations and when transferring partitions and hinted replicas.
+- For the purpose of avoiding failed attempts at communication, a purely local notion of failure detection is entirely sufficient: node A may consider node B failed if node B does not respond to node A’s messages (even if B is responsive to node C's messages).
+- In the presence of a steady rate of client requests generating inter-node communication in the Dynamo ring, a node A quickly discovers that a node B is unresponsive when B fails to respond to a message; Node A then uses alternate nodes to service requests that map to B's partitions; A periodically retries B to check for the latter's recovery.
+- *In the absence of client requests to drive traffic between two nodes, neither node really needs to know whether the other is reachable and responsive.* （节点之间是否通常都是在外部请求的驱动下来完成的）
+
+*** Adding/Removing Storage Nodes
+- When a new node (say X) is added into the system, it gets assigned a number of tokens that are randomly scattered on the ring. For every key range that is assigned to node X, there may be a number of nodes (less than or equal to N) that are currently in charge of handling keys that fall within its token range. Due to the allocation of key ranges to X, some existing nodes no longer have to some of their keys and these nodes transfer those keys to X. When a node is removed from the system, the reallocation of keys happens in a reverse process.
+- Operational experience has shown that this approach distributes the load of key distribution uniformly across the storage nodes, which is important to meet the latency requirements and to ensure fast bootstrapping. Finally, by adding a confirmation round between the source and the destination, it is made sure that the destination node does not receive any duplicate transfers for a given key range.（加入节点在更新membership的同时，也会和涉及到parition变化的节点做通信，这样可以很快地完成partition的调整，而不用等待到membership完全完成之后才可用）
+
+** IMPLEMENTATION
+In Dynamo, each storage node has three main software components: request coordination, membership and failure detection, and a local persistence engine. All these components are implemented in Java.
+- Dynamo’s local persistence component allows for different  storage engines to be plugged in. Engines that are in use are Berkeley Database (BDB) Transactional Data Store2, BDB Java Edition, MySQL, and an in-memory buffer with persistent backing store. The main reason for designing a pluggable persistence component is to choose the storage engine best suited for an application’s access patterns.（可插拔的底层存储系统）
+- The request coordination component is built on top of an event-driven messaging substrate where the message processing pipeline is split into multiple stages similar to the SEDA architecture.（请求处理上采用类似event-drien的编程方式，消息处理的pipeline被分割成为多个stage，类似SEDA架构）
+  - All communications are implemented using Java NIO channels.
+  - The coordinator executes the read and write requests on behalf of clients by collecting data from one or more nodes (in the case of reads) or storing data at one or more nodes (for writes).
+  - Each client request results in the creation of a state machine on the node that received the client request. The state machine contains all the logic for identifying the nodes responsible for a key, sending the requests, waiting for responses, potentially doing retries, processing the replies and packaging the response to the client. Each state machine instance handles exactly one client request.（coordinator对每个请求创建state machine, state machine是很典型的event-driven编程实现方式）
+  - *After the read response has been returned to the caller the state machine waits for a small period of time to receive any outstanding responses. If stale versions were returned in any of the responses, the coordinator updates those nodes with the latest version. This process is called read repair* because it repairs replicas that have missed a recent update at an opportunistic time and relieves the anti-entropy protocol from having to do it. （然后coordinator等待一段时间，等待client的回复。client完成冲突解析之后会将解析之后的结果写回。这个过程称为read repair）
+  - As noted earlier, write requests are coordinated by one of the top N nodes in the preference list. Although it is desirable always to have the first node among the top N to coordinate the writes thereby serializing all writes at a single location, this approach has led to uneven load distribution resulting in SLA violations. This is because the request load is not uniformly distributed across objects. To counter this, any of the top N nodes in the preference list is allowed to coordinate the writes.
+  - In particular, since each write usually follows a read operation, the coordinator for a write is chosen to be the node that replied fastest to the previous read operation which is stored in the context information of the
+request. This optimization enables us to pick the node that has the data that was read by the preceding read operation thereby increasing the chances of getting “read-your-writes” consistency. It also reduces variability in the performance of the request handling which improves the performance at the 99.9 percentile. （read返回的context用来为之后的write服务）
+
+** EXPERIENCES & LESSONS LEARNED
+*** Configurations
+Dynamo is used by several services with different configurations. These instances differ by their version reconciliation logic, and read/write quorum characteristics. The following are the main patterns in which Dynamo is used:
+- *Business logic specific reconciliation:* This is a popular use case for Dynamo. Each data object is replicated across multiple nodes. In case of divergent versions, the client application performs its own reconciliation logic. The shopping cart service discussed earlier is a prime example of this category. Its business logic reconciles objects by merging different versions of a customer’s shopping cart.
+- *Timestamp based reconciliation:* This case differs from the previous one only in the reconciliation mechanism. In case of divergent versions, Dynamo performs simple timestamp based reconciliation logic of “last write wins”; i.e., the object with the largest physical timestamp value is chosen as the correct version. The service that maintains customer’s session information is a good example of a service that uses this mode.
+- High performance read engine: While Dynamo is built to be an “always writeable” data store, a few services are tuning its quorum characteristics and using it as a high performance read engine. Typically, these services have a high read request rate and only a small number of updates. In this configuration, typically R is set to be 1 and W to be N. For these services, Dynamo provides the ability to partition and replicate their data across multiple nodes thereby offering incremental scalability. Some of these instances function as the authoritative persistence cache for data stored in more heavy weight backing stores. Services that maintain product catalog and promotional items fit in this category.
+
+The main advantage of Dynamo is that its client applications can tune the values of N, R and W to achieve their desired levels of performance, availability and durability. For instance, the value of N determines the durability of each object. A typical value of N used by Dynamo’s users is 3. The values of W and R impact object availability, durability and consistency. For instance, if W is set to 1, then the system will never reject a write request as long as there is at least one node in the system that can successfully process a write request. However, low values of W and R can increase the risk of inconsistency as write requests are deemed successful and returned to the clients even if they are not processed by a majority of the replicas. This also introduces a vulnerability window for durability when a write request is successfully returned to the client even though it has been persisted at only a small number of nodes.
+
+The common (N,R,W) configuration used by several instances of Dynamo is (3,2,2). These values are chosen to meet the necessary levels of performance, durability, consistency, and availability SLAs. All the measurements presented in this section were taken on a live system operating with a configuration of (3,2,2) and running a couple hundred nodes with homogenous hardware configurations. As mentioned earlier, each instance of Dynamo contains nodes that are located in multiple datacenters. These datacenters are typically connected through high speed network links. Recall that to generate a successful get (or put) response R (or W) nodes need to respond to the coordinator. Clearly, the network latencies between datacenters affect the response time and the nodes (and their datacenter locations) are chosen such that the applications target SLAs are met.（通过调整R，W，N来满足不同的SLA）
+
+*** Balancing Performance and Durability
+- A typical SLA required of services that use Dynamo is that 99.9% of the read and write requests execute within 300ms.
+- Figure 4 shows the average and 99.9th percentile latencies of Dynamo’s read and write operations during a period of 30 days.
+  - the latencies exhibit a clear diurnal pattern which is a result of the diurnal pattern in the incoming request rate
+  - Moreover, the write latencies are higher than read latencies obviously because write operations always results in disk access.
+  - Also, the 99.9th percentile latencies are around 200 ms and are an order of magnitude higher than the averages.
+file:images/dynamo-latency-distribution.png
+
+
+While this level of performance is acceptable for a number of services, a few customer-facing services required higher levels of performance. For these services, Dynamo provides the ability to trade-off durability guarantees for performance. In the optimization each storage node maintains an object buffer in its main memory. Each write operation is stored in the buffer and gets periodically written to storage by a writer thread. In this scheme, read operations first check if the requested key is present in the buffer. If so, the object is read from the buffer instead of the storage engine.（修改存储引擎，写入的话并没有直接写入磁盘而是写入到buffer里面，有专门的后台线程将这些数据刷出，然后read操作都去buffer内容，实现上和leveldb等非常类似）
+
+Obviously, this scheme trades durability for performance. In this scheme, a server crash can result in missing writes that were queued up in the buffer. To reduce the durability risk, the write operation is refined to have the coordinator choose one out of the N replicas to perform a “durable write”. Since the coordinator waits only for W responses, the performance of the write operation is not affected by the performance of the durable write operation performed by a single replica.（可以很明显上面这个方案会影响到持久性。所以一个实现上的折衷是，要求N个replicas中至少有一个写入disk，而其他的可以只写入buffer。而因为最终只需要等待到W个节点返回成功即可，所以不会影响到写入操作的延迟）
+
+This optimization has resulted in lowering the 99.9th percentile latency by a factor of 5 during peak traffic even for a very small buffer of a thousand objects (see Figure 5). Also, as seen in the figure, write buffering smoothes out higher percentile latencies.
+
+file:images/dynamo-write-optimization.png
+
+*** Ensuring Uniform Load distribution
+To study the load imbalance and its correlation with request load, the total number of requests received by each node was measured for a period of 24 hours - broken down into intervals of 30 minutes. In a given time window, a node is considered to be “in- balance”, if the node’s request load deviates from the average load by a value a less than a certain threshold (here 15%). Otherwise the node was deemed “out-of-balance”. Figure 6 presents the fraction of nodes that are “out-of-balance” (henceforth, “imbalance ratio”) during this time period.（定义balance标准）
+
+file:images/dynamo-balance.png
+
+As seen in the figure, the imbalance ratio decreases with increasing load. For instance, during low loads the imbalance ratio is as high as 20% and during high loads it is close to 10%. Intuitively, this can be explained by the fact that under high loads, a large number of popular keys are accessed and due to uniform distribution of keys the load is evenly distributed. However, during low loads (where load is 1/8th of the measured peak load), fewer popular keys are accessed, resulting in a higher load imbalance.（情况是在高负载的情况下面，还是相对比较均衡的。可是在低负载的情况下，分布就不均衡了） #note: 可能这个结论适合几乎所有的分布式系统
+
+-----
+
+This section discusses how Dynamo’s partitioning scheme has evolved over time and its implications on load distribution.
+
+file:images/dynamo-partition-strategy.png
+
+- Strategy 1: T random tokens per node and partition by token value
+  - In this scheme, each node is assigned T tokens (chosen uniformly at random from the hash space). The tokens of all nodes are ordered according to their values in the hash space. Every two consecutive tokens define a range. The last token and the first token form a range that "wraps" around from the highest value to the lowest value in the hash space. Because the tokens are chosen randomly, the ranges vary in size. As nodes join and leave the system, the token set changes and consequently the ranges change. Note that the space needed to maintain the membership at each node increases linearly with the number of nodes in the system.（两个连续token定义一个range，所以如果节点发生变化的话，那么range也会发生变化）
+  - While using this strategy, the following problems were encountered.
+    - First, when a new node joins the system, it needs to “steal” its key ranges from other nodes. However, the nodes handing the key ranges off to the new node have to scan their local persistence store to retrieve the appropriate set of data items. Note that performing such a scan operation on a production node is tricky as scans are highly resource intensive operations and they need to be executed in the background without affecting the customer performance. This requires us to run the bootstrapping task at the lowest priority. However, this significantly slows the bootstrapping process and during busy shopping season, when the nodes are handling millions of requests a day, the bootstrapping has taken almost a day to complete. （第一个问题是如果新增节点的话，那么会将一部分kv转移过来。可是这部分kv没有简单办法定义预先计算好，因为是根据token来定义的range来选择的。所以实现上不可避免需要扫表，只是选择处于range部分kv，转移到新的节点上。而scan操作是比较消耗资源的）
+    - Second, when a node joins/leaves the system, the key ranges handled by many nodes change and the Merkle trees for the new ranges need to be recalculated, which is a non-trivial operation to perform on a production system. Finally, there was no easy way to take a snapshot of the entire key space due to the randomness in key ranges, and this made the process of archival complicated. In this scheme, archiving the entire key space requires us to retrieve the keys from each node separately, which is highly inefficient.（另外一个问题则是维护的Merkle Tree需要重新计算。同样因为没有办法预先计算好需要转移哪些kv，所以更新merkle tree也是非常费事的）
+  - The fundamental issue with this strategy is that the schemes for data partitioning and data placement are intertwined. For instance, in some cases, it is preferred to add more nodes to the system in order to handle an increase in request load. However, in this scenario, it is not possible to add nodes without affecting data partitioning. Ideally, it is desirable to use independent schemes for partitioning and placement. To this end, following strategies were evaluated #note: 最大的挑战是数据的partition或者说是range以不可预知的方式变化*
+
+- Strategy 2: T random tokens per node and equal sized partitions
+  - In this strategy, the hash space is divided into Q equally sized partitions/ranges and each node is assigned T random tokens. Q is usually set such that Q >> N and Q >> S*T, where S is the number of nodes in the system. （数据分片预先定义好了切分成为Q份，这样节点的变化并不会造成range发生变化）
+  - In this strategy, the tokens are only used to build the function that maps values in the hash space to the ordered lists of nodes and not to decide the partitioning. A partition is placed on the first N unique nodes that are encountered while walking the consistent hashing ring clockwise from the end of the partition（以上图为例，所有阴影区部分的数据都会放在这个阴影区之后的N个顺时针节点上）
+  - The primary advantages of this strategy are: (i) decoupling of partitioning and partition placement, and (ii) enabling the possibility of changing the placement scheme at runtime.
+  - #note: 以上图为例，这些节点对应的token可能处于partition中间。这是和Strategy 3不同的地方。会导致分布不均匀的问题。
+
+- Strategy 3: Q/S tokens per node, equal-sized partitions
+  - Similar to strategy 2, this strategy divides the hash space into Q equally sized partitions and the placement of partition is decoupled from the partitioning scheme.
+  - Moreover, each node is assigned Q/S tokens where S is the number of nodes in the system. When a node leaves the system, its tokens are randomly distributed to the remaining nodes such that these properties are preserved. Similarly, when a node joins the system it "steals" tokens from nodes in the system in a way that preserves these properties.
+  - #note: 和strategy 2非常类似，但是这些节点对应的token都是在对应的partition point上面。相对于2来说更加容易管理和实现，而且分布更加均匀。
+
+-----
+
+The results are given in Figure 8. As seen in the figure, strategy 3 achieves the best load balancing efficiency and strategy 2 has the worst load balancing efficiency.
+
+file:images/dynamo-partition-strategy-evaluation.png
+
+- Compared to Strategy 1, Strategy 3 achieves better efficiency and reduces the size of membership information maintained at each node by three orders of magnitude. While storage is not a major issue the nodes gossip the membership information periodically and as such it is desirable to keep this information as compact as possible.（策略3所需要保存的信息更加简单，这样就使得gossip membership过程更加高效）
+- In addition to this, strategy 3 is advantageous and simpler to deploy for the following reasons:
+  - (i) Faster bootstrapping/recovery: Since partition ranges are fixed, they can be stored in separate files, meaning a partition can be relocated as a unit by simply transferring the file (avoiding random accesses needed to locate specific items). This simplifies the process of bootstrapping and recovery. （每个节点可以将对应的partition数据分开存放在不同的文件下面，如果发生转移的话那么整个文件转移即可）
+  - (ii) Ease of archival: Periodical archiving of the dataset is a mandatory requirement for most of Amazon storage services. Archiving the entire dataset stored by Dynamo is simpler in strategy 3 because the partition files can be archived separately. By contrast, in Strategy 1, the tokens are chosen randomly and, archiving the data stored in Dynamo requires retrieving the keys from individual nodes separately and is usually inefficient and slow.
+- The disadvantage of strategy 3 is that changing the node membership requires coordination in order to preserve the properties required of the assignment.
+
+*** Divergent Versions: When and How Many?
+- Divergent versions of a data item arise in two scenarios.
+  - The first is when the system is facing failure scenarios such as node failures, data center failures, and network partitions.
+  - The second is when the system is handling a large number of concurrent writers to a single data item and multiple nodes end up coordinating the updates concurrently.
+- In our next experiment, the number of versions returned to the shopping cart service was profiled for a period of 24 hours. During this period, 99.94% of requests saw exactly one version; 0.00057% of requests saw 2 versions; 0.00047% of requests saw 3 versions and 0.00009% of requests saw 4 versions. This shows that divergent versions are created rarely.
+- Experience shows that the increase in the number of divergent versions is contributed not by failures but due to the increase in number of concurrent writers. The increase in the number of concurrent writes is usually triggered by busy robots (automated client programs) and rarely by humans. This issue is not discussed in detail due to the sensitive nature of the story.
+
+*** Client-driven or Server-driven Coordination
+按照我的理解，这里的client-driven就通过partition-aware client library来操作，而server-driven就是外部节点随意请求节点，然后这个节点作为proxy将request forward到对应的处理节点上。很明显client-driven的工作方式会更加合理，但是partition-aware这个工作会将library复杂化。HTTP Proxy严格来说也不算是server-driven，但是最终效果上来看和server-driven是差不多的，所以这节的数据对比可以认为是client-library和HTTP方式的效率对比。
+
+As mentioned in Section 5, Dynamo has a request coordination component that uses a state machine to handle incoming requests. Client requests are uniformly assigned to nodes in the ring by a load balancer.
+- Any Dynamo node can act as a coordinator for a read request. （理论上来说任何节点都可以相应put/get操作）
+- Write requests on the other hand will be coordinated by a node in the key’s current preference list. This restriction is due to the fact that these preferred nodes have the added responsibility of creating a new version stamp that causally subsumes the version that has been updated by the write request. （现在之所以write由特定节点来操作的话，是因为需要这个节点的时间戳来处理vector clock历史，以及为后面冲突处理服务）
+- Note that if Dynamo’s versioning scheme is based on physical timestamps, any node can coordinate a write request.（我的理解是，如果时间戳可以在所有集群上都同步的话，或者是差别比较小的话，实际上可以由任意节点来发起写操作）
+- 实际上HBase也有这个问题。我之前遇到过clock skew问题结果HBase拒绝工作。所以我觉得dynamo完全可以假设这个条件，这样任意节点都可以发起写操作了
+
+client-driven工作方式大致如下： An alternative approach to request coordination is to move the state machine to the client nodes. In this scheme client applications use a library to perform request coordination locally.
+- A client periodically picks a random Dynamo node and downloads its current view of Dynamo membership state. （很明显client需要得到membership信息，如何更新这个信息后面会给出解决办法）
+- Using this information the client can determine which set of nodes form the preference list for any given key.
+- Read requests can be coordinated at the client node thereby avoiding the extra network hop that is incurred if the request were assigned to a random Dynamo node by the load balancer.
+- Writes will either be forwarded to a node in the key’s preference list or can be coordinated locally if Dynamo is using timestamps based versioning.
+An important advantage of the client-driven coordination approach is that a load balancer is no longer required to uniformly distribute client load. Fair load distribution is implicitly guaranteed by the near uniform assignment of keys to the storage nodes.
+
+Obviously, the efficiency of this scheme is dependent on how fresh the membership information is at the client. Currently clients poll a random Dynamo node every 10 seconds for membership updates. A pull based approach was chosen over a push based one as the former scales better with large number of clients and requires very little state to be maintained at servers regarding clients. However, in the worst case the client can be exposed to stale membership for duration of 10 seconds. In case, if the client detects its membership table is stale (for instance, when some members are unreachable), it will immediately refresh its membership information.（现在membership的更新方式是每隔10s和随机节点做同步，由client主动发起）
+
+Table 2 shows the latency improvements at the 99.9th  percentile and averages that were observed for a period of 24 hours using client-driven coordination compared to the server-driven approach. As seen in the table, the client-driven coordination approach reduces the latencies by at least 30 milliseconds for 99.9th percentile latencies and decreases the average by 3 to 4 milliseconds. *The latency improvement is because the client-driven approach eliminates the overhead of the load balancer and the extra network hop that may be incurred when a request is assigned to a random node.* As seen in the table, average latencies tend to be significantly lower than latencies at the 99.9th percentile. *This is because Dynamo’s storage engine caches and write buffer have good hit ratios.* Moreover, since the load balancers and network introduce additional variability to the response time, the gain in response time is higher for the 99.9th percentile than the average. #note: 似乎说的不错，cache是造成average和99.9%的延迟差别较大的主要原因
+
+file:images/dynamo-client-and-server-driven.png
+
+*** Balancing background vs. foreground tasks
+Each node performs different kinds of background tasks for replica synchronization and data handoff (either due to hinting or adding/removing nodes) in addition to its normal foreground put/get operations. In early production settings, these background tasks triggered the problem of resource contention and affected the performance of the regular put and get operations. Hence, it became necessary to ensure that background tasks ran only when the regular critical operations are not affected significantly.（后台任务会影响到前台任务，而很明显前台任务的优先级更高）
+
+To this end, the background tasks were integrated with an admission control mechanism. Each of the background tasks uses this controller to reserve runtime slices of the resource (e.g. database), shared across all background tasks. A feedback mechanism based on the monitored performance of the foreground tasks is employed to change the number of slices that are available to the background tasks.（通过反馈系统来调节后台任务运行时间片，减少后台任务对于前台任务的影响）
+
+The admission controller constantly monitors the behavior of resource accesses while executing a "foreground" put/get operation. *Monitored aspects include latencies for disk operations, failed database accesses due to lock-contention and transaction timeouts, and request queue wait times. This information is used to check whether the percentiles of latencies (or failures) in a given trailing time window are close to a desired threshold.* For example, the background controller checks to see how close the 99th percentile database read latency (over the last 60 seconds) is to a preset threshold (say 50ms). The controller uses such comparisons to assess the resource availability for the foreground operations. Subsequently, it decides on how many time slices will be available to background tasks, thereby using the feedback loop to limit the intrusiveness of the background activities.
+
+*** Discussion
+In particular, applications have received successful responses (without timing out) for 99.9995% of its requests and no data loss event has occurred to date.
+
+** CONCLUSIONS
+
+** NOTES
+-----
+<大规模分布式存储系统>
+
+Dynamo采用无中心节点的P2P设计，增加了系统可扩展性，但是同时带来了一致性问题，影响上层应用。另外一致性问题也使得异常情况下的测试变得更加困难，由于Dynamo只保证最基本的最终一致性，多客户端并发操作的时候很难预测操作结果，也很难预测不一致的时间窗口，影响测试用例设计。
+
+总体上看，Dynamo在Amazon的使用场景有限，后续的很多系统，如SimpleDB采用其他设计思路以提供更好的一致性。主流的分布式系统一般都带有中心节点，这样能够简化设计，而且中心节点只维护少量元数据，一般不会成为性能瓶颈。
+
+从Amazon, Facebook等公司的实践经验可以得出，Dynamo及其开源实现Cassandra在实践中的关注逐渐减少，无中心节点的设计短期之内难以成为主流。另一方面，Dynamo综合使用了各种分布式技术，在实践过程中可以选择性借鉴。

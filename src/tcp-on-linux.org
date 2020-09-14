@@ -1,0 +1,85 @@
+#+title: TCP Implementation in Linux: A Brief Tutorial
+
+http://www.ece.virginia.edu/cheetah/documents/papers/TCPlinux.pdf
+
+** create connection
+下面摘自 "[[http://blog.sina.com.cn/s/blog_e59371cc0102vg4n.html][Linux TCP队列相关参数的总结]]":
+
+file:images/tcp-create-connection.png
+
+简单看下连接的建立过程，客户端向server发送SYN包，server回复SYN＋ACK，同时将这个处于SYN_RECV状态的连接保存到半连接队列。客户端返回ACK包完成三次握手，server将ESTABLISHED状态的连接移入accept队列，等待应用调用accept()。可以看到建立连接涉及两个队列：
+- 半连接队列，保存SYN_RECV状态的连接。队列长度由net.ipv4.tcp_max_syn_backlog设置。
+- accept队列，保存ESTABLISHED状态的连接。队列长度为min(net.core.somaxconn, backlog). # listen(sockfd, backlog)
+
+另外，为了应对SYN flooding（即客户端只发送SYN包发起握手而不回应ACK完成连接建立，填满server端的半连接队列，让它无法处理正常的握手请求），Linux实现了一种称为SYN cookie的机制，通过net.ipv4.tcp_syncookies控制，设置为1表示开启。简单说SYN cookie就是将连接信息编码在ISN(initial sequence number)中返回给客户端，这时server不需要将半连接保存在队列中，而是利用客户端随后发来的ACK带回的ISN还原连接信息，以完成连接的建立，避免了半连接队列被攻击SYN包填满。对于一去不复返的客户端握手，不理它就是了。
+
+** packet reception
+file:images/tcp-packet-reception.png
+
+整个流程大致如下：
+- linux里面使用sk_buff数据结构来描述packet.
+- NIC检测到packet到达，从Kernel Memory(sk_buffs)分配sk_buff数据结构，调用DMA Engine将packet放到sk_buff数据结构里面。NIC检测有packet到达和有packet发送，都不是触发而是主动poll的方式来完成的
+- 将sk_buff并且加入rx_ring这个ring_buffer里面。如果rx_ring满了的话那么将packet丢弃。
+- 当DMA Engine完成处理之后， *NIC通过向CPU发起中断* 通知kernel进行处理。
+- kernel将这个packet传递给IP层进行处理。IP层需要将信息组装成为ip packet。如果ip packet是tcp的话那么放到socket backlog里面。如果socket backlog满了的话那么将ip packet丢弃。 *copy packet data to ip buffer to form ip packet*. 这个步骤完成之后IP layer就可以释放sk_buffer结构
+- tcp layer从socket backlog里面取出tcp packet， *copy ip packet tcp recv buffer to form tcp packet*
+- tcp recv buffer交给application layer处理， *copy tcp recv buffer to app buffer to form app packet*
+- 其中内核参数有
+  - /proc/sys/net/ipv4/tcp_rmem # tcp recv buffer大小
+  - /proc/sys/net/core/netdev_max_backlog # 图中socket backlog大小，和accept系统调用的backlog区分开。
+
+下面这些是从文章摘取出来的
+- [[http://blog.sina.com.cn/s/blog_e59371cc0102vg4n.html][Linux TCP队列相关参数的总结]]
+- https://www.suse.com/documentation/sles11/book_sle_tuning/data/sec_tuning_network_buffers.html
+
+#+BEGIN_QUOTE
+Linux在2.6.17以后增加了recv Buffer自动调节机制，recv buffer的实际大小会自动在最小值和最大值之间浮动，以期找到性能和资源的平衡点，因此大多数情况下不建议将recv buffer手工设置成固定值。
+
+当net.ipv4.tcp_moderate_rcvbuf设置为1时，自动调节机制生效，每个TCP连接的recv Buffer由下面的3元数组指定：net.ipv4.tcp_rmem = (min, default, max). 最初recv buffer被设置为<default>，同时这个缺省值会覆盖net.core.rmem_default的设置。随后recv buffer根据实际情况在最大值和最小值之间动态调节。在缓冲的动态调优机制开启的情况下，我们将net.ipv4.tcp_rmem的最大值设置为BDP(Bandwidth-Delay Product)。
+
+当net.ipv4.tcp_moderate_rcvbuf被设置为0，或者设置了socket选项SO_RCVBUF，缓冲的动态调节机制被关闭。recv buffer的缺省值由net.core.rmem_default设置，但如果设置了net.ipv4.tcp_rmem，缺省值则被覆盖。可以通过系统调用setsockopt()设置recv buffer的最大值为net.core.rmem_max。在缓冲动态调节机制关闭的情况下，建议把缓冲的缺省值设置为BDP。
+
+发送端缓冲的自动调节机制很早就已经实现，并且是无条件开启，没有参数去设置。如果指定了tcp_wmem，则net.core.wmem_default被tcp_wmem的覆盖。send Buffer在tcp_wmem的最小值和最大值之间自动调节。如果调用setsockopt()设置了socket选项SO_SNDBUF，将关闭发送端缓冲的自动调节机制，tcp_wmem将被忽略，SO_SNDBUF的最大值由net.core.wmem_max限制。
+#+END_QUOTE
+
+** packet transmission
+file:images/tcp-packet-transmission.png
+
+整个流程大致如下：
+- application layer将数据copy到tcp send buffer里面，如果空间不够的话那么就会出现阻塞。 *copy app buffer to tcp send buffer as app packet*
+- tcp layer等待tcp send buffer存在数据或者是需要做ack的时候，组装ip packet推送到IP layer *copy tcp send buffer to ip send buffer as tcp packet*
+- IP layer从kernel memory申请sk_buffer，将ip data包装成为packet data，然后塞到qdisc(txqueuelen控制队列长度）里面（指针）。如果队列满的话那么就会出现阻塞，反馈到tcp layer阻塞。 *copy ip send buffer to packet data as ip packet*
+- NIC driver如果检测到qdisc有数据的话，调用NIC DMA Engine将packet发送出去。发送完成之后NIC向CPU发起中断释放packet data内存到Kernel Memory
+- 其中内核参数有：
+  - /proc/sys/net/ipv4/tcp_wmem 这个和rmem非常类似
+  - 与上面类比，相关参数还有net.core.wmem_default和net.core.wmem_max.
+
+在wangyx的帮助下, qdisc队列长度参数txqueuelen这个配置在ifconfig下面找到了. txqueuelen = 1000.
+#+BEGIN_EXAMPLE
+➜  ~  ifconfig
+eth0      Link encap:Ethernet  HWaddr 12:31:40:00:49:d1
+          inet addr:10.170.78.31  Bcast:10.170.79.255  Mask:255.255.254.0
+          inet6 addr: fe80::1031:40ff:fe00:49d1/64 Scope:Link
+          UP BROADCAST RUNNING MULTICAST  MTU:1500  Metric:1
+          RX packets:13028359 errors:0 dropped:0 overruns:0 frame:0
+          TX packets:9504902 errors:0 dropped:0 overruns:0 carrier:0
+          collisions:0 txqueuelen:1000
+          RX bytes:2464083770 (2.4 GB)  TX bytes:20165782073 (20.1 GB)
+          Interrupt:25
+#+END_EXAMPLE
+
+下面摘自: [[http://blog.sina.com.cn/s/blog_e59371cc0102vg4n.html][Linux TCP队列相关参数的总结]]
+#+BEGIN_QUOTE
+QDisc（queueing discipline ）位于IP层和网卡的ring buffer之间。我们已经知道，ring buffer是一个简单的FIFO队列，这种设计使网卡的驱动层保持简单和快速。而QDisc实现了流量管理的高级功能，包括流量分类，优先级和流量整形（rate-shaping）。可以使用tc命令配置QDisc。
+
+QDisc的队列长度由txqueuelen设置，和接收数据包的队列长度由内核参数net.core.netdev_max_backlog控制所不同，txqueuelen是和网卡关联
+#+END_QUOTE
+
+** congestion control
+file:images/tcp-congestion-control.png
+
+- 初始状态是slow start
+- cwnd(congestion window) 拥塞窗口，表示一次最多发送的数据包多少。
+- ssthresh(slow start threshold) 慢速启动阈值。
+- MSS(maximum segment size) 最大分节大小，和传输网络的MTU相关。
+- [[http://www.zhihu.com/question/21813579][为什么多 TCP 连接分块下载比单连接下载快？]]

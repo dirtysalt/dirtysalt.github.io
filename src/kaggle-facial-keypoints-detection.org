@@ -1,0 +1,13 @@
+#+title: Kaggle Facial Keypoints Detection
+
+[[file:codes/misc/kaggle/facial-keypoints-detection][code on github]]
+
+[[http://danielnouri.org/notes/2014/12/17/using-convolutional-neural-nets-to-detect-facial-keypoints-tutorial/][这个教程]] 真心不错，里面能够学到不少东西，比如FlipBatchIterator来在线提供不同的batch, EarlyStopping策略，以及Specialist来单独处理某些实例。
+
+做这个题目最无奈的就是没有GPU/CUDA来加速CNN的训练，使用默认BatchIterator或者是作者给的FlipBatchIterator, 因为每轮(epoch)都要使用mini-batch方式来训练所有数据，在CPU主频3.5Ghz的电脑，一个epoch需要~240s也就是4min. 这个几乎不能忍受。虽然我仿照caffe的思路，为nolearn提供了 [[https://github.com/dnouri/nolearn/pull/69][MiniBatchIterator]] 实现（每一个epoch不需要训练所有数据），但是速度依然不够。另外使用FlipBatchIterator感觉非常容易出现震荡(validation loss时高时低), 没有直接使用数据扩增后的数据效果好。不过有点是非常灵活，尤其是可以提供多种不同变化组合来进行数据扩增，比如 [[http://benanne.github.io/2015/03/17/plankton.html][这里]]
+
+最后没有办法还是改用ANN。其实ANN的 [[https://www.kaggle.com/c/facial-keypoints-detection/forums/t/13321/share-a-ann-cnn-topology/71279#post71279][效果还行]] ，而且训练速度也非常快，差不多一轮在1~2s左右，运行个400 epochs基本上就差不多了。但是ANN不能太深，超过3层之后大约在40 epochs之后就训练不动了，控制在2~3层就差不多了。
+
+我使用的ANN没有增加dropout layer. 做这个题目的时候我重新思考了一下关于如何使用dropout layer. 最好不要一上来就开始加dropout, 只有确定出现overfitting情况的时候再开始添加。training和validation error差别很大的时候，可以认为出现overfitting. 出现overfitting的时候，首先应该考虑增加数据，然后考虑regularization(weight-decay or dropout, 比如在caffe里面如果使用weight-decay的话，那么就可以不要使用dropout). 增大数据和调整模型直到overfitting现象消失，然后再考虑增加模型复杂度来增加精确度，之后继续出现overfitting，这样不断迭代改进。
+
+note(dirlt @ 2015-04-17): 判断出现overfitting一个标准应该是，training error不断下降但是validation error却保持稳定或者是震荡。今天借用了fzh师姐的一台GPU机器跑了一个CNN模型，效果确实比ANN好不少(从LB上看，ANN是3.08932，CNN是2.67626）。因为这个CNN我也没有增加dropout layer, 所以印象中后期应该是出现了overfitting的情况，但是当时觉得效果还不错就没有在做调整。

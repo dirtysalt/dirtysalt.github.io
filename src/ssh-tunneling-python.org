@@ -1,0 +1,103 @@
+#+title: SSH Tunneling in Python
+
+原理可以看这篇 [[https://codingsec.net/2016/05/perform-ssh-tunneling-python/][文章]], 里面的配图一目了然.
+
+file:images/ssh-tunneling.png
+
+"ssh -L 8008:web:80 justin@sshserver" 命令意味着：
+1. 本地连接到sshserver这台机器上, 本地对应端口是8008.
+2. sshserver会将所有流量转发到web:80这台机器上.
+
+[[http://www.paramiko.org/][paramiko]] 仓库里面提供了一个 [[https://github.com/paramiko/paramiko/blob/master/demos/forward.py][示例代码]]. 从main函数入手：
+- 本地连接到sshserver. 然后调用 `get_transport` 得到传输层句柄（TCP上层，应用层下层）
+- 调用 `forward_tunnel` 创建本地tcp server用于数据转发。
+
+#+BEGIN_SRC Python
+def main():
+    options, server, remote = parse_options()
+
+    password = None
+    if options.readpass:
+        password = getpass.getpass('Enter SSH password: ')
+
+    client = paramiko.SSHClient()
+    client.load_system_host_keys()
+    client.set_missing_host_key_policy(paramiko.WarningPolicy())
+
+    verbose('Connecting to ssh host %s:%d ...' % (server[0], server[1]))
+    try:
+        client.connect(server[0], server[1], username=options.user, key_filename=options.keyfile,
+                       look_for_keys=options.look_for_keys, password=password)
+    except Exception as e:
+        print('*** Failed to connect to %s:%d: %r' % (server[0], server[1], e))
+        sys.exit(1)
+
+    verbose('Now forwarding port %d to %s:%d ...' % (options.port, remote[0], remote[1]))
+
+    try:
+        forward_tunnel(options.port, remote[0], remote[1], client.get_transport())
+    except KeyboardInterrupt:
+        print('C-c: Port forwarding stopped.')
+        sys.exit(0)
+#+END_SRC
+
+可以看到 `forward_tunnel` 在本地创建了TCPServer(ThreadingTCPServer). 其中
+- ssh_transport 是之前本地到sshserver的传输句柄
+- chain_host/port 是远端希望访问的服务（比如上图就是web:80)
+- 每个连接对应一个线程，在 `handle` 里面调用select来分别双方请求
+
+
+#+BEGIN_SRC Python
+class ForwardServer (SocketServer.ThreadingTCPServer):
+    daemon_threads = True
+    allow_reuse_address = True
+
+
+class Handler (SocketServer.BaseRequestHandler):
+
+    def handle(self):
+        try:
+            chan = self.ssh_transport.open_channel('direct-tcpip',
+                                                   (self.chain_host, self.chain_port),
+                                                   self.request.getpeername())
+        except Exception as e:
+            verbose('Incoming request to %s:%d failed: %s' % (self.chain_host,
+                                                              self.chain_port,
+                                                              repr(e)))
+            return
+        if chan is None:
+            verbose('Incoming request to %s:%d was rejected by the SSH server.' %
+                    (self.chain_host, self.chain_port))
+            return
+
+        verbose('Connected!  Tunnel open %r -> %r -> %r' % (self.request.getpeername(),
+                                                            chan.getpeername(), (self.chain_host, self.chain_port)))
+        while True:
+            r, w, x = select.select([self.request, chan], [], [])
+            if self.request in r:
+                data = self.request.recv(1024)
+                if len(data) == 0:
+                    break
+                chan.send(data)
+            if chan in r:
+                data = chan.recv(1024)
+                if len(data) == 0:
+                    break
+                self.request.send(data)
+
+        peername = self.request.getpeername()
+        chan.close()
+        self.request.close()
+        verbose('Tunnel closed from %r' % (peername,))
+
+
+def forward_tunnel(local_port, remote_host, remote_port, transport):
+    # this is a little convoluted, but lets me configure things for the Handler
+    # object.  (SocketServer doesn't give Handlers any way to access the outer
+    # server normally.)
+    class SubHander (Handler):
+        chain_host = remote_host
+        chain_port = remote_port
+        ssh_transport = transport
+    ForwardServer(('', local_port), SubHander).serve_forever()
+#+END_SRC

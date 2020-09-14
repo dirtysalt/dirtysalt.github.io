@@ -1,0 +1,256 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>YARN</title>
+<meta name="generator" content="Org mode" />
+<meta name="author" content="dirtysalt" />
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content">
+<h1 class="title">YARN</h1>
+<div id="table-of-contents">
+<h2>Table of Contents</h2>
+<div id="text-table-of-contents">
+<ul>
+<li><a href="#org2fef5f6">1. Introducing Apache Hadoop YARN</a></li>
+<li><a href="#org1e2712a">2. Apache Hadoop YARN: Background and an Overview</a></li>
+<li><a href="#orgc1802a7">3. Apache Hadoop YARN: Concepts and Applications</a></li>
+<li><a href="#org26a4e3f">4. Apache Hadoop YARN: NodeManager</a></li>
+<li><a href="#org0e33e11">5. Apache Hadoop YARN: ResourceManager</a></li>
+</ul>
+</div>
+</div>
+<div id="outline-container-org2fef5f6" class="outline-2">
+<h2 id="org2fef5f6"><span class="section-number-2">1</span> Introducing Apache Hadoop YARN</h2>
+<div class="outline-text-2" id="text-1">
+<p>
+<a href="http://hortonworks.com/blog/introducing-apache-hadoop-yarn/">http://hortonworks.com/blog/introducing-apache-hadoop-yarn/</a>
+</p>
+
+<p>
+看起来YARN的主要目的是将Hadoop不仅仅用于map-reduce的计算方式，还包括MPI，graph-processing，simple services等，而MR仅仅是作为其中一种计算方式。底层依然是使用HDFS。发布方式的话还是将HDFS，YARN，MR，以及Common一起统一发布。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org1e2712a" class="outline-2">
+<h2 id="org1e2712a"><span class="section-number-2">2</span> Apache Hadoop YARN: Background and an Overview</h2>
+<div class="outline-text-2" id="text-2">
+<p>
+<a href="http://hortonworks.com/blog/apache-hadoop-yarn-background-and-an-overview/">http://hortonworks.com/blog/apache-hadoop-yarn-background-and-an-overview/</a>
+</p>
+
+<p>
+对于MR来说，最关键的一点就是lack of data motion。通过将任务放在数据所在的机器上面，而不是将数据移动到任务所在的机器上面，可以节省带宽提高计算效率。现在来说MR分为下面三个部分：
+</p>
+<ul class="org-ul">
+<li>The end-user <b>MapReduce API</b> for programming the desired MapReduce application.</li>
+<li>The <b>MapReduce framework</b>, which is the runtime implementation of various phases such as the map phase, the sort/shuffle/merge aggregation and the reduce phase. （framework做的事情是runtime的工作，比如怎么划分数据，怎么进行reducer上面的拉数据等）</li>
+<li>The <b>MapReduce system</b>, which is the backend infrastructure required to run the user’s MapReduce application, manage cluster resources, schedule thousands of concurrent jobs etc. （system做的事情是确保runtime可以work的工作，集群管理如何调度）</li>
+</ul>
+
+
+<div class="figure">
+<p><img src="images/mr-arch.png" alt="mr-arch.png" />
+</p>
+</div>
+
+<p>
+For a while, we have understood that the Apache Hadoop MapReduce framework needed an overhaul. In particular, with regards to the JobTracker, we needed to address several aspects regarding scalability, cluster utilization, ability for customers to control upgrades to the stack i.e. customer agility and equally importantly, supporting workloads other than MapReduce itself. 考虑对于MR framework需要做下面这些改进，尤其是对于JobTracker来说：
+</p>
+<ul class="org-ul">
+<li>扩展性。我的理解是master有更好的处理能力，应该来支持更多的节点加入集群。2009年产品部署上能够达到5k个节点。</li>
+<li>集群利用。现在hadoop是将所有的nodes看作是distince map-reduce slots的，并且两者是不可替换的。可能mapper使用非常多而reducer非常少（或者相反），这样的情况会限制集群利用效率。</li>
+<li>灵活地控制software stack。我的理解是对于软件的升级，可能不能够完全替换，因此需要支持集群中有多个版本的MR运行。主要还是兼容性问题。</li>
+<li>服务不同的workload而非MR。比如MPI，graph-processing，realtime-processing，并且减少HDFS到自己存储系统之间数据的迁移（现在MR输入一定要在HDFS上面）</li>
+</ul>
+
+<hr />
+
+<p>
+YARN主要做的工作就是在资源利用的改进上面，将资源利用已经workflow分离：
+</p>
+<ul class="org-ul">
+<li>资源利用通过引入的ResouceManager（RM）以及NodeManager（NM）来管理。
+<ul class="org-ul">
+<li>NM主要做单机上面的资源收集汇报给RM</li>
+<li>RM能够用来了解整个集群的资源使用情况，通过收集NM以及AM汇报信息。</li>
+<li>RM提供pluggable Scheduler来计算资源分配。</li>
+</ul></li>
+<li>workflow方面将MR和其他类型workflow分离，抽象成为ApplicationManager（AM）以及Container（既有ResourceAllocation概念，也有ApplicationNode概念）</li>
+</ul>
+
+
+<div class="figure">
+<p><img src="images/yarn-arch.png" alt="yarn-arch.png" />
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgc1802a7" class="outline-2">
+<h2 id="orgc1802a7"><span class="section-number-2">3</span> Apache Hadoop YARN: Concepts and Applications</h2>
+<div class="outline-text-2" id="text-3">
+<p>
+<a href="http://hortonworks.com/blog/apache-hadoop-yarn-concepts-and-applications/">http://hortonworks.com/blog/apache-hadoop-yarn-concepts-and-applications/</a>
+</p>
+
+<p>
+将AM和RM分离的好处在于：一方面减轻RM的压力这样可以让RM管理更多的集群，另外一方面可以让AM支持更多类型的计算而不仅仅是MR
+</p>
+
+<p>
+AM对RM提供Resource Request。对于Resource Model定义包括下面几个方面：
+</p>
+<ul class="org-ul">
+<li>Resource-name (hostname, rackname – we are in the process of generalizing this further to support more complex network topologies with YARN-18).（我需要哪些机器，可以制定host，rack，或者是*/any）</li>
+<li>Memory (in MB)（需要使用的内存大小）</li>
+<li>CPU (cores, for now)（CPU的个数）</li>
+<li>In future, expect us to add more resource-types such as disk/network I/O, GPUs etc.（各种IO参数）</li>
+</ul>
+<p>
+每一个Resource Model如果满足之后在一个机器上面形成一个Container。Resource Request包括下面几个部分：
+</p>
+<ul class="org-ul">
+<li>&lt;resource-name, priority, resource-requirement, number-of-containers&gt;</li>
+<li>resource-name is either hostname, rackname or * to indicate no preference. In future, we expect to support even more complex topologies for virtual machines on a host, more complex networks etc.</li>
+<li>priority is intra-application priority for this request (to stress, this isn’t across multiple applications).</li>
+<li>resource-requirement is required capabilities such as memory, cpu etc. (at the time of writing YARN only supports memory and cpu).</li>
+<li>number-of-containers is just a multiple of such containers.（我需要多少个这样的container？）</li>
+</ul>
+
+<p>
+ApplicationMaster需要通知Container来执行任务，因为现在的任务不限于MR，需要提供下面这些信息：
+</p>
+<ul class="org-ul">
+<li>Command line to launch the process within the container. 命令行</li>
+<li>Environment variables. 环境变量</li>
+<li>Local resources necessary on the machine prior to launch, such as jars, shared-objects, auxiliary data files etc. 一些本地资源</li>
+<li>Security-related tokens. 安全token</li>
+</ul>
+
+<p>
+整个YARN执行任务的步骤包括下面这几步： Application execution consists of the following steps:
+</p>
+<ul class="org-ul">
+<li>Application submission. 提交任务</li>
+<li>Bootstrapping the ApplicationMaster instance for the application. 启动AM</li>
+<li>Application execution managed by the ApplicationMaster instance. AM在不同的Container启动task</li>
+</ul>
+
+<p>
+Let’s walk through an application execution sequence (steps are illustrated in the diagram):
+</p>
+<ul class="org-ul">
+<li>A client program submits the application, including the necessary specifications to launch the application-specific ApplicationMaster itself. （用户首先提交AM）</li>
+<li>The ResourceManager assumes the responsibility to negotiate a specified container in which to start the ApplicationMaster and then launches the ApplicationMaster.（RM为AM分配所需要的Container，并且启动AM）</li>
+<li>The ApplicationMaster, on boot-up, registers with the ResourceManager – the registration allows the client program to query the ResourceManager for details, which allow it to  directly communicate with its own ApplicationMaster.（AM向RM进行注册）</li>
+<li>During normal operation the ApplicationMaster negotiates appropriate resource containers via the resource-request protocol.（AM通过Resouce Request和RM进行资源协调，获得所需要的Container）</li>
+<li>On successful container allocations, the ApplicationMaster launches the container by providing the container launch specification to the NodeManager. The launch specification, typically, includes the necessary information to allow the container to communicate with the ApplicationMaster itself.（AM通知Container所处的NM启动task）</li>
+<li>The application code executing within the container then provides necessary information (progress, status etc.) to its ApplicationMaster via an application-specific protocol.（Container会定时和AM进行通信，通知进度等）</li>
+<li>During the application execution, the client that submitted the program communicates directly with the ApplicationMaster to get status, progress updates etc. via an application-specific protocol.（client直接和AM进行通信了解整个任务进度）</li>
+<li>Once the application is complete, and all necessary work has been finished, the ApplicationMaster deregisters with the ResourceManager and shuts down, allowing its own container to be repurposed.（任务完成之后AM通知RM注销并且释放所持有的Container）</li>
+</ul>
+
+
+<div class="figure">
+<p><img src="images/yarn-flow.png" alt="yarn-flow.png" />
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org26a4e3f" class="outline-2">
+<h2 id="org26a4e3f"><span class="section-number-2">4</span> Apache Hadoop YARN: NodeManager</h2>
+<div class="outline-text-2" id="text-4">
+<p>
+<a href="http://hortonworks.com/blog/apache-hadoop-yarn-nodemanager/">http://hortonworks.com/blog/apache-hadoop-yarn-nodemanager/</a>
+</p>
+
+
+<div class="figure">
+<p><img src="images/yarn-nodemanager-arch.png" alt="yarn-nodemanager-arch.png" />
+</p>
+</div>
+
+<ul class="org-ul">
+<li>NodeStatusUpdater 做一些资源状态汇报，并且接收RM请求停止已经运行的container</li>
+<li>ContainerManager <b>核心部分</b>
+<ul class="org-ul">
+<li>RPC server 接收AM的命令运行或停止container，和ContainerTokenSecretManager协作完成请求认证。所有操作会记录在audit-log</li>
+<li>ResourceLocalizationService 准备一些applicaiton所需要的资源</li>
+<li>ContainersLauncher 维护container线程池，接收RM/AM的请求来运行和停止container</li>
+<li>AuxServices 提供额外服务。当application在这个node上面第一个container运行或者是application结束的时候会收到通知。</li>
+<li>ContainersMonitor 监控container运行状况，如果资源使用超限的话会kill container</li>
+<li>LogHandler 收集application本地产生的日志进行聚合并且上传到hdfs</li>
+</ul></li>
+<li>ContainerExecutor 执行container</li>
+<li>NodeHealthCheckerService 对于node做一些健康检查，将一些资源数据给NodeStatusUpdater</li>
+<li>Security
+<ul class="org-ul">
+<li>ApplicationACLsManagerNM</li>
+<li>ContainerTokenSecretManager</li>
+</ul></li>
+<li>WebServer 当前运行的application以及对应的container，资源利用状况以及聚合的log</li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-org0e33e11" class="outline-2">
+<h2 id="org0e33e11"><span class="section-number-2">5</span> Apache Hadoop YARN: ResourceManager</h2>
+<div class="outline-text-2" id="text-5">
+<p>
+<a href="http://hortonworks.com/blog/apache-hadoop-yarn-resourcemanager/">http://hortonworks.com/blog/apache-hadoop-yarn-resourcemanager/</a>
+</p>
+
+
+<div class="figure">
+<p><img src="images/yarn-resourcemanager-arch.png" alt="yarn-resourcemanager-arch.png" />
+</p>
+</div>
+
+<ul class="org-ul">
+<li>Components interfacing RM to the clients:
+<ul class="org-ul">
+<li>ClientService 用户接口用来提交删除application以及获得当前集群的状况等数据</li>
+<li>AdminService 管理接口可以用来调整queue的优先级或者是增加node等</li>
+</ul></li>
+<li>Components connecting RM to the nodes:
+<ul class="org-ul">
+<li>ResourceTrackerService 用来和NodeManager做RPC</li>
+<li>NMLivelinessMonitor 检测NM是否存活</li>
+<li>NodesListManager 维护当前所有的NM节点</li>
+</ul></li>
+<li>Components interacting with the per-application AMs
+<ul class="org-ul">
+<li>ApplicationMasterService 用来和AM交互部分接口，AM的资源请求通过这个接口提交，然后转向YarnScheduler处理</li>
+<li>AMLivelinessMonitor 检测AM是否存活</li>
+</ul></li>
+<li>The core of the ResourceManager <b>核心部分</b>
+<ul class="org-ul">
+<li>ApplicationsManager 维护当所有提交的Application</li>
+<li>ApplicationACLsManager</li>
+<li>ApplicationMasterLauncher 负责AM的启动</li>
+<li>YarnScheduler #note: 似乎这个调度行为是在一开始就决定的
+<ul class="org-ul">
+<li>The Scheduler is responsible for allocating resources to the various running applications subject to constraints of capacities, queues etc. It performs its scheduling function based on the resource requirements of the applications such as memory, CPU, disk, network etc. Currently, only memory is supported and support for CPU is close to completion.</li>
+</ul></li>
+<li>ContainerAllocationExpirer application可能占用container但是却不使用。可以用来检测哪些container没有使用。</li>
+</ul></li>
+<li>TokenSecretManagers
+<ul class="org-ul">
+<li>ApplicationTokenSecretManager</li>
+<li>ContainerTokenSecretManager</li>
+<li>RMDelegationTokenSecretManager</li>
+</ul></li>
+<li>DelegationTokenRenewer</li>
+</ul>
+</div>
+</div>
+</div>
+</body>
+</html>

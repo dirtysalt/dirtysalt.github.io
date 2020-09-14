@@ -1,0 +1,52 @@
+#+title: Structuring Machine Learning Projects
+
+继续突击这门 [[https://www.coursera.org/learn/machine-learning-projects/home/welcome][课程]]. 这门课程主要讲的是ML项目在实践中可能遇到的问题以及解决办法，比如如何定义指标，如何在各个参数调整之间分配时间，如何进行迭代等等。技术方面的不多，主要是实践经验。
+
+-----
+参数要尽可能地符合正交性：每个参数只影响到部分功能，每个参数之间也相对独立。比如learning rate影响到traing error, 而regularization则主要影响到dev/test error. 这样调参过程才能更加有效率。
+
+使用single metric来衡量效果。比如precision/recall可以综合成为F1. 通常一个系统会要求很多指标，最终只有一个指标是优化指标，而需要指标则是必须满足的。比如prediction system的延迟必须小于500ms, 内存占用必须小于1GB, 这些都是硬指标。而准确率则是优化指标，需要在满足前面的前提下，尽可能地提高。
+
+先要让整个pipeline跑起来，让每个团队（算法，工程）都可以独立工作。给算法的数据，尤其是dev/test data, 要尽可能地和真实数据相同。
+
+从尽可能简单的系统做起，然后进行error/variance/bias analysis. error analysis着重分析dev/test error数据，从错误数据中筛选出一些数据进行更加细粒度的分析，比如标记错误，图像清晰度等等原因。
+
+file:images/structing-ml-reducing-bias-variance.png
+
+-----
+关于train/dev/test数据分布
+
+数据量对于训练来说是一个很大的问题，因为很多原因我们没有办法收集到许多有效的数据（符合真实分布的），为了妥协我们可能需要加入一些不那么符合真实分布的数据。比如我们想做个App来识别猫，App上用户上传的图片很多都是低分辨率并且模糊的图片，收集这类（低分辨率且模糊）的猫的图片很困难(from user)，但是网络上有许多高质量高分辨率的猫图(from internet)。
+
+data from user和data from internet其实差别还是蛮大的，理想情况下，训练数据应该和测试数据来自同一分布。假设# of data from user = 10k, data from internet = 100k，那么我们应该如何分布train/dev/test数据分布呢？
+
+*最重要的准则就是，dev/test必须都是真实数据。* 因为这样我们才能看到，我们训练出来模型在dev/test的错误率，并且认为这个错误率接近于真实系统的错误率。所以可以这样分布数据(100k from internet) + 8k from user作为training data, 1k from user作为dev, 1k from user作为test.
+
+不过如果按照上面方式来分布数据，可能会出现一个问题就是，train error很小，但是dev/test error很大。如果train/dev/test data都来自于同一分布的话，那么可以得出是high variance的结论。但是现在还有一个可能是data mismatch, 就是data from user和data from internet严重不匹配。那么如何来区分high variance和data mismatch呢？
+
+一个方法是将train data再次区分为raw train data和train & dev data. raw train data用于训练，train & dev data跑出一个train & dev error, 然后加上dev/test error之后。使用这4个指标就就可以解释high bias, high variance, data mismatch.
+
+file:images/structing-ml-data-mismatch0.png file:images/structing-ml-data-mismatch1.png
+
+file:images/structing-ml-data-mismatch2.png
+
+-----
+transfer learning. 基于pre-trained model，根据自己的数据进行fine tuning. 使用依据：
+- Task A and B have the same input x.
+- You have a lot more data for Task A than Task B.
+- Low level features from A could be helpful for learning B.
+
+
+multi-task learning. 在一个网络里面训练多个输出（注意不要使用softmax) 使用依据：
+- Training on a set of tasks that could benefit from having shared lower-level features.
+- Usually: Amount of data you have for each task is quite similar.
+- Can train a big enough neural network to do well on all the tasks.
+
+end-to-end learning. 端到端学习。它的反面是使用多个学习阶段。优势和劣势如下：
+- pros
+  - Let the data speak
+  - Less hand-designing of components needed
+- cons
+  - May need large amount of data
+  - Excludes potentially useful hand-designed components
+是否使用end-to-end learning, 取决于是否有足够的数据，来直接学习出x->y的映射。

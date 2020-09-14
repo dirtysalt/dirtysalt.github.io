@@ -1,0 +1,113 @@
+#+title: 流媒体基础知识(sonos)
+
+http://musicpartners.sonos.com/node/465
+
+这个是Sonos Music API Dev Guide里面关于流媒体处理的一节，里面有不少关于流媒体(over HTTP)的基础知识，学习一下还是很不错的。
+
+----------
+这个Guide里面有专门一章讲解如何进行DRM(Digit Rights Management)（[[http://musicpartners.sonos.com/node/507][链接]]).
+
+#+BEGIN_QUOTE
+If you need your streaming media encrypted, Sonos supports digital rights management as described in Encrypting content for digital rights management (DRM). If you need to use expiring URIs for content (sometimes known as time-bomb URIs), see getMediaURI for guidelines.
+#+END_QUOTE
+
+大概有下面三种办法：
+- HTTPS only.
+- Basic encryption: Add your encrypted content.（通过对称加密，需要得到ContentKey)
+- Strong encryption: Add Sonos player verification and encrypt your content keys.（在ContentKey上面进行非对称加密，并且对Player进行验证）
+
+----------
+*STREAMING PROCESS*
+
+整个请求过程都是流式的，不会一次请求整个文件。所以请求单个文件可能会发起多个请求，因为是按照chunk进行处理的。不过如果文件组织合理的话，一次GET请求就足够。
+#+BEGIN_QUOTE
+Sonos does not cache the entire file before starting playback, but instead buffers and processes as needed until the entire file has been played. One or more GET requests will be sent to the URI obtained via SMAPI for each music file. For most file formats, playback from the beginning of the file will result in one GET request.
+#+END_QUOTE
+
+下面这节谈到了如何处理暂停以及拖动播放的实现。播放器通常会将播放位置映射到byte offset, 然后在HTTP请求（header）里面添加 `Range` 字段表明请求范围。服务器通常会以206(partial OK)或者是416(invalid byte range)来响应
+#+BEGIN_QUOTE
+In some cases, such as resuming from pause, seeking within a track, or with specific file formats, the data flow must start in the middle of the file. To service this, Sonos sends a GET request using a Range header asking for the rest of the track starting from the resumption point. Your music service must understand this request and either send the requested partial file segment along with standard 206 HTTP status codes or send 416 HTTP status code errors if the requested byte range is invalid in some way and you cannot respond with the matching file segment.
+#+END_QUOTE
+
+通常第一次请求也会告诉整个文件大小 `Content-Length`. 如果 `time-position` 和 `byte-position` 之间不是线性映射的话，那么这个内容对播放器会很有用（How ??）
+#+BEGIN_QUOTE
+In addition to returning the requested music, your service must return an accurate Content-Length HTTP header in the response. Sonos requires this to support seeking to any point in the file for formats where the time position doesn't map linearly to byte positions.
+#+END_QUOTE
+
+----------
+ref: [[https://www.w3.org/Protocols/rfc2616/rfc2616-sec14.html#sec14.35][w2c byte ranges]]
+
+下面是一个示例交互过程。首先先是知道这个文件的大小，并且告诉客户端支持 `字节偏移`
+#+BEGIN_EXAMPLE
+>>>>> Request <<<<<
+GET
+http://music-mymusicservice.example.com/files/lehrer_lobachevsky.mp3
+Referer:sonos-mymusicservice.example.com
+
+>>>>> Response <<<<<
+HTTP/1.1 200 Success
+Content-Type: application/mp3
+Accept-Ranges: bytes
+Content-Length: 4570936
+#+END_EXAMPLE
+
+如果当前播放器是续播的话，那么请求会是下面这样的。返回代码是206并且告诉剩余长度多少。
+#+BEGIN_EXAMPLE
+>>>>> Request <<<<<
+GET
+http://music-mymusicservice.example.com/files/lehrer_lobachevsky.mp3
+Referer:sonos-mymusicservice.example.com
+Range:3480315-
+
+>>>>> Response <<<<<
+HTTP/1.1 206 Partial Content
+Content-Type: application/mp3
+Accept-Ranges: bytes
+Content-Range: bytes 3480315-/4570936
+Content-Length: 1090621
+#+END_EXAMPLE
+
+如果请求字节超过文件的大小，那么返回代码是416.
+#+BEGIN_EXAMPLE
+>>>>> Request <<<<<
+GET
+http://music-mymusicservice.example.com/files/lehrer_lobachevsky.mp3
+Referer:sonos-mymusicservice.example.com
+Range:4570937-
+
+>>>>> Response <<<<<
+HTTP/1.1 416 Requested Range Not Satisfiable
+#+End_EXAMPLE
+
+----------
+*OPTIMIZING FILES FOR STREAMING*
+
+调整文件格式可以用来优化流式传输
+#+BEGIN_QUOTE
+You should optimize all music files for streaming to ensure the best possible experience for users. In particular, for formats like MP4 that don't require that music be placed in a single continuous byte range within the file, you should optimize the files to place as much data as possible contiguously. This reduces seek time within a file and helps to ensure that the next few seconds of music required to smoothly play a file is always waiting within the buffer and available as needed.
+#+END_QUOTE
+
+调整上主要有两个点：
+1. 将metadata信息放在一个连续块中，这样可以一次全部读取上来。
+2. 另外metadata放置的位置也很重要，尽可能放在开头，然后是末尾，最后是分片放在文件中间。
+#+BEGIN_QUOTE
+While placing as much data as possible in a single continuous stream is the most important consideration, the location of the data within the file can also make a difference to the user experience. Placing the metadata at the front of the file can result in fewer connections before Sonos is actively reading music data. If the metadata is at the front of the file, Sonos may be able to read all of the metadata and move on to music data with a single HTTP GET request. Even if the metadata is too long to do this, Sonos should be able to reconnect and finish reading the metadata with a second request. If the metadata is placed at the end of the file, this same process will likely require three connections: one to determine that the file starts with music data, a second connection to go to the end of the file to get the metadata, and a third connection to return to the front of the file to actually start reading music data. Of course, this is still better than having metadata located somewhere in the middle splitting the data in half or having the data broken up into chunks throughout the file, both of which require repeated seeking.
+#+END_QUOTE
+
+另外一个优化是尽可能地不要把album art放在metadata里面（也就是头部）。album art有可能会很大（MB级别），所以读取完 `album art` 这个字段可能需要多次请求甚至造成超时。如果你一定要放置album art的话，那么尽可能地放在文件的末尾。
+
+Metadata放置位置的比较可以参考下图
+
+file:images/sonos-musicplacementinfiles.png
+
+#+BEGIN_QUOTE
+The diagrams represent the bytes within each track with the left side representing the start of the file and the right its end. In Track 1, the metadata consumes the first X bytes of the file, then the actual music is written in chunks 1-5 in that order. Because Sonos requests the content of a track from the beginning, it needs to retrieve almost half of the file before it can play any of the music and has to seek repeatedly to play the entire file. Furthermore, the data may not fit into the local buffer and multiple GET requests may be required to play the song instead of using a single request where Sonos gets, buffers, consumes, and releases bytes as they are used in the order obtained. Track 2 is the most optimized option; Sonos skips over the X bytes of the metadata section and begins playing from byte X+1. Track 3 is also reasonably optimized in that the data is contiguous. However, it is not optimized as well as track 2 because Sonos has to recognize the file starts with music data, jump to the end of the file to read the metadata, then jump back to the beginning of the file to start playing music.
+#+END_QUOTE
+
+----------
+*CONTENT DELIVERY NETWORK CONSIDERATIONS*
+
+CDN对于流媒体传输的影响
+1. 是否支持206(partial content)
+2. CDN本身是否支持 `byte range` 请求方式，否则延迟会很高
+3. 自定义cache规则(writing cache rules)

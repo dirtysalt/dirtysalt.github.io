@@ -1,0 +1,336 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>galera代码分析</title>
+<meta name="generator" content="Org mode" />
+<meta name="author" content="dirtysalt" />
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content">
+<h1 class="title">galera代码分析</h1>
+<div id="table-of-contents">
+<h2>Table of Contents</h2>
+<div id="text-table-of-contents">
+<ul>
+<li><a href="#orgffce385">1. overview</a></li>
+<li><a href="#org6bdd4f3">2. wsrep-api</a>
+<ul>
+<li><a href="#orgfb6f1cc">2.1. overview</a></li>
+<li><a href="#orgda799c5">2.2. concept</a></li>
+<li><a href="#orgc8d201d">2.3. wsrep_init_args</a></li>
+<li><a href="#org96b5872">2.4. wsrep_t</a></li>
+</ul>
+</li>
+<li><a href="#orgc4d248b">3. gcomm</a></li>
+<li><a href="#orge6a4de6">4. tests</a></li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-orgffce385" class="outline-2">
+<h2 id="orgffce385"><span class="section-number-2">1</span> overview</h2>
+<div class="outline-text-2" id="text-1">
+<p>
+下面这些子目录:
+</p>
+<ul class="org-ul">
+<li>asio # asynchronous io.</li>
+<li>chromium # compiler related code.</li>
+<li>common # common definitions.</li>
+<li>galera # replicator.</li>
+<li>galerautils # common utilities.</li>
+<li>garb # arbitrator</li>
+<li>gcache # general cache.</li>
+<li>gcomm # group communication.</li>
+<li>gcs # group control system.</li>
+<li>scripts</li>
+<li>tests</li>
+<li>www.evanjones.ca # crc32 implementation.</li>
+</ul>
+
+<p>
+代码整体结构
+</p>
+
+
+<div class="figure">
+<p><img src="images/galera-code-structure.png" alt="galera-code-structure.png" />
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org6bdd4f3" class="outline-2">
+<h2 id="org6bdd4f3"><span class="section-number-2">2</span> wsrep-api</h2>
+<div class="outline-text-2" id="text-2">
+</div>
+<div id="outline-container-orgfb6f1cc" class="outline-3">
+<h3 id="orgfb6f1cc"><span class="section-number-3">2.1</span> overview</h3>
+<div class="outline-text-3" id="text-2-1">
+<p>
+files:
+</p>
+<ul class="org-ul">
+<li>wsrep_api.h # header</li>
+<li>wsrep_loader # load/unload wsrep_t
+<ul class="org-ul">
+<li>symbol=wsrep_loader</li>
+<li>type=int wsrep_loader_fun(wsrep_t*)</li>
+</ul></li>
+<li>wsrep_dummy # example or stub</li>
+<li>wsrep_uuid # uuid helper</li>
+<li>wsrep_gtid # gtid helper</li>
+<li>wsrep_listener # event dumper</li>
+</ul>
+
+<p>
+capabilities:
+</p>
+<ul class="org-ul">
+<li>Replication provider library
+<ul class="org-ul">
+<li>load/unload</li>
+<li>configuration</li>
+<li>status</li>
+</ul></li>
+<li>Write set
+<ul class="org-ul">
+<li>population calls</li>
+<li>replication calls (at commit)</li>
+</ul></li>
+<li>Prioritized transactions
+<ul class="org-ul">
+<li>Lock queue modified</li>
+<li>Aborting local victims</li>
+</ul></li>
+<li>TO isolation for DDL queries</li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-orgda799c5" class="outline-3">
+<h3 id="orgda799c5"><span class="section-number-3">2.2</span> concept</h3>
+<div class="outline-text-3" id="text-2-2">
+<ul class="org-ul">
+<li>sst(snapshot state transfer)</li>
+<li>ist(incremental state transfer)</li>
+<li>logger</li>
+<li>provider
+<ul class="org-ul">
+<li>CAP(certain provider capabilities)</li>
+<li>flags</li>
+<li>status</li>
+</ul></li>
+<li>uuid/gtid
+<ul class="org-ul">
+<li>UUID 节点状态改变及顺序的唯一标识</li>
+<li>GTID Global Transaction ID, 由UUID和偏移量组成</li>
+<li>example: 45eec521-2f34-11e0-0800-2a36050b826b:94530586304</li>
+<li>undefined: 00000000-0000-0000-0000-000000000000:-1</li>
+<li>evolve: 00295a79-9c48-11e2-bdf0-9a916cbb9294:0 =&gt; 00295a79-9c48-11e2-bdf0-9a916cbb9294:1</li>
+</ul></li>
+<li>group member（节点成员信息）
+<ul class="org-ul">
+<li>member_status</li>
+<li>memver_info</li>
+</ul></li>
+<li>group view(视图信息，比如整个集群有多少个节点，每个节点同步进度如何？）
+<ul class="org-ul">
+<li>view_status</li>
+<li>view_info</li>
+</ul></li>
+<li>wsrep_init_args(arguments)</li>
+<li>wsrep_t(interface)</li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-orgc8d201d" class="outline-3">
+<h3 id="orgc8d201d"><span class="section-number-3">2.3</span> wsrep_init_args</h3>
+<div class="outline-text-3" id="text-2-3">
+<p>
+#note: 这个应该是和上层相关的实现比如MySQL，如何apply, commit等
+</p>
+
+<ul class="org-ul">
+<li>(D)app_ctx 回调使用的context</li>
+<li>(D)node_name 当前节点/实例名称，对应变量wsrep_node_name</li>
+<li>(D)node_address 当前节点/实例地址，对应变量wsrep_node_address</li>
+<li>(D)node_incoming 对应变量wsrep_incoming_addresses <b>可以接受连接请求的节点</b></li>
+<li>(D)data_dir 当前数据库的目录，对应变量wsrep_data_home_dir</li>
+<li>(D)options 选项</li>
+<li>(D)proto_ver 协议版本</li>
+<li>(D)state_id 应用初始状态id</li>
+<li>(D)state 应用初始状态数据</li>
+<li>logger_cb # mysql如何打印galera日志</li>
+<li>view_handler_cb # 新节点加入会比较本地状态uuid和集群状态uuid. 初始同步，joiner动作</li>
+<li>apply_cb # mysql如何执行binlog</li>
+<li>commit_cb # mysql如何提交事务</li>
+<li>unordered_cb #note：do nothing?</li>
+<li>sst_donate_cb # 初始同步，donor动作</li>
+<li>synced_cb # mysql启动等待状态一致之后会调用这个函数，修改变量wsrep_ready从OFF到ON</li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-org96b5872" class="outline-3">
+<h3 id="org96b5872"><span class="section-number-3">2.4</span> wsrep_t</h3>
+<div class="outline-text-3" id="text-2-4">
+<p>
+#note: 这个应该是和下层相关的实现比如Galera，它定义了整个replication的逻辑
+</p>
+
+<ul class="org-ul">
+<li>(D)version 版本</li>
+<li>init 初始化 wsrep_init_args</li>
+<li>capabilities 支持功能</li>
+<li>options_set 设置选项</li>
+<li>options_get 获取选项</li>
+<li>connect 建立和集群的连接</li>
+<li>disconnect 断开和集群的连接</li>
+<li>recv 开始接收replication event. 正常情况下这个函数一直运行，期间执行其他操作，如果返回的话那么表明出错或者是退出。</li>
+<li>pre_commit 事务提交之前</li>
+<li>post_commit 事务提交之后</li>
+<li>post_rollback 事务回滚之后</li>
+<li>replay_trx 回放事务(slave)</li>
+<li>abort_pre_commit 在事务提交之前终止</li>
+<li>append_key 将key添加到事务ws. 修改行对应的key，可以用来检测冲突。</li>
+<li>append_data 将data添加到事务ws. 修改行对应的value。</li>
+<li>casual_read  发起一致性读</li>
+<li>free_connection 释放链接</li>
+<li>to_execute_start 开始执行total order isolation事务（上锁）</li>
+<li>to_execute_end 结束执行total order isolation事务（解锁）</li>
+<li>preordered_collect 将预先排序的event收集到ws</li>
+<li>preordered_commit 将收集的ws commit到集群中</li>
+<li>sst_sent sst sst已经发送完毕</li>
+<li>sst_received sst已经接收完毕</li>
+<li>snapshot 请求产生snapshot</li>
+<li>stats_get 获取统计数据</li>
+<li>stats_free 释放统计数据</li>
+<li>stats_reset 重置统计数据</li>
+<li>pause 停止提交</li>
+<li>resume 恢复提交</li>
+<li>desync 断开集群同步</li>
+<li>resync 建立集群同步</li>
+<li>lock 获取全局锁</li>
+<li>unlock 释放全局锁</li>
+<li>is_locked 检测全局锁</li>
+<li>(D)provider_name 名称</li>
+<li>(D)provider_version 版本</li>
+<li>(D)provider_vendor 厂商</li>
+<li>free 释放句柄</li>
+<li>(D)dlh dlopen句柄</li>
+<li>(D)ctx 私有句柄，内部使用</li>
+</ul>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgc4d248b" class="outline-2">
+<h2 id="orgc4d248b"><span class="section-number-2">3</span> gcomm</h2>
+<div class="outline-text-2" id="text-3">
+<hr />
+<p>
+Delivery Order
+</p>
+
+<p>
+<a href="http://www.cs.huji.ac.il/labs/transis/lab-projects/guide/chap3.html#Virtual">Virtual and Extended Virtual Synchrony</a> 给出了几种投递顺序的详细解释。
+</p>
+
+<p>
+在agreed order部分解释了为什么引入transitional configuration, 将virtual synchrony扩展成为extended virtual synchrony.
+</p>
+
+<p>
+在order.hpp里面定义了6种投递顺序
+</p>
+<ul class="org-ul">
+<li>O_DROP 协议内部使用(用来递增消息序列号)</li>
+<li>O_UNRELIABLE 协议内部使用</li>
+<li>O_FIFO 对于单个节点有序</li>
+<li>O_AGREED 对于整个集群有序</li>
+<li>O_SAFE 对于整个集群有序并且确保消息被所有节点都收到</li>
+<li>O_LOCAL_CAUSAL 只会在本地投递，作用类似barrier: "当应用看到这条消息时可以确保，在这条信息之前投递的消息(可以是从任意节点发起的)都已经传递给了应用层"</li>
+</ul>
+
+<p>
+下面是代码中关于local causal的注释
+</p>
+<pre class="example">
+* Message will be delivered only locally and delivery will fulfill the
+* following property:
+*
+* Let M_c be message tagged with O_LOCAL_CAUSAL ordering requirement.
+* Any message M_a which is delivered on any node so that delivery
+* has causal precedence on generating M_c will be delivered locally
+* before M_c.
+*
+* Note that the causality is guaranteed only with respect to
+* already delivered messages.
+</pre>
+</div>
+</div>
+
+<div id="outline-container-orge6a4de6" class="outline-2">
+<h2 id="orge6a4de6"><span class="section-number-2">4</span> tests</h2>
+<div class="outline-text-2" id="text-4">
+<ul class="org-ul">
+<li>conf # configure files</li>
+<li>regressions # according to ticket.</li>
+<li>scripts # start/stop/check real cluster</li>
+<li>tap # TODO: ???</li>
+<li>t # test script of tap.</li>
+<li>test_causal # related to trac #688.</li>
+<li>test_cppcheck # c/c++ static code analyzer.</li>
+<li>test_dbt2 # not implemented.</li>
+<li>test_dots # not implemented.</li>
+<li>test_drupal # bugs related to drupal.</li>
+<li>test_insert #
+<ul class="org-ul">
+<li>DMBS_PORT=3305 ./run.sh</li>
+</ul></li>
+<li>test_memory
+<ul class="org-ul">
+<li>used memory between wsrep OFF and ON</li>
+<li>on a single node cluster</li>
+</ul></li>
+<li>test_mtr # mysql test run</li>
+<li>test_overhead
+<ul class="org-ul">
+<li>insert/update time between wsrep OFF and ON</li>
+<li>on a single node cluster</li>
+</ul></li>
+<li>test_seesaw # similar to test_stopcont.</li>
+<li>test_segmentation # network traffic with segmentation.</li>
+<li>test_sqlgen # TODO: why tap ? obsolete now!</li>
+<li>test_startstop # start and stop</li>
+<li>test_stopcont #
+<ul class="org-ul">
+<li>round robin to stop/cont each node (kill -STOP/CONT)</li>
+<li>wait node to be synced (mysql to query status)</li>
+<li>then check consistency (mysqldump | md5sum)</li>
+<li>while sqlgen keep updating db</li>
+</ul></li>
+<li>test_upgrade # rotate and upgrade nodes.</li>
+</ul>
+
+<hr />
+
+<p>
+how to setup setup test environment ?
+</p>
+<ul class="org-ul">
+<li>put sqlgen(which is not open-source yet) to tests/bin</li>
+<li>install libgbl.so (<a href="https://github.com/codership/glb">https://github.com/codership/glb</a>) to /user/local/lib</li>
+<li>install mysql client.</li>
+</ul>
+</div>
+</div>
+</div>
+</body>
+</html>

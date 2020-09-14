@@ -1,0 +1,470 @@
+#+title: Akka Doc
+http://akka.io/
+
+** Introduction
+Akka implements a unique hybrid
+- Actors
+  - Simple and high-level abstractions for concurrency and parallelism. （actor model）
+  - Asynchronous, non-blocking and highly performant event-driven programming model. （reactive programming）
+  - Very lightweight event-driven processes (approximately 2.7 million actors per GB RAM). （little memory footprint）
+- Fault Tolerance
+  - Supervisor hierarchies with “let-it-crash” semantics. （failover as common case）
+  - Supervisor hierarchies can span over multiple JVMs to provide truly fault-tolerant systems.（监控能够跨越JVM）
+  - Excellent for writing highly fault-tolerant systems that self-heal and never stop.
+- Location Transparency
+  - Everything in Akka is designed to work in a distributed environment（位置透明）
+  - all interactions of actors use pure message passing and everything is asynchronous. （异步通信）
+- Transactors
+  - Transactors combine actors and Software Transactional Memory (STM) into transactional actors. （actors + STM = transactors）
+  - It allows you to compose atomic message flows with automatic retry and rollback.
+
+-----
+Akka can be used in different ways:
+- As a library: used as a regular JAR on the classpath and/or in a web app, to be put into WEB-INF/lib. This is most likely what you want if you are building Web applications. There are several ways you can use Akka in Library mode by adding more and more modules to the stack.
+- As a stand alone application by instantiating ActorSystem in a main class or using the Microkernel (Scala) / Microkernel (Java). The Akka distribution includes the microkernel. To run the microkernel put your application jar in the deploy directory and use the scripts in the bin directory. （类似插件方式启动）
+
+-----
+#note: 参考akka@github的example编写的。这里使用的方式就是手工创建ActorSystem，而不是使用Akka.main指定main class来启动
+
+#+BEGIN_SRC Scala
+object Hello extends App {
+  val system = ActorSystem("system")
+  val hello = system.actorOf(Props[Hello], "hello")
+  hello ! "start"
+}
+
+class Hello extends Actor {
+  val log = Logger.getLogger(getClass)
+  val sub = context.actorOf(Props[Worker], "worker")
+
+  override def preStart() {
+    log.debug("hello start...")
+  }
+
+  override def postStop() {
+    log.debug("hello stop...")
+  }
+
+  def receive = {
+    case "start" => sub ! "masturbation"
+    case s =>
+      println("worker done with " + s)
+      log.debug("shutdown system...")
+      context.system.shutdown()
+  }
+}
+
+class Worker extends Actor {
+  def receive = {
+    case s =>
+      println("worker working with " + s)
+      sender ! s
+  }
+}
+#+END_SRC
+
+** Actor System
+Related Terminology, Concepts
+- Concurrency vs. Parallelism
+- Asynchronous vs. Synchronous
+- Non-blocking vs. Blocking
+- Deadlock vs. Starvation vs. Live-lock
+- Race Condition
+- Non-blocking Guarantees (Progress Conditions)
+  - Wait-freedom
+  - Lock-freedom
+  - Obstruction-freedom
+- Recommended literature
+  - The Art of Multiprocessor Programming, M. Herlihy and N Shavit, 2008. ISBN 978-0123705914
+  -  Java Concurrency in Practice, B. Goetz, T. Peierls, J. Bloch, J. Bowbeer, D. Holmes and D. Lea, 2006. ISBN 978-0321349606
+
+-----
+An ActorSystem is a heavyweight structure that will allocate 1. . . N Threads, *so create one per logical application.*
+
+Actors are objects which encapsulate state and behavior, they communicate exclusively by exchanging messages which are placed into the recipient’s mailbox. In a sense, actors are the most stringent form of object-oriented programming, but it serves better to view them as persons: while modeling a solution with actors, envision a group of people and assign sub-tasks to them, arrange their functions into an organizational structure and think about how to escalate failure (all with the benefit of not actually dealing with people, which means that we need not concern ourselves with their emotional state or moral issues). The result can then serve as a mental scaffolding for building the software implementation. （类似群体概念。将任务分解给群体里面每个人来完成。组织每个人的只能以及思考如何处理任务失败的情况）
+
+Hierarchical Structure
+- Like in an economic organization, actors naturally form hierarchies. One actor, which is to oversee a certain function in the program might want to split up its task into smaller, more manageable pieces. For this purpose it starts child actors which it supervises. While the details of supervision are explained here, we shall concentrate on the underlying concepts in this section. The only prerequisite is to know that each actor has exactly one supervisor, which is the actor that created it.（parent负责childrren的supervision)
+- The quintessential feature of actor systems is that tasks are split up and delegated until they become small enough to be handled in one piece. In doing so, not only is the task itself clearly structured, but the resulting actors can be reasoned about in terms of which messages they should process, how they should react normally and how failure should be handled. If one actor does not have the means for dealing with a certain situation, it sends a corresponding failure message to its supervisor, asking for help. The recursive structure then allows to handle failure at the right level.
+- Now, the difficulty in designing such a system is how to decide who should supervise what. There is of course no single best solution, but there are a few guidelines which might be helpful:
+  - If one actor manages the work another actor is doing, e.g. by passing on sub-tasks, then the manager should supervise the child. The reason is that the manager knows which kind of failures are expected and how to handle them.
+  - If one actor carries very important data (i.e. its state shall not be lost if avoidable), this actor should source out any possibly dangerous sub-tasks to children it supervises and handle failures of these children as appropriate. Depending on the nature of the requests, it may be best to create a new child for each request, which simplifies state management for collecting the replies. This is known as the “Error Kernel Pattern” from Erlang.
+  - If one actor depends on another actor for carrying out its duty, it should watch that other actor’s liveness and act upon receiving a termination notice. This is different from supervision, as the watching party has no influence on the supervisor strategy, and it should be noted that a functional dependency alone is not a criterion for deciding where to place a certain child actor in the hierarchy.
+
+Actor Best Practices
+- Actors should be like nice co-workers: do their job efficiently without bothering everyone else needlessly and avoid hogging resources.
+- Do not pass mutable objects between actors. In order to ensure that, prefer immutable messages.（状态共享）
+- Actors are made to be containers for behavior and state, embracing this means to not routinely send behavior within messages (which may be tempting using Scala closures) (状态共享）
+- Top-level actors are the innermost part of your Error Kernel, so create them sparingly and prefer truly hierarchical systems.  This has benefits with respect to fault-handling (both considering the granularity of configuration and the performance) and it also reduces the strain on the guardian actor, which is a single point of contention if over-used.（这个问题很重要，如果只有一层的话，那么最顶层也就是Error Kernel层，需要处理大量消息，容易造成冲突）
+
+Blocking Needs Careful Management
+- The non-exhaustive list of adequate solutions to the “blocking problem” includes the following suggestions:
+  - Do the blocking call within an actor (or a set of actors managed by a router [Java, Scala]), making sure to configure a thread pool which is either dedicated for this purpose or sufficiently sized.
+  - Do the blocking call within a Future, ensuring an upper bound on the number of such calls at any point in time (submitting an unbounded number of tasks of this nature will exhaust your memory or thread limits).
+  - Do the blocking call within a Future, providing a thread pool with an upper limit on the number of threads which is appropriate for the hardware on which the application runs.
+  - Dedicate a single thread to manage a set of blocking resources (e.g. a NIO selector driving multiple chan-nels) and dispatch events as they occur as actor messages.
+
+An actor system manages the resources it is configured to use in order to run the actors which it contains. There may be millions of actors within one such system, after all the mantra is to view them as abundant and they weigh in at an overhead of only roughly 300 bytes per instance. Naturally, the exact order in which messages are processed in large systems is not controllable by the application author, but this is also not intended. Take a step back and relax while Akka does the heavy lifting under the hood.（每个actor对象大约只是使用300字节左右，所以可以创建大量actor对象。使用者没有办法控制message处理顺序，需要接收event-driven编程方式）
+
+** Actor Concept
+file:images/akka-actor-system.png
+
+*** Reference
+- #note: ActorRef. 类似Actor对象指针，所有Actor对象操作都是通过引用来完成的。这样Actor如果重启，或者是部署在远程做通信的话，都可以以透明方式来完成
+- As detailed below, an actor object needs to be shielded from the outside in order to benefit from the actor model. Therefore, actors are represented to the outside using actor references, which are objects that can be passed around freely and without restriction.
+- This split into inner and outer object enables transparency for all the desired operations: restarting an actor without needing to update references elsewhere, placing the actual actor object on remote hosts, sending messages to actors in completely different applications.
+- But the most important aspect is that it is not possible to look inside an actor and get hold of its state from the outside, unless the actor unwisely publishes this information itself.
+
+-----
+
+There are several different types of actor references that are supported depending on the configuration of the actor system:
+- *Purely local actor* references are used by actor systems which are not configured to support networking functions. These actor references will not function if sent across a network connection to a remote JVM.（完全本地，没有任何通信）
+- *Local actor references* when remoting is enabled are used by actor systems which support networking func- tions for those references which represent actors within the same JVM. In order to also be reachable when sent to other network nodes, these references include protocol and remote addressing information.（本地，但是会和JVM内部其他actor通信）
+  - There is a subtype of local actor references which is used for *routers (i.e. actors mixing in the Router trait).* Its logical structure is the same as for the aforementioned local references, but sending a message to them dispatches to one of their children directly instead.（路由）
+- *Remote actor* references represent actors which are reachable using remote communication, i.e. sending messages to them will serialize the messages transparently and send them to the remote JVM.（涉及到远程通信）
+- There are several special types of actor references which behave like local actor references for all practical purposes:
+  - *PromiseActorRef* is the special representation of a Promise for the purpose of being completed by the response from an actor. akka.pattern.ask creates this actor reference. （对于ask不是产生Future吗？）
+  - *DeadLetterActorRef* is the default implementation of the dead letters service to which Akka routes all messages whose destinations are shut down or non-existent.（对于已经消亡的actor，向这些actor发送的消息都会转发到这里）
+  - *EmptyLocalActorRef* is what Akka returns when looking up a non-existent local actor path: it is equivalent to a DeadLetterActorRef, but it retains its path so that Akka can send it over the network and compare it to other existing actor references for that path, some of which might have been obtained before the actor died.（没有对应path的actor）
+- And then there are some one-off internal implementations which you should never really see:
+  - There is an actor reference which does not represent an actor but acts only as a pseudo-supervisor for the root guardian, we call it “the one who walks the bubbles of space-time”.（root guaridan actor）
+  - The first logging service started before actually firing up actor creation facilities is a fake actor reference which accepts log events and prints them directly to standard output; it is Logging.StandardOutLogger.（logger service actor）
+- *Cluster actor references* represent clustered actor services which may be replicated, migrated or load-balanced across multiple cluster nodes. As such they are virtual names which the cluster service translates into local or remote actor references as appropriate.
+
+
+-----
+
+There are two general categories to how actor references may be obtained: by creating actors or by looking them up, where the latter functionality comes in the two flavours of creating actor references from concrete actor paths and querying the logical actor hierarchy.（创建actor reference有两种方式，一种是创建，一种是查找）
+- Creating Actors.
+  - An actor system is typically started by creating actors beneath the guardian actor using the ActorSystem.actorOf method and then using ActorContext.actorOf from within the created actors to spawn the actor tree.
+  - These methods return a reference to the newly created actor. Each actor has direct access (through its ActorContext) to references for its parent, itself and its children. These references may be sent within messages to other actors, enabling those to reply directly.
+- Looking up Actors by Concrete Path
+  - In addition, actor references may be looked up using the ActorSystem.actorSelection method.
+  - The selection can be used for communicating with said actor and *the actor corresponding to the selection is looked up when delivering each message.*
+  - #note: support relative path and wildcard. like ../sibling or ../?
+
+-----
+
+Equality of ActorRef match the intention that an ActorRef corresponds to the target actor incarnation. Two actor references are compared equal *when they have the same path and point to the same actor incarnation.* A reference pointing to a terminated actor does not compare equal to a reference pointing to another (re-created) actor with the same path. Note that a restart of an actor caused by a failure still means that it is the same actor incarnation, i.e. a restart is not visible for the consumer of the ActorRef.(仅仅比较path是不行的。相同path可能会出现这样的情况：a是died actor，而b是re-created actor. 两者虽然有相同的path，但是却并不相同。不过ActorRef内部重启没有任何影响）
+
+*** Path
+Since actors are created in a strictly hierarchical fashion, there exists a unique sequence of actor names given by recursively following the supervision links between child and parent down towards the root of the actor system. This sequence can be seen as enclosing folders in a file system, hence we adopted the name “path” to refer to it.（非常类似文件系统）
+- Logical Actor Paths
+  - #note: 主要是强调hierarchy
+  - akka.tcp://sys@A:2552/user/parent/child
+  - The unique path obtained by following the parental supervision links towards the root guardian is called the logical actor path.
+  - This path matches exactly the creation ancestry of an actor, so it is completely deterministic as soon as the actor system’s remoting configuration (and with it the address component of the path) is set.
+- Physical Actor Paths
+  - #note: 主要是强调location
+  - akka.tcp://sys@B:2552/remote/sys@A:2552/user/parent/child # remote node on B.
+  - One important aspect is that a physical actor path never spans multiple actor systems or JVMs.
+  - This means that the logical path (supervision hierarchy) and the physical path (actor deployment) of an actor may diverge if one of its ancestors is remotely supervised.
+- Virtual Actor Paths
+  - In order to be able to replicate and migrate actors across a cluster of Akka nodes, another level of indirection has to be introduced.
+  - The cluster component therefore provides a translation from virtual paths to physical paths which may change in reaction to node failures, cluster rebalancing, etc.
+
+An actor path consists of an anchor, which identifies the actor system, followed by the concatenation of the path elements, from root guardian to the designated actor; the path elements are the names of the traversed actors and are separated by slashes.
+- "akka://my-sys/user/service-a/worker1"                   // purely local（如果真的可以通过path来判断purely local和local区别的话，那么我之前的理解可能就是错误的）
+- "akka.tcp://my-sys@host.example.com:5678/user/service-b" // remote
+- "cluster://my-cluster/service-c"                         // clustered
+
+
+-----
+
+When sending an actor reference across the network, it is represented by its path. Hence, the path must fully encode all information necessary to send messages to the underlying actor. This is achieved by encoding protocol, host and port in the address part of the path string. *When an actor system receives an actor path from a remote node, it checks whether that path’s address matches the address of this actor system, in which case it will be resolved to the actor’s local reference. Otherwise, it will be represented by a remote actor reference.*
+
+When an actor creates a child, the actor system’s deployer will decide whether the new actor resides in the same JVM or on another node. In the second case, creation of the actor will be triggered via a network connection to happen in a different JVM and consequently within a different actor system. The remote system will place the new actor below a special path reserved for this purpose and the supervisor of the new actor will be a remote actor reference (representing that actor which triggered its creation). In this case, context.parent (the supervisor reference) and context.path.parent (the parent node in the actor’s path) do not represent the same actor. However, looking up the child’s name within the supervisor will find it on the remote node, preserving logical structure e.g. when sending to an unresolved actor reference.(通常来说parent和supervisor相同的actor，但是仅仅对于本地有效。对于远程这种情况来说，supervisor和parent是不同的对象。不过可以看到依然可以按照原来认为supervisor == parent这种方式来通信，通过route actor来完成）
+
+file:images/akka-actor-on-remote-node.png
+
+-----
+
+#note: 可以参照后面的Supervision and Monitoring来看这些path
+
+At the root of the path hierarchy resides the root guardian above which all other actors are found; its name is "/". The next level consists of the following:
+- "/user" is the guardian actor for all user-created top-level actors; actors created using ActorSystem.actorOf are found below this one.
+- "/system" is the guardian actor for all system-created top-level actors, e.g. logging listeners or actors automatically deployed by configuration at the start of the actor system.
+- "/deadLetters" is the dead letter actor, which is where all messages sent to stopped or non-existing actors are re-routed (on a best-effort basis: messages may be lost even within the local JVM).
+- "/temp" is the guardian for all short-lived system-created actors, e.g. those which are used in the imple- mentation of ActorRef.ask.
+- "/remote" is an artificial path below which all actors reside whose supervisors are remote actor references.
+
+The need to structure the name space for actors like this arises from a central and very simple design goal: everything in the hierarchy is an actor, and all actors function in the same way. Hence you can not only look up the actors you created, you can also look up the system guardian and send it a message (which it will dutifully discard in this case). This powerful principle means that there are no quirks to remember, it makes the whole system more uniform and consistent.（路径的层次化组织使得定位actor更加容易和统一）
+
+*** State
+- Behind the scenes Akka will run sets of actors on sets of real threads, where typically many actors share one thread, and subsequent invocations of one actor may end up being processed on different threads. Akka ensures that this implementation detail does not affect the single-threadedness of handling the actor’s state.（多个Actor对象可能会共享一个线程，并且Actor每次执行可能是在不同的线程上执行）
+- Because the internal state is vital to an actor’s operations, having inconsistent state is fatal. Thus, when the actor fails and is restarted by its supervisor, the state will be created from scratch, like upon first creating the actor. This is to enable the ability of self-healing of the system.（如果Actor重启的话那么state会恢复到初始状态）
+
+*** Behavior
+- Every time a message is processed, it is matched against the current behavior of the actor. Behavior means a function which defines the actions to be taken in reaction to the message at that point in time, say forward a request if the client is authorized, deny it otherwise.
+- If the current actor behavior does not match a received message, unhandled is called, which by default publishes anakka.actor.UnhandledMessage(message, sender, recipient)on the actor system’s event stream (set configuration item akka.actor.debug.unhandled to on to have them converted into actual Debug messages).（以现在Akka API来说如果某个消息没有处理的话，那么会由unhandle函数来处理，默认则是发送到系统的EventStream）
+- These changes are achieved by either encoding them in state variables which are read from the behavior logic, or the function itself may be swapped out at runtime, see the become and unbecome operations.（Akka对FSM支持非常好而不只是简单的become/unbecome函数）
+- However, the initial behavior defined during construction of the actor object is special in the sense that a restart of the actor will reset its behavior to this initial one. (需要注意，如果重启的话，那么状态会恢复到最初）
+
+*** Mailbox
+- The piece which connects sender and receiver is the actor’s mailbox: each actor has exactly one mailbox to which all senders enqueue their messages.
+  - Enqueuing happens in the time-order of send operations, which means that messages sent from different actors may not have a defined order at runtime due to the apparent randomness of distributing actors across threads. （不同sender发向同一个target到达消息的顺序不确定）
+  - Sending multiple messages to the same target from the same actor, on the other hand, will enqueue them in the same order.（如果是一个sender发向一个target的消息顺序是确定的）
+- There are different mailbox implementations to choose from, （不同mailbox实现）
+  - the default being a FIFO: the order of the messages processed by the actor matches the order in which they were enqueued. This is usually a good default, but applications may need to prioritize some messages over others. （一种是默认的FIFO）
+  - In this case, a priority mailbox will enqueue not always at the end but at a position as given by the message priority, which might even be at the front. While using such a queue, the order of messages processed will naturally be defined by the queue’s algorithm and in general not be FIFO.（另外一种是有优先级别的mailbox)
+- An important feature in which Akka differs from some other actor model implementations is that the current behavior must always handle the next dequeued message, there is no scanning the mailbox for the next matching one. Failure to handle a message will typically be treated as a failure, unless this behavior is overridden. #note: 和其他actor model实现有点不太类似是，没有办法对mailbox来做scan来处理匹配的项。也就是说对于mailbox里面所有的消息都需要显式处理
+- If an exception is thrown while a message is being processed, nothing happens to the mailbox. If the actor is restarted, the same mailbox will be there. So all messages on that mailbox will be there as well.(如果处理消息的时候发生异常，mailbox并不会受影响，并且如果actor重启的话，读取的依然是之前的mailbox里面的内容） #todo: 是否有办法清除mailbox里面的内容?
+
+*** in Akka
+Akka实现的Actor对象内部包括了下面几个比较重要的字段和方法
+- *self* reference to the ActorRef of the actor
+- *sender* reference sender Actor of the last received message, typically used as described in Reply to mes- sages
+- *supervisorStrategy* user overridable definition the strategy to use for supervising child actors
+- *context* exposes contextual information for the actor and the current message, such as: – factory methods to create child actors (actorOf)
+  – system that the actor belongs to
+  – parent supervisor
+  – supervised children
+  – lifecycle monitoring
+  – hotswap behavior stack as described in Become/Unbecome
+- The *receive* method should define a series of case statements (which has the type PartialFunction[Any, Unit]) that defines which messages your Actor can handle, using standard Scala pattern matching, along with the implementation of how the messages should be processed.
+
+** Actor Lifecycle
+file:images/akka-actor-lifecycle.png
+
+Initialization
+- constructor. 每次创建对象都会调用。注意重启创建incarnation的时候也是创建新对象。
+- preStart. 每次创建第一个对象的时候会调用。
+- first communication. 第一次通信的时候触发。
+
+Termination
+- #note: actor终止的时候，这个actor原来内部所有的message都会流向EventStream(another special actor)作为DeadLetters，而actor消亡之后其mailbox会重定向到system mailbox, 所有发向这个system mailbox的消息也会流向EventStream作为DeadLetters
+- Once an actor terminates, i.e. fails in a way which is not handled by a restart, stops itself or is stopped by its supervisor, it will free up its resources, draining all remaining messages from its mailbox into the system’s “dead letter mailbox” which will forward them to the EventStream as DeadLetters.
+- The mailbox is then replaced within the actor reference with a system mailbox, redirecting all new messages to the EventStream as DeadLetters. This is done on a best effort basis, though, so do not rely on it in order to construct “guaranteed delivery”.
+
+** Supervision And Monitoring
+Akka implements a specific form called *“parental supervision”.*
+- Actors can only be created by other actors— *where the top-level actor is provided by the library* —and each created actor is supervised by its parent.
+- Each actor is potentially a supervisor: if it creates children for delegating sub-tasks, it will automatically supervise them.
+- The list of children is maintained within the actor’s context and the actor has access to it.
+- Modifications to the list are done by creating (context.actorOf(...)) or stopping (context.stop(child)) children and these actions are reflected immediately.
+- The actual creation and termination actions happen behind the scenes in an asynchronous way, so they do not “block” their supervisor.（对于children的创建和终止是异步完成的）
+
+
+-----
+Depending on the nature of the work to be supervised and the nature of the failure, the supervisor has a choice of the following four options:（监控发现失败的话通常会采取下面几种策略）
+1. Resume the subordinate, keeping its accumulated internal state（恢复）
+2. Restart the subordinate, clearing out its accumulated internal state（重启）
+3. Terminate the subordinate permanently（终止）
+4. Escalate the failure, thereby failing itself（向上传递）
+This strategy cannot be changed afterwards as it is an integral part of the actor system’s structure.(策略一旦选定之后就不能够改变）
+
+-----
+Each supervisor is configured with a function translating all possible failure causes (i.e. exceptions) into one of the four choices given above; notably, this function does not take the failed actor’s identity as an input. It is quite easy to come up with examples of structures where this might not seem flexible enough, e.g. wishing for different strategies to be applied to different subordinates. At this point it is vital to understand that supervision is about forming a recursive fault handling structure. If you try to do too much at one level, it will become hard to reason about, hence the recommended way in this case is to add a level of supervision. Considering that there is only one such strategy for each actor, this means that if different strategies apply to the various children of an actor, the children should be grouped beneath intermediate supervisors with matching strategies, preferring once more the structuring of actor systems according to the splitting of tasks into sub-tasks. （supervisor处理失败函数并不能够是被actor的身份，所以不能够根据actor身份来选择不同的处理策略。如果确实有需求的话，那么需要考虑增加层级，引入间接的actor来分别管理它们）
+
+-----
+file:images/akka-top-level-supervisors.png
+
+An actor system will during its creation start at least three actors, shown in the image above.
+- /user: The Guardian Actor
+  - The actor which is probably most interacted with is the parent of all user-created actors, the guardian named "/user".
+  - Actors created using *system.actorOf()* are children of this actor. This means that when this guardian terminates, all normal actors in the system will be shutdown, too.
+  - It also means that this guardian’s supervisor strategy determines how the top-level normal actors are supervised. Since Akka 2.1 it is possible to configure this using the setting akka.actor.guardian-supervisor-strategy, which takes the fully-qualified class-name of a SupervisorStrategyConfigurator.（可以配置这个guardian的策略）
+  - When the guardian escalates a failure, the root guardian’s response will be to terminate the guardian, which in effect will shut down the whole actor system.（root guardian默认策略是shutdown whole system)
+- /system: The System Guardian
+  - This special guardian has been introduced in order to achieve an orderly shut-down sequence where logging re-mains active while all normal actors terminate, even though logging itself is implemented using actors. This is realized by having the system guardian watch the user guardian and initiate its own shut-down upon re-ception of the Terminated message.（system guardian管理了类似logging这样的actor，通过监控user guardian Termianted信息，如果user guardian actor结束的话那么system guardian也会结束）
+  - The top-level system actors are supervised using a strategy which will restart indefinitely upon all types of Exception except for ActorInitializationException and ActorKilledException, which will terminate the child in question. All other throwables are escalated, which will shut down the whole actor system.
+- /: The Root Guardian
+  - Since every real actor has a supervisor, the supervisor of the root guardian cannot be a real actor. And because this means that it is “outside of the bubble”, it is called the “bubble-walker”.
+  - *This is a synthetic ActorRef which in effect stops its child upon the first sign of trouble* and sets the actor system’s isTerminated status to true as soon as the root guardian is fully terminated (all children recursively stopped)
+
+-----
+Lifecycle Monitoring
+- In contrast to the special relationship between parent and child described above, each actor may monitor any other actor. （没有直接parent-child关系的actor也能够相互监控）
+- Since actors emerge from creation fully alive and restarts are not visible outside of the affected supervisors, the only state change available for monitoring is the transition from alive to dead. （但是之能够监控从alive->dead这个过程）
+- Monitoring is thus used to tie one actor to another so that it may react to the other actor’s termination, in contrast to supervision which reacts to failure.（而不能够监控failure的情况）
+- Lifecycle monitoring is implemented using a Terminated message to be received by the monitoring actor, where the default behavior is to throw a special DeathPactException if not otherwise handled. （通过监控Terminated信息来观察）
+- In order to start listening for Terminated messages, invoke ActorContext.watch(targetActorRef). To stop listening, invoke ActorContext.unwatch(targetActorRef)
+- One important property is that the mes-sage will be delivered irrespective of the order in which the monitoring request and target’s termination occur, i.e. you still get the message even if at the time of registration the target is already dead.（和时间顺序无关）
+
+Monitoring is particularly useful if a supervisor cannot simply restart its children and has to terminate them, e.g. in case of errors during actor initialization. In that case it should monitor those children and re-create them or schedule itself to retry this at a later time. Another common use case is that an actor needs to fail in the absence of an external resource, which may also be one of its own children. If a third party terminates a child by way of the system.stop(child) method or sending a PoisonPill, the supervisor might well be affected.
+
+-----
+One-For-One Strategy vs. All-For-One Strategy
+
+There are two classes of supervision strategies which come with Akka: OneForOneStrategy and AllForOneStrategy. Both are configured with a mapping from exception type to supervision directive (see above) and limits on how often a child is allowed to fail before terminating it. *The difference between them is that the former applies the obtained directive only to the failed child, whereas the latter applies it to all siblings as well.* Normally, you should use the OneForOneStrategy, which also is the default if none is specified explicitly.（前面只是处理失败的child，而后面处理所有的child包括失败和非失败的）
+
+The AllForOneStrategy is applicable in cases where the ensemble of children has such tight dependencies among them, that a failure of one child affects the function of the others, i.e. they are inextricably linked. Since a restart does not clear out the mailbox, it often is best to terminate the children upon failure and re-create them explicitly from the supervisor (by watching the children’s lifecycle); otherwise you have to make sure that it is no problem for any of the actors to receive a message which was queued before the restart but processed afterwards.（主要针对各个children之间存在联系的情况）
+
+** Message Order and Delivery Guarantees
+Messages are sent to an Actor through one of the following methods.（两种方式来进行消息发送）
+- ! means “fire-and-forget”, e.g. send a message asynchronously and return immediately. Also known as tell.
+- ? sends a message asynchronously and returns a Future representing a possible reply. Also known as ask.
+
+These are the rules for message sends (i.e. the tell or ! method, which also underlies the ask pattern):
+- at-most-once delivery, i.e. no guaranteed delivery
+- message ordering per sender–receiver pair #note: 可以参考Memory Model这个部分的内容
+The first rule is typically found also in other actor implementations while the second is specific to Akka.
+
+-----
+
+A local tell operation can however fail for the same reasons as a normal method call can on the JVM:
+- StackOverflowError
+- OutOfMemoryError
+- other VirtualMachineError
+In addition, local sends can fail in Akka-specific ways:
+- if the mailbox does not accept the message (e.g. full BoundedMailbox)
+- if the receiving actor fails while processing the message or is already terminated
+While the first is clearly a matter of configuration the second deserves some thought: the sender of a message does not get feedback if there was an exception while processing, that notification goes to the supervisor instead. This is in general not distinguishable from a lost message for an outside observer.
+
+-----
+
+Supervision related parent-child communication happens by special system messages that have their own mailboxes separate from user messages. This implies that supervision related events are not deter-ministically ordered relative to ordinary messages. In general, the user cannot influence the order of normal messages and failure notifications.（对于正常消息和监控消息是分开存放的，这也意味着监控消息和正常消息会混合在一起，并且以一种用户不能够确定的顺序出现）
+
+-----
+
+*Something about DeadLetters*
+
+Messages which cannot be delivered (and for which this can be ascertained) will be delivered to a synthetic actor called /deadLetters. This delivery happens on a best-effort basis; it may fail even within the local JVM (e.g. during actor termination). Messages sent via unreliable network transports will be lost without turning up as dead letters.（deadletters的传播是best-effor的没有任何gurantee，并且不能够跨越JVM）
+
+Dead letters are not propagated over the network, if you want to collect them in one place you will have to subscribe one actor per network node and forward them manually. Also consider that dead letters are generated at that node which can determine that a send operation is failed, which for a remote send can be the local system (if no network connection can be established) or the remote one (if the actor you are sending to does not exist at that point in time).（如果需要跨越JVM的话那么需要搭建route来做转发）
+
+The main use of this facility is for debugging, especially if an actor send does not arrive consistently (where usually inspecting the dead letters will tell you that the sender or recipient was set wrong somewhere along the way). In order to be useful for this purpose it is good practice to avoid sending to deadLetters where possible, i.e. run your application with a suitable dead letter logger (see more below) from time to time and clean up the log output. This exercise—like all else—requires judicious application of common sense: it may well be that avoiding to send to a terminated actor complicates the sender’s code more than is gained in debug output clarity.
+
+** Location Transparency
+Everything in Akka is designed to work in a distributed setting: all interactions of actors use purely message passing and everything is asynchronous. This effort has been undertaken to ensure that all functions are available equally when running within a single JVM or on a cluster of hundreds of machines. The key for enabling this is to go from remote to local by way of optimization instead of trying to go from local to remote by way of generalization. See [[http://doc.akka.io/docs/misc/smli_tr-94-29.pdf][this classic paper]] for a detailed discussion on why the second approach is bound to fail.(将local特化成为一种remote形式才是正确处理分布式的方法。所有消息之间通信包括远程通信都是异步的）
+
+What is true of Akka need not be true of the application which uses it, since designing for distributed execution poses some restrictions on what is possible. The most obvious one is that all messages sent over the wire must be serializable. While being a little less obvious this includes closures which are used as actor factories (i.e. within Props) if the actor is to be created on a remote node.(所有对象都需要能够序列化？开销？）
+
+Another consequence is that everything needs to be aware of all interactions being fully asynchronous, which in a computer network might mean that it may take several minutes for a message to reach its recipient (depending on configuration). It also means that the probability for a message to be lost is much higher than within one JVM, where it is close to zero (still: no hard guarantee!).（消息到达传递时间不一定是瞬时的）
+
+We took the idea of transparency to the limit in that there is nearly no API for the remoting layer of Akka: it is purely driven by configuration. Just write your application according to the principles outlined in the previous sections, then specify remote deployment of actor sub-trees in the configuration file. This way, your application can be scaled out without having to touch the code. The only piece of the API which allows programmatic influence on remote deployment is that Props contain a field which may be set to a specific Deploy instance; this has the same effect as putting an equivalent deployment into the configuration file (if both are given, configuration file wins).（对于这种透明成本仅仅体现在配置文件上，而不需要使用特殊的API来控制，所以代价非常小是真正透明的）
+
+** Configuration
+You can start using Akka without defining any configuration, since sensible default values are provided. Later on you might need to amend the settings to change the default behavior or adapt for specific runtime environments. Typical examples of settings that you might amend:
+- log level and logger backend
+- enable remoting
+- message serializers
+- definition of routers
+- tuning of dispatchers
+Akka uses the [[https://github.com/typesafehub/config][Typesafe Config Library]], which might also be a good choice for the configuration of your own ap- plication or library built with or without Akka. This library is implemented in Java with no external dependencies. 格式称为 [[https://github.com/typesafehub/config/blob/master/HOCON.md][HOCON]]
+
+While constructing an ac- tor system, you can either pass in a Config object or not, where the second case is equivalent to passing ConfigFactory.load() (with the right class loader). This means roughly that the default is to parse all application.conf, application.json and application.properties found at the root of the class path—please refer to the aforementioned documentation for details. The actor system then merges in all reference.conf resources found at the root of the class path to form the fallback configuration, i.e. it inter- nally uses appConfig.withFallback(ConfigFactory.defaultReference(classLoader)). The philosophy is that code never contains default values, but instead relies upon their presence in the reference.conf supplied with the library in question.
+配置表示成为Config对象，这个对象的创建会读取下面几个文件
+- application.conf
+- application.json
+- application.properties
+- #note: application允许通过config.*配置选项来修改指定
+对于那些找不到的属性会查询reference.conf，这是默认属性。Akka倾向所有变量都使用配置而不是在代码提供默认值。
+
+Akka’s configuration approach relies heavily on the notion of every module/jar having its own reference.conf file, all of these will be discovered by the configuration and loaded. Unfortunately this also means that if you put/merge multiple jars into the same jar, you need to merge all the reference.confs as well. Otherwise all defaults will be lost and Akka will not function.（可是需要注意如果打包成为fatjar的话，reference.conf可能会覆盖）
+
+** Dispatcher
+An Akka MessageDispatcher is what makes Akka Actors “tick”, it is the engine of the machine so to speak. All MessageDispatcher implementations are also an ExecutionContext, which means that they can be used to execute arbitrary code, for instance Futures.(Dispatcher让整个Akka运行起来）。There are 4 different types of message dispatchers：
+- Dispatcher（默认）
+  - This is an event-based dispatcher that binds a set of Actors to a thread pool. It is the default dispatcher used if one is not specified.
+  - Sharability: Unlimited
+  - Mailboxes: Any, creates one per Actor
+  - Use cases: Default dispatcher, Bulkheading
+  - Driven by: java.util.concurrent.ExecutorService specify  using “ex-ecutor” using “fork-join-executor”, “thread-pool-executor” or the FQCN of an akka.dispatcher.ExecutorServiceConfigurator
+
+- PinnedDispatcher
+  - This dispatcher dedicates a unique thread for each actor using it; i.e. each actor will have its own thread pool with only one thread in the pool.
+  - Sharability: None
+  - Mailboxes: Any, creates one per Actor
+  - Use cases: Bulkheading
+  - Driven by: Any akka.dispatch.ThreadPoolExecutorConfigurator by default a “thread-pool-executor”
+
+- BalancingDispatcher
+  - This is an executor based event driven dispatcher that will try to redistribute work from busy actors to idle actors.
+  - All the actors share a single Mailbox that they get their messages from.
+  - It is assumed that all actors using the same instance of this dispatcher can process all messages that have been sent to one of the actors; i.e. the actors belong to a pool of actors, and to the client there is no guarantee about which actor instance actually processes a given message.
+  - Sharability: Actors of the same type only
+  - Mailboxes: Any, creates one for all Actors
+  - Use cases: Work-sharing
+  - Driven by: java.util.concurrent.ExecutorService specify using “ex-ecutor” using “fork-join-executor”, “thread-pool-executor” or the FQCN of an akka.dispatcher.ExecutorServiceConfigurator
+  - *Note that you can not use a BalancingDispatcher as a Router Dispatcher. (You can however use it for the Routees)*
+
+-  CallingThreadDispatcher
+  - This dispatcher runs invocations on the current thread only. This dispatcher does not create any new threads, but it can be used from different threads concurrently for the same actor. See CallingThread-Dispatcher for details and restrictions.
+  - Sharability: Unlimited
+  - Mailboxes: Any, creates one per Actor per Thread (on demand)
+  - Use cases: Testing
+  - Driven by: The calling thread (duh)
+
+可以通过 *system.dispatchers.lookup* 来定位dispatcher
+
+** Mailboxes
+Akka comes shipped with a number of mailbox implementations:
+- UnboundedMailbox - The default mailbox
+  - Backed by a java.util.concurrent.ConcurrentLinkedQueue
+  - Blocking: No
+  - Bounded: No
+  - Configuration name: “unbounded” or “akka.dispatch.UnboundedMailbox”
+
+- SingleConsumerOnlyUnboundedMailbox
+  - Backed by a very efficient Multiple Producer Single Consumer queue, cannot be used withingDispatcher
+  - Blocking: No
+  - Bounded: No
+  - Configuration name: “akka.dispatch.SingleConsumerOnlyUnboundedMailbox”
+
+- BoundedMailbox
+  - Backed by a java.util.concurrent.LinkedBlockingQueue
+  - Blocking: Yes
+  - Bounded: Yes
+  - Configuration name: “bounded” or “akka.dispatch.BoundedMailbox”
+
+- UnboundedPriorityMailbox
+  - Backed by a java.util.concurrent.PriorityBlockingQueue
+  - Blocking: Yes
+  - Bounded: No
+  - Configuration name: “akka.dispatch.UnboundedPriorityMailbox”
+
+- BoundedPriorityMailbox
+  - Backed by a java.util.PriorityBlockingQueue wrapped in an akka.util.BoundedBlockingQueue
+  - Blocking: Yes
+  - Bounded: Yes
+  - Configuration name: “akka.dispatch.BoundedPriorityMailbox”
+
+- Durable mailboxes, see Durable Mailboxes.
+
+** Routing
+A Router is an actor that receives messages and efficiently routes them to other actors, known as its routees. Different routing strategies can be used, according to your application’s needs. Akka comes with several useful routing strategies right out of the box. But, as you will see in this chapter, it is also possible to create your own. The routers shipped with Akka are:
+- akka.routing.RoundRobinRouter. Routes in a round-robin fashion to its routees.
+- akka.routing.RandomRouter. As the name implies this router type selects one of its routees randomly and forwards the message it receives to this routee.
+- akka.routing.SmallestMailboxRouter. A Router that tries to send to the non-suspended routee with fewest messages in mailbox. The selection is done in this order:
+  - pick any idle routee (not processing message) with empty mailbox
+  - pick any routee with empty mailbox
+  - pick routee with fewest pending messages in mailbox
+  - pick any remote routee, remote actors are consider lowest priority, since their mailbox size is unknown
+- akka.routing.BroadcastRouter. A broadcast router forwards the message it receives to all its routees.
+- akka.routing.ScatterGatherFirstCompletedRouter. The ScatterGatherFirstCompletedRouter will send the message on to all its routees as a future. It then waits for first result it gets back. This result will be sent back to original sender.
+- akka.routing.ConsistentHashingRouter. The ConsistentHashingRouter uses consistent hashing to select a connection based on the sent message.
+
+Routers, Routees and Senders
+- Sending a message to a router is easy. "router ! MyMsg". A router actor forwards messages to its routees according to its routing policy.
+- The router forwards messages onto its routees without changing the original sender. When a routee replies to a routed message, the reply will be sent to the original sender, not to the router.(直接返回给sender而不会经过router，也没有办法回复router）
+- When a router creates routees, they are created as the routers children. This gives each routee its own identity in the actor system.
+
+Handling for Special Messages
+- Broadcast Messages. A Broadcast message can be used to send a message to all of a router’s routees. When a router receives a Broadcast message, it will broadcast that message’s payload to all routees, no matter how that router would normally route its messages.
+- PoisonPill Messages. A PoisonPill message has special handling for all actors, including for routers. When any actor receives a PoisonPill message, that actor will be stopped. *For a router, which normally passes on messages to routees, it is important to realised that PoisonPill messages are processed by the router only. PoisonPill messages sent to a router will not be sent on to routees.*
+- Kill Messages. Kill messages are another type of message that has special handling. *When a Kill message is sent to a router the router processes the message internally, and does not send it on to its routees.* The router will throw an ActorKilledException and fail. It will then be either resumed, restarted or terminated, depending how it is supervised.
+
+** Transactors
+Memory Model
+- Java
+  - The monitor lock rule: a release of a lock happens before every subsequent acquire of the same lock.
+  - The volatile variable rule: a write of a volatile variable happens before every subsequent read of the same volatile variable
+- Actor
+  - The actor send rule: the send of the message to an actor happens before the receive of that message by the same actor.
+  - The actor subsequent processing rule: processing of one message happens before processing of the next message by the same actor.
+  - Both rules only apply for the same actor instance and are not valid if different actors are used.
+- Future
+  - The completion of a Future “happens before” the invocation of any callbacks registered to it are executed.
+- STM
+  - The transactional reference rule: a successful write during commit, on an transactional reference, happens before every subsequent read of the same transactional reference.
+
+** Enhancement
+*** Typed Channel
+*** Typed Actor
+*** FSM
+*** Futures
+*** Dataflow Concurrency
+*** STM
+*** Agents
+** TroubleShooting

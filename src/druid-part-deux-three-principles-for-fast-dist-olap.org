@@ -1,0 +1,20 @@
+#+title: Druid, Part Deux: Three Principles for Fast, Distributed OLAP
+http://metamarkets.com/2011/druid-part-deux-three-principles-for-fast-distributed-olap/
+
+** Partial Aggregates + In-Memory + Indexes => Fast Queries
+- alpha represents the raw, unaggregated event logs, while beta is its partially aggregated derivative. （将alpha dataset使用部分聚合形成beta dataset)
+- The key to Druid’s speed is maintaining the beta data entirely in memory. Full scans are several orders of magnitude faster in memory than via disk. What we lose in having to compute roll-ups on the fly, we make up for with speed.(将beta data set存放在memory里面）
+- To support drill-downs on specific dimensions (such as results for only ‘bieberfever.com’), we maintain a set of inverted indices.(为了支持在beta dataset上面做drill down，需要维护一个反向索引，这个在另外一片文章里面提到了，主要使用bitmap来表示entry在alpha dataset中的位置，并且对应的表示非常容易进行and/or/not)     
+ 
+** Distributed Data + Parallelizable Queries => Horizontal Scalability
+- Druid’s performance depends on having memory — lots of it. We achieve the requisite memory scale by dynamically distributing data across a cluster of nodes. As the data set grows, we can horizontally expand by adding more machines.(通过动态地在节点中分布数据来达到比较方便的水平扩展）
+- To facilitate rebalancing, we take chunks of beta data and index them into segments based on time ranges.（为了能够完成rebalance，将beta dataset分片并且进行索引，根据时间范围）
+- For high cardinality dimensions, distributing by time isn’t enough (we generally try to keep segments no larger than 20M rows), so we have introduced partitioning. We store metadata about segments within the query layer and partitioning logic within the segment generation code.（而对于维度比较多的内容，仅仅按照时间分布还是不够的，我们尽量让我一个segment不要超过20M rows所以需要引入partition，这个partition应该是用户自己定义的。然后druid将segment的metadata保存在qeury layer上面，而用户在查询的时候需要自己提供partition的code）
+- We persist these segments in a storage system (currently S3) that is accessible from all nodes. If a node goes down, Zookeeper coordinates the remaining live nodes to reconstitute the missing beta set.（segment数据也会在S3文件系统上面进行持久化。这样如果一个server node挂掉的，可以选举另外一个节点从S3文件系统中读取beta dataset。检测node挂掉通过zookeeper协调）
+- Downstream clients of the API are insulated from this rebalancing: Druid’s query API seamlessly handles changes in cluster topology.（下游的client则不需要考虑rebalance的情况）
+- Queries against the Druid cluster are perfectly horizontal. We limited the aggregation operations we support – count, mean, variance and other parametric statistics – that are inherently parallelizable. While less parallelizable operations, such as median, are not supported, this limitation is offset by rich support of histogram and higher-order moment stores. The co-location of processing with in-memory data on each node reduces network load and dramatically improves performance.（限制进行聚合的操作，确保这些操作确实可以并行完成。 如果没有并行完成的话，可以通过  *histogram and higher-order moment stores（高阶矩）* 的支持来补偿）
+
+** Real-Time Analytics: Immutable Past, Append-Only Future
+- For real-time analytics, we have an event stream that flows into a set of real-time indexers. These are servers that advertise responsibility for the most recent 60 minutes of data and nothing more. (对于实时分析有专门都的real-time indexer server，处理最近60分钟的数据）
+- They aggregate the real-time feed and periodically push an index segment to our storage system. The segment then gets loaded into memory of a standard server, and is flushed from the real-time indexer.（定期将real-time和历史数据做合并然后刷新real-time的数据）
+- Similarly, for long-range historical data that we want to make available, but not keep hot, we have deep-history servers. These use a memory mapping strategy for addressing segments, rather than loading them all into memory. This provides access to long-range data while maintaining the high-performance that our customers expect for near-term data.（对于那些非常老的历史数据，使用deep-history servers工作方式，使用mmap来访问segments而不用完全载入内存）

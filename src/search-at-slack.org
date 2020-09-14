@@ -1,0 +1,42 @@
+#+title: Search at Slack
+
+[[https://slack.engineering/search-at-slack-431f8c80619e]]
+
+Slack搜索按照两个指标排序: Relevance(相关性)和Recent(时间)
+
+Slack的检索和Google的检索在数据方面差异很大：
+- web search会出现一些热门query, 而这点slack search里面不太可能出现
+- slack 对用户的work graph以及search context更加了解
+- slack search不需要考虑SEO game出现的spam问题
+- 数据量相比web search小很多，所以可以将更多的计算资源放在rank上
+- 在展现搜索结果上也具有很高的灵活性，比如可以展现对话上下文（比如直接返回可以回答这个问题的人）
+
+recent的实现相对比较直接一些，而relevance则涉及到了ranking问题。在我们优化之前，relevance只占用了17%的搜索流量，剩下的都是recent, 并且从头部位置的ctr来看，relevance还有很大的改进空间。一种改进的办法就是利用用户的work graph，说白了就是用户行为和社交关系。优化之后，relevance的流量提升了9%, 然后position 1的ctr增加了27%.
+
+Learning to Rank是个很关键的改进，slack search的做法是首先使用solr/lucene的基本功能从索引里面把相关性的比较高的docs筛选出来，然后在application space上做一些计算密集型的ltr工作.
+#+BEGIN_QUOTE
+To achieve this we settled on a two-stage approach: we would leverage Solr’s custom sorting functionality to retrieve a set of messages ranked by only the select few features that were easy for Solr to compute, and then re-rank those messages in the application layer according to the full set of features, weighted appropriately.
+#+END_QUOTE
+根据点击的行为反馈，可以对每个pair of docs生成0/1这样的结果，然后使用这些数据作为训练数据来构建模型。
+
+点击行为会有click-position bias的问题，比如position n肯定比如position n+1曝光次数多，ctr也高出30%（这个是slack给出他们的数据）。所以在采样数据的时候，会对排在后面的doc进行点击的过采样，来修正这个偏差。现在生成这种pair的粒度比如是20 docs per page的话，有可能后面docs根本没有出现，但是我们也会将这些hidden docs记录到pairs里面，好像这种问题没有特别好的办法，否则需要在前端反馈哪些docs展现了。
+
+训练算法和features如下：
+#+BEGIN_QUOTE
+Using this dataset, we trained a model using SparkML’s built-in SVM algorithm. The model determined that the following signals were the most significant:
+- The age of the message
+- The Lucene score of the message with respect to the query
+- The searcher’s affinity to the author of the message (we defined affinity of one user for another as the propensity of that user to read the other’s messages — a subject for another post!)
+- The priority score of the searcher’s DM channel with the message author
+- The searcher’s priority score for the channel the message appeared in
+- Whether the message author is the same as the searcher
+- Whether the message was pinned, starred or had emoji reactions
+- The propensity of searchers to click on other messages from the channel the message appeared in
+- Aspects of the content of the message, such as word count, presence of line breaks, emoji and formatting.
+Notably, aside from the Lucene “match” score, we have not yet incorporated any other semantic features of the message itself in our models.
+#+END_QUOTE
+
+为了能更好地提升搜索结果，在默认的"Recent"结果里面增加了"Top Results"这个版块。
+- 在搜索Recent的时候，同时会去请求Relevance
+- 根据Relevance结果的diversity/quantity来决定是否要出现Top Results这个版块
+- 如果出现的话，把Relevance结果的头三个显示在里面

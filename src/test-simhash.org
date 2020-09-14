@@ -1,0 +1,35 @@
+#+title: 试试simhash
+
+[[file:src/general-algorithm.org][很早]] 就了解这个算法，一直没有怎么使用过。最近想到需要做些去重工作，就找个实现来跑跑。 [[http://www.wwwconference.org/www2007/papers/paper215.pdf][Google]] 用这个算法来做网页去重工作。
+
+使用的是 https://leons.im/posts/a-python-implementation-of-simhash-algorithm/ 这个python实现，两个类：Simhash是用来计算hash value的，SimhashIndex则是用来计算临近点的。
+
+我没有太关注simhash的实现，在使用上simhash很重要的部分是抽取特征。如何把一段文本抽取出比较好的特征出来，对于计算相似度至关重要。上面文章给的特征实现比较naive
+
+#+BEGIN_SRC Python
+def get_features(s):
+    width = 3
+    s = s.lower()
+    s = re.sub('[^\w]+', '', s)
+    return [s[i:i + width] for i in range(max(len(s) - width + 1, 1))]
+#+END_SRC
+
+相当于把每3个字符当做一个特征，这样的话如果整个text里面很多3字符的内容相似的话，那么就认为相似。宽度越小的话切分出来的特征就更多，计算量就越大。相反如果宽度越大的话，那么就要求整个更多的更宽字符串相似才认为相似，计算量就更小，召回率会下降但是准确度会更高。
+
+对于多语言来来说，抽取特征是个很重要，同时也是很困难的问题。有个小的想法是，是否可以在build index的时候选择加上语言信息，比如3字符串切分出来的话就是”zh:” + 3字符串这样的，然后在查找的时候也使用多种语言去匹配。
+
+simhash是一个计算密集型的算法，而且blog给出的实现就是单文件，所以结合之前的经验可以很容易地用 `cython` 来优化。`cp simhash.py  _simhash.pyx` 然后运行下面程序 `python build_simhash.py build_ext --inplace` 就可以得到 `_simhash.so` 这个文件。
+
+#+BEGIN_SRC Python
+#!/usr/bin/env python
+# coding:utf-8
+# Copyright (C) dirlt
+
+from distutils.core import setup
+from Cython.Build import cythonize
+setup(
+    ext_modules=cythonize("_simhash.pyx"),
+)
+#+END_SRC
+
+简单地对比了一下性能，运行10000个text, 原始版本的是3.2s, cython优化过的是2.5s, 没有修改任何代码就获得的了20%的性能提升：）

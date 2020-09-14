@@ -1,0 +1,756 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Nand2Tetris 计算机系统要素 软件篇</title>
+<meta name="generator" content="Org mode" />
+<meta name="author" content="dirtysalt" />
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content">
+<h1 class="title">Nand2Tetris 计算机系统要素 软件篇</h1>
+<div id="table-of-contents">
+<h2>Table of Contents</h2>
+<div id="text-table-of-contents">
+<ul>
+<li><a href="#org0201214">1. 汇编器符号解析</a></li>
+<li><a href="#org04d56e4">2. 编译器压缩代码大小-优化运算操作</a></li>
+<li><a href="#orge2c0c95">3. 编译器压缩代码大小-优化函数调用</a></li>
+<li><a href="#orga4338d4">4. 数学库的乘法，除法和开方实现</a></li>
+<li><a href="#org22dade1">5. 在屏幕上打印字符</a></li>
+<li><a href="#org0eaa059">6. 优化绘制矩形-连续内存绘制</a></li>
+<li><a href="#orgb351166">7. 优化绘制矩形-优化乘除法</a></li>
+</ul>
+</div>
+</div>
+<p>
+这个部分内容涉及到汇编器，编译器，操作系统。有几个地方因为以前没有接触过，所以实现起来比较有意思。
+</p>
+
+<div id="outline-container-org0201214" class="outline-2">
+<h2 id="org0201214"><span class="section-number-2">1</span> 汇编器符号解析</h2>
+<div class="outline-text-2" id="text-1">
+<p>
+汇编器代码比较简单直接，基本上都是一条汇编指令对应一条机器指令，可能稍微有点难度的就是符合解析。
+</p>
+
+<p>
+因为汇编代码里面的符号是不用提前声明的，所以符合解析需要使用额外的一遍遍历，找到符号对应的地址。
+</p>
+
+<p>
+Hack符号有两类：1. 地址符号 2. 变量符号。在Hack实现里面，地址符号通过 <code>(label)</code> 方式声明，如果不是地址符号就是变量符号。
+但是如果我们链接的时候，某个地址符号找不到的话，那么就会跳转到变量符号，出现执行错误。如何发现这类错误呢？
+</p>
+
+<p>
+一个办法是，通常地址符号后面跟着 JMP 指令。所以可以假设，如果JMP指令之前的指令不是地址符号的话，那么很可能就是找不到符号。
+这个问题在 homework 09 的时候，如果没有把 OS 代码放进来的话，那么在产生 asm 文件的时候就会出现问题。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-py-def-class">def</span> <span class="org-function-name">build_var_symtable</span>(<span class="org-py-object-reference">self</span>):
+    <span class="org-py-variable-name">offset</span> = <span class="org-py-number">16</span>
+    <span class="org-keyword">for</span> (i,inst) <span class="org-keyword">in</span> <span class="org-py-builtins">enumerate</span>(<span class="org-py-object-reference">self</span>.insts):
+        <span class="org-keyword">if</span> <span class="org-py-builtins">isinstance</span>(inst, AInst):
+            <span class="org-comment"># absolute address or label.</span>
+            <span class="org-keyword">if</span> <span class="org-py-builtins">isinstance</span>(inst.addr, <span class="org-py-builtins">int</span>) <span class="org-keyword">or</span> \
+                    inst.addr <span class="org-keyword">in</span> <span class="org-py-object-reference">self</span>.symtable:
+                <span class="org-keyword">pass</span>
+            <span class="org-keyword">else</span>:
+                <span class="org-comment"># &#22914;&#26524;&#19979;&#38754;&#19968;&#26465;&#26159;&#36339;&#36716;&#25351;&#20196;&#30340;&#35805;&#65292;&#37027;&#20040;&#35828;&#26126;&#38142;&#25509;&#38169;&#35823;</span>
+                <span class="org-keyword">if</span> (i+<span class="org-py-number">1</span>) &lt; <span class="org-py-builtins">len</span>(<span class="org-py-object-reference">self</span>.insts):
+                    <span class="org-py-variable-name">inst2</span> = <span class="org-py-object-reference">self</span>.insts[i+<span class="org-py-number">1</span>]
+                    <span class="org-keyword">if</span> <span class="org-py-builtins">isinstance</span>(inst2, CInst) <span class="org-keyword">and</span> inst2.jump <span class="org-keyword">is</span> <span class="org-keyword">not</span> <span class="org-py-pseudo-keyword">None</span>:
+                        <span class="org-keyword">print</span>(<span class="org-string">'[WARNING] jump inst follows non-address label. {} -&gt; {}'</span>.format(
+                            inst, inst2))
+                <span class="org-keyword">if</span> <span class="org-py-object-reference">self</span>.debug:
+                    <span class="org-keyword">print</span>(<span class="org-string">'var {} -&gt; {}'</span>.format(inst.addr, offset))
+                <span class="org-py-object-reference">self</span>.symtable[inst.addr] = offset
+                <span class="org-py-variable-name">offset</span> += <span class="org-py-number">1</span>
+</pre>
+</div>
+
+<p>
+不过这种检测方式，很大程度上取决编译器生成的代码。如果编译器把函数调用产生的 boilerplate 代码变换一下，那么这种方式就不管用了。
+当然编译器也可以在输出上做些文章，对于地址符号可以增加部分输出，告诉汇编器“这必须是一个地址符号”。
+</p>
+
+<p>
+在编译器里面添加特殊标识符，声明这是一个函数符号 <code>//# :fn</code>.
+</p>
+<div class="org-src-container">
+<pre class="src src-python"> <span class="org-py-variable-name">text</span> = f<span class="org-string">"""</span>
+<span class="org-string"> // push stack size to R13</span>
+<span class="org-string"> @{stack_size}</span>
+<span class="org-string"> D=A</span>
+<span class="org-string"> @R13</span>
+<span class="org-string"> M=D</span>
+<span class="org-string"> // push jump label to R14</span>
+<span class="org-string"> //# :fn</span>
+<span class="org-string"> @{name}</span>
+<span class="org-string"> D=A</span>
+<span class="org-string"> @R14</span>
+<span class="org-string"> M=D</span>
+<span class="org-string"> // push return label to D</span>
+<span class="org-string"> @{return_label}</span>
+<span class="org-string"> D=A</span>
+<span class="org-string"> {call_push_text}</span>
+<span class="org-string"> ({return_label})</span>
+<span class="org-string"> """</span>
+
+<span class="org-keyword">if</span> inst.must_be_fn():
+    <span class="org-keyword">print</span>(<span class="org-string">'[WARNING] require address label {}'</span>.format(inst))
+</pre>
+</div>
+
+<p>
+然后在编译 homework 09 的时候，如果不把OS代码添加进来的话，就会出现下面这样的错误
+</p>
+
+<pre class="example">
+./asm.py: ./Average/Average.asm -&gt; ./Average/Average.hack
+[WARNING] require address label @Sys.init
+[WARNING] require address label @String.new
+[WARNING] require address label @String.appendChar
+[WARNING] require address label @Keyboard.readInt
+[WARNING] require address label @Array.new
+[WARNING] require address label @Output.printString
+[WARNING] require address label @Math.divide
+[WARNING] require address label @Output.printInt
+</pre>
+</div>
+</div>
+
+<div id="outline-container-org04d56e4" class="outline-2">
+<h2 id="org04d56e4"><span class="section-number-2">2</span> 编译器压缩代码大小-优化运算操作</h2>
+<div class="outline-text-2" id="text-2">
+<p>
+一条bin-op虚拟机指令可能对应到好几条机器指令。比如下面 <code>add</code> 指令，大约14条机器指令。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-asm"><span class="org-comment-delimiter">// </span><span class="org-comment">L55: add</span>
+@SP
+<span class="org-function-name">AM=M-1</span>
+<span class="org-function-name">D=M</span>
+@R13
+<span class="org-function-name">M=D</span>
+@SP
+<span class="org-function-name">AM=M-1</span>
+<span class="org-function-name">D=M</span>
+@R13
+<span class="org-function-name">D=D+M</span>
+@SP
+<span class="org-function-name">AM=M+1</span>
+<span class="org-function-name">A=A-1</span>
+<span class="org-function-name">M=D</span>
+</pre>
+</div>
+
+<p>
+而类似 <code>gt</code>, <code>lt</code> 这样的指令，则对应更多的机器指令，因为里面还涉及跳转。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-asm"><span class="org-comment-delimiter">// </span><span class="org-comment">L296: gt</span>
+@SP
+<span class="org-function-name">AM=M-1</span>
+<span class="org-function-name">D=M</span>
+@R13
+<span class="org-function-name">M=D</span>
+@SP
+<span class="org-function-name">AM=M-1</span>
+<span class="org-function-name">D=M</span>
+@R13
+<span class="org-function-name">D=D-M</span>
+@Math.sqrt$lbl0.true
+<span class="org-function-name">D</span><span class="org-comment-delimiter">;</span><span class="org-comment">JGT</span>
+<span class="org-function-name">D=0</span>
+@Math.sqrt$lbl0.ok
+<span class="org-function-name">0</span><span class="org-comment-delimiter">;</span><span class="org-comment">JMP</span>
+(Math.sqrt$lbl0.true)
+<span class="org-function-name">D=-1</span>
+(Math.sqrt$lbl0.ok)
+@SP
+<span class="org-function-name">AM=M+1</span>
+<span class="org-function-name">A=A-1</span>
+<span class="org-function-name">M=D</span>
+</pre>
+</div>
+
+<p>
+如果直接翻译代码的话，09/Square产生的汇编代码没有办法装载进入ROM，所以我们需要对代码进行压缩。
+</p>
+
+<p>
+观察这些op代码的话，都是模板代码，没有涉及太多参数。所以我们可以将这些模板代码做成类似函数的形式来调用，
+差别就是不用保存太多的上下文，只需要记录一下返回地址就行。我们将返回地址存储在R14里面，然后跳转到具体op代码上。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-keyword">if</span> ctx.compact_size:
+    <span class="org-py-variable-name">return_label</span> = ctx.gen_label()
+    <span class="org-py-variable-name">jump_label</span> = <span class="org-string">'ARITH_OP_{}'</span>.format(op.upper())
+    <span class="org-py-variable-name">text</span> = f<span class="org-string">"""</span>
+<span class="org-string">    @{return_label}</span>
+<span class="org-string">    D=A</span>
+<span class="org-string">    @R14</span>
+<span class="org-string">    M=D</span>
+<span class="org-string">    @{jump_label}</span>
+<span class="org-string">    0;JMP</span>
+<span class="org-string">    ({return_label})</span>
+<span class="org-string">    """</span>
+    <span class="org-keyword">return</span> text_to_codes(text)
+</pre>
+</div>
+
+<p>
+生成的代码如下，模板代码只需要生成一份，而原来 <code>add</code> 代码则只需要6条指令。而且基本上其他运算操作符也就是6条指令。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-asm"><span class="org-comment-delimiter">// </span><span class="org-comment">L98: add</span>
+@Main.main$lbl42
+<span class="org-function-name">D=A</span>
+@R14
+<span class="org-function-name">M=D</span>
+@ARITH_OP_ADD
+<span class="org-function-name">0</span><span class="org-comment-delimiter">;</span><span class="org-comment">JMP</span>
+(Main.main$lbl42)
+
+<span class="org-comment-delimiter">// </span><span class="org-comment">==============================</span>
+<span class="org-comment-delimiter">// </span><span class="org-comment">ADD&#27169;&#26495;&#20195;&#30721;</span>
+(ARITH_OP_ADD)
+@SP
+<span class="org-function-name">AM=M-1</span>
+<span class="org-function-name">D=M</span>
+@R13
+<span class="org-function-name">M=D</span>
+@SP
+<span class="org-function-name">AM=M-1</span>
+<span class="org-function-name">D=M</span>
+@R13
+<span class="org-function-name">D=D+M</span>
+@SP
+<span class="org-function-name">AM=M+1</span>
+<span class="org-function-name">A=A-1</span>
+<span class="org-function-name">M=D</span>
+@R14
+<span class="org-function-name">A=M</span>
+<span class="org-function-name">0</span><span class="org-comment-delimiter">;</span><span class="org-comment">JMP</span>
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orge2c0c95" class="outline-2">
+<h2 id="orge2c0c95"><span class="section-number-2">3</span> 编译器压缩代码大小-优化函数调用</h2>
+<div class="outline-text-2" id="text-3">
+<p>
+优化函数调用代码和上面非常类似，也是将模板代码抽取出来。
+</p>
+
+<p>
+从函数调用返回代码非常简单，因为不涉及任何参数，只需要直接跳转到对应代码就好。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-asm"><span class="org-comment-delimiter">// </span><span class="org-comment">L27: return</span>
+@RETURN_POP_CODE
+<span class="org-function-name">0</span><span class="org-comment-delimiter">;</span><span class="org-comment">JMP</span>
+
+<span class="org-comment-delimiter">// </span><span class="org-comment">==============================</span>
+<span class="org-comment-delimiter">// </span><span class="org-comment">&#20174;&#20989;&#25968;&#35843;&#29992;&#36820;&#22238;&#27169;&#26495;&#20195;&#30721;</span>
+(RETURN_POP_CODE)
+@LCL
+<span class="org-function-name">D=M</span>
+@5
+<span class="org-function-name">A=D-A</span>
+<span class="org-function-name">D=M</span>
+@R14
+<span class="org-function-name">M=D</span>
+@SP
+<span class="org-function-name">AM=M-1</span>
+<span class="org-function-name">D=M</span>
+@ARG
+<span class="org-function-name">A=M</span>
+<span class="org-function-name">M=D</span>
+@ARG
+<span class="org-function-name">D=M+1</span>
+@SP
+<span class="org-function-name">M=D</span>
+@LCL
+<span class="org-function-name">D=M</span>
+@R13
+<span class="org-function-name">AM=D-1</span>
+<span class="org-function-name">D=M</span>
+@THAT
+<span class="org-function-name">M=D</span>
+@R13
+<span class="org-function-name">AM=M-1</span>
+<span class="org-function-name">D=M</span>
+@THIS
+<span class="org-function-name">M=D</span>
+@R13
+<span class="org-function-name">AM=M-1</span>
+<span class="org-function-name">D=M</span>
+@ARG
+<span class="org-function-name">M=D</span>
+@R13
+<span class="org-function-name">AM=M-1</span>
+<span class="org-function-name">D=M</span>
+@LCL
+<span class="org-function-name">M=D</span>
+@R14
+<span class="org-function-name">A=M</span>
+<span class="org-function-name">0</span><span class="org-comment-delimiter">;</span><span class="org-comment">JMP</span>
+</pre>
+</div>
+
+<p>
+触发函数调用则稍微麻烦一些，因为涉及到部分参数。但是好在参数不是特别多，我们可以
+</p>
+<ul class="org-ul">
+<li>堆栈大小stack_size存放在R13</li>
+<li>函数符号func_label存放在R14</li>
+<li>返回地址return_label存放在D中，这是因为我们后续第一步就是将D压入堆栈，生存期很短。</li>
+</ul>
+
+<div class="org-src-container">
+<pre class="src src-asm"><span class="org-comment-delimiter">// </span><span class="org-comment">L10: call Math.init 0</span>
+@5
+<span class="org-function-name">D=A</span>
+@R13
+<span class="org-function-name">M=D</span>
+<span class="org-comment-delimiter">//</span><span class="org-comment"># :fn</span>
+@Math.init
+<span class="org-function-name">D=A</span>
+@R14
+<span class="org-function-name">M=D</span>
+@Sys.init$lbl4.ret
+<span class="org-function-name">D=A</span>
+@CALL_PUSH_CODE
+<span class="org-function-name">0</span><span class="org-comment-delimiter">;</span><span class="org-comment">JMP</span>
+(Sys.init$lbl4.ret)
+
+<span class="org-comment-delimiter">// </span><span class="org-comment">==============================</span>
+<span class="org-comment-delimiter">// </span><span class="org-comment">&#35302;&#21457;&#20989;&#25968;&#35843;&#29992;&#27169;&#26495;&#20195;&#30721;</span>
+(CALL_PUSH_CODE)
+@SP
+<span class="org-function-name">AM=M+1</span>
+<span class="org-function-name">A=A-1</span>
+<span class="org-function-name">M=D</span>
+@LCL
+<span class="org-function-name">D=M</span>
+@SP
+<span class="org-function-name">AM=M+1</span>
+<span class="org-function-name">A=A-1</span>
+<span class="org-function-name">M=D</span>
+@ARG
+<span class="org-function-name">D=M</span>
+@SP
+<span class="org-function-name">AM=M+1</span>
+<span class="org-function-name">A=A-1</span>
+<span class="org-function-name">M=D</span>
+@THIS
+<span class="org-function-name">D=M</span>
+@SP
+<span class="org-function-name">AM=M+1</span>
+<span class="org-function-name">A=A-1</span>
+<span class="org-function-name">M=D</span>
+@THAT
+<span class="org-function-name">D=M</span>
+@SP
+<span class="org-function-name">AM=M+1</span>
+<span class="org-function-name">A=A-1</span>
+<span class="org-function-name">M=D</span>
+@SP
+<span class="org-function-name">D=M</span>
+@LCL
+<span class="org-function-name">M=D</span>
+@SP
+<span class="org-function-name">D=M</span>
+@R13
+<span class="org-function-name">D=D-M</span>
+@ARG
+<span class="org-function-name">M=D</span>
+@R14
+<span class="org-function-name">A=M</span>
+<span class="org-function-name">0</span><span class="org-comment-delimiter">;</span><span class="org-comment">JMP</span>
+@R15
+<span class="org-function-name">A=M</span>
+<span class="org-function-name">0</span><span class="org-comment-delimiter">;</span><span class="org-comment">JMP</span>
+</pre>
+</div>
+</div>
+</div>
+<div id="outline-container-orga4338d4" class="outline-2">
+<h2 id="orga4338d4"><span class="section-number-2">4</span> 数学库的乘法，除法和开方实现</h2>
+<div class="outline-text-2" id="text-4">
+<p>
+这些实现方法都是基于二进制来完成的，很容易用计算机的简单指令实现。
+</p>
+
+<p>
+乘法通过shift和add来实现：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-cpp">function <span class="org-type">void</span> <span class="org-function-name">init</span>() {
+    <span class="org-type">let</span> <span class="org-variable-name">tt</span> = Array.<span class="org-keyword">new</span>(16);
+    tt[0] = 1;
+    tt[1] = 2;
+    tt[2] = 4;
+    tt[3] = 8;
+    tt[4] = 16;
+    tt[5] = 32;
+    tt[6] = 64;
+    tt[7] = 128;
+    tt[8] = 256;
+    tt[9] = 512;
+    tt[10] = 1024;
+    tt[11] = 2048;
+    tt[12] = 4096;
+    tt[13] = 8192;
+    tt[14] = 16384;
+    tt[15] = 32768;
+}
+
+funcetion <span class="org-type">int</span> <span class="org-function-name">multiply</span>(<span class="org-type">int</span> <span class="org-variable-name">x</span>, <span class="org-type">int</span> <span class="org-variable-name">y</span>) {
+    <span class="org-type">int</span> <span class="org-variable-name">sum</span>, <span class="org-variable-name">shift</span>, <span class="org-variable-name">i</span>;
+    <span class="org-type">let</span> <span class="org-variable-name">sum</span> = 0;
+    <span class="org-type">let</span> <span class="org-variable-name">shift</span> = x;
+    <span class="org-type">let</span> <span class="org-variable-name">i</span> = 0;
+    <span class="org-keyword">while</span> (i &lt; 16) {
+        <span class="org-keyword">if</span> (bit(x, i)) {
+            sum = sum + shift;
+        }
+        i = i + 1;
+        shift = shift + shift;
+    }
+}
+</pre>
+</div>
+
+<p>
+除法实现类似于10进制的长除法，只不过除数使用二进制向上试探。其中 `_div2` 这种实现可以减少一次乘法调用，但是需要多一个存储空间。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python">
+
+<span class="org-py-def-class">def</span> <span class="org-function-name">_div1</span>(x, y):
+    <span class="org-keyword">if</span> x &lt; y:
+        <span class="org-keyword">return</span> <span class="org-py-number">0</span>
+    <span class="org-py-variable-name">q</span> = _div1(x, <span class="org-py-number">2</span> * y)
+    <span class="org-py-variable-name">q2</span> = q * <span class="org-py-number">2</span>
+    <span class="org-py-variable-name">qy2</span> = q2 * y
+    <span class="org-keyword">if</span> (x - qy2) &lt; y:
+        <span class="org-keyword">pass</span>
+    <span class="org-keyword">else</span>:
+        <span class="org-py-variable-name">q2</span> += <span class="org-py-number">1</span>
+    <span class="org-keyword">return</span> q2
+
+
+<span class="org-py-def-class">def</span> <span class="org-function-name">_div2</span>(x, y):
+    <span class="org-keyword">if</span> x &lt; y:
+        <span class="org-keyword">return</span> <span class="org-py-number">0</span>, <span class="org-py-number">0</span>
+    <span class="org-py-variable-name">q</span>, <span class="org-py-variable-name">qy2</span> = _div2(x, <span class="org-py-number">2</span> * y)
+    <span class="org-py-variable-name">q2</span> = q * <span class="org-py-number">2</span>
+    <span class="org-comment"># qy2 = q * 2 * y = q2 * y</span>
+    <span class="org-keyword">if</span> (x - qy2) &lt; y:
+        <span class="org-keyword">pass</span>
+    <span class="org-keyword">else</span>:
+        <span class="org-py-variable-name">q2</span> += <span class="org-py-number">1</span>
+        <span class="org-comment"># &#22914;&#26524;&#36825;&#37324;q2 += 1&#30340;&#35805;&#65292;&#37027;qy2&#38656;&#35201;+y</span>
+        <span class="org-py-variable-name">qy2</span> += y
+    <span class="org-keyword">return</span> q2, qy2
+
+
+<span class="org-py-def-class">def</span> <span class="org-function-name">div</span>(x, y):
+    <span class="org-py-variable-name">q1</span> = _div1(x, y)
+    <span class="org-py-variable-name">q2</span>, <span class="org-py-builtins">_</span> = _div2(x, y)
+    <span class="org-keyword">assert</span> <span class="org-py-variable-name">q1</span> == q2
+    <span class="org-keyword">return</span> q2
+
+</pre>
+</div>
+
+<p>
+开方实现则是通过二分法来实现的
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python">
+<span class="org-py-def-class">def</span> <span class="org-function-name">sqrt</span>(x):
+    <span class="org-py-variable-name">v</span> = <span class="org-py-number">0</span>
+    <span class="org-keyword">for</span> i <span class="org-keyword">in</span> <span class="org-py-builtins">reversed</span>(range(<span class="org-py-number">32</span>)):
+        <span class="org-py-variable-name">t</span> = v + (<span class="org-py-number">1</span> &lt;&lt; i)
+        <span class="org-keyword">if</span> (t * t) &lt;= x:
+            <span class="org-py-variable-name">v</span> = t
+    <span class="org-keyword">return</span> v
+
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org22dade1" class="outline-2">
+<h2 id="org22dade1"><span class="section-number-2">5</span> 在屏幕上打印字符</h2>
+<div class="outline-text-2" id="text-5">
+<p>
+Hack计算机的屏幕尺寸是 256（行） * 512（列）。因为Hack是16bit计算机，所以对应到物理内存上，
+类似于二维数组 <code>int16 mm[256][32]</code>, 然后屏幕映射内存地址从16384开始。
+</p>
+
+<p>
+字符可以表示成为位图格式，每个位图的大小是11 x 8，这样来看字符屏幕尺寸则对应为 (256 / 11) x (512 / 8) = 23 x 64.
+这样每个字符都可以表示成为11个int value，比如下面A字符可以对应成为(12,30,51,51,63,51,51,51,51,0,0).
+</p>
+
+
+<div class="figure">
+<p><img src="images/nand2tetris-char-bitmap.jpg" alt="nand2tetris-char-bitmap.jpg" />
+</p>
+</div>
+
+<p>
+展示字符也不是特别麻烦的事情。比较奇怪的是，col=0按照我的理解，应该对应的是16 bits的high 8 bits，但是如果按照这个思路，
+相邻字符都会颠倒过来。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-java"><span class="org-doc">/** Displays the given character at the cursor location,</span>
+<span class="org-doc"> *  and advances the cursor one column forward. */</span>
+function <span class="org-type">void</span> <span class="org-function-name">printCharNow</span>(<span class="org-type">char</span> <span class="org-variable-name">ch</span>) {
+    var <span class="org-type">int</span> <span class="org-variable-name">i</span>,<span class="org-variable-name">r</span>,<span class="org-variable-name">c</span>,<span class="org-variable-name">hl</span>,<span class="org-variable-name">v</span>,<span class="org-variable-name">oldv</span>,<span class="org-variable-name">rc</span>;
+    var <span class="org-type">Array</span> <span class="org-variable-name">map</span>;
+    <span class="org-type">let</span> <span class="org-variable-name">r</span> = row * 352;
+    <span class="org-type">let</span> <span class="org-variable-name">c</span> = col / 2;
+    <span class="org-type">let</span> <span class="org-variable-name">hl</span> = (col - (c + c));
+    <span class="org-type">let</span> <span class="org-variable-name">i</span> = 0;
+    <span class="org-type">let</span> <span class="org-variable-name">rc</span> = r + c;
+    <span class="org-type">let</span> <span class="org-variable-name">map</span> = Output.getMap(ch);
+
+    <span class="org-comment-delimiter">// </span><span class="org-comment">strange!</span>
+    <span class="org-comment-delimiter">// </span><span class="org-comment">col=1 w.r.t to high bits.</span>
+    <span class="org-comment-delimiter">// </span><span class="org-comment">col=0 w.r.t to low bits.</span>
+    <span class="org-keyword">if</span> (hl = 1) { <span class="org-comment-delimiter">// </span><span class="org-comment">high bit</span>
+        <span class="org-keyword">while</span> (i &lt; 11) {
+            <span class="org-type">let</span> <span class="org-variable-name">v</span> = map[i];
+            <span class="org-type">let</span> <span class="org-variable-name">oldv</span> = screen[rc];
+            <span class="org-type">let</span> <span class="org-variable-name">screen</span>[rc] = Output.lshift8(v) | (oldv &amp; 255);
+            <span class="org-type">let</span> <span class="org-variable-name">i</span> = i + 1;
+            <span class="org-type">let</span> <span class="org-variable-name">rc</span> = rc + 32;
+        }
+    } <span class="org-keyword">else</span> {
+        <span class="org-keyword">while</span> (i &lt; 11) {
+            <span class="org-type">let</span> <span class="org-variable-name">v</span> = map[i];
+            <span class="org-type">let</span> <span class="org-variable-name">oldv</span> = screen[rc];
+            <span class="org-type">let</span> <span class="org-variable-name">screen</span>[rc] = (oldv &amp; (-256)) | v;
+            <span class="org-type">let</span> <span class="org-variable-name">i</span> = i + 1;
+            <span class="org-type">let</span> <span class="org-variable-name">rc</span> = rc + 32;
+        }
+    }
+    <span class="org-keyword">return</span>;
+}
+
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org0eaa059" class="outline-2">
+<h2 id="org0eaa059"><span class="section-number-2">6</span> 优化绘制矩形-连续内存绘制</h2>
+<div class="outline-text-2" id="text-6">
+<p>
+Hack计算机的屏幕尺寸是 256（行） * 512（列）。因为Hack是16bit计算机，所以对应到物理内存上，
+类似于二维数组 <code>int16 mm[256][32]</code>, 然后屏幕映射内存地址从16384开始。
+</p>
+
+<p>
+一个比较简单直接的办法就是，按照每个pixel填充
+</p>
+
+<div class="org-src-container">
+<pre class="src src-java"><span class="org-doc">/** Draws the (x,y) pixel, using the current color. */</span>
+function <span class="org-type">void</span> <span class="org-function-name">drawPixel</span>(<span class="org-type">int</span> <span class="org-variable-name">x</span>, <span class="org-type">int</span> <span class="org-variable-name">y</span>) {
+    var <span class="org-type">int</span> <span class="org-variable-name">c</span>, <span class="org-variable-name">sft</span>, <span class="org-variable-name">off</span>;
+    <span class="org-type">let</span> <span class="org-variable-name">c</span> = Screen.div16(x);
+    <span class="org-comment-delimiter">// </span><span class="org-comment">let sft = x - Screen.mul16(c);</span>
+    <span class="org-type">let</span> <span class="org-variable-name">sft</span> = (x &amp; 15);
+    <span class="org-type">let</span> <span class="org-variable-name">off</span> = Screen.mul32(y) + c;
+    <span class="org-keyword">if</span> (color) {
+        <span class="org-type">let</span> <span class="org-variable-name">screen</span>[off] = (screen[off] | tt[sft]);
+    } <span class="org-keyword">else</span> {
+        <span class="org-type">let</span> <span class="org-variable-name">screen</span>[off] = (screen[off] &amp; (~ tt[sft]));
+    }
+    <span class="org-keyword">return</span>;
+}
+
+<span class="org-doc">/** Draws a filled rectangle whose top left corner is (x1, y1)</span>
+<span class="org-doc"> * and bottom right corner is (x2,y2), using the current color. */</span>
+function <span class="org-type">void</span> <span class="org-function-name">drawRectangle2</span>(<span class="org-type">int</span> <span class="org-variable-name">x1</span>, <span class="org-type">int</span> <span class="org-variable-name">y1</span>, <span class="org-type">int</span> <span class="org-variable-name">x2</span>, <span class="org-type">int</span> <span class="org-variable-name">y2</span>) {
+    var <span class="org-type">int</span> <span class="org-variable-name">x</span>,<span class="org-variable-name">y</span>;
+    <span class="org-type">let</span> <span class="org-variable-name">y</span> = y1;
+    <span class="org-keyword">while</span>(~(y &gt; y2)) {
+        <span class="org-type">let</span> <span class="org-variable-name">x</span> = x1;
+        <span class="org-keyword">while</span>(~(x &gt; x2)) {
+            <span class="org-keyword">do</span> Screen.drawPixel(x, y);
+            <span class="org-type">let</span> <span class="org-variable-name">x</span> = x + 1;
+        }
+        <span class="org-type">let</span> <span class="org-variable-name">y</span> = y + 1;
+    }
+    <span class="org-keyword">return</span>;
+}
+</pre>
+</div>
+
+<p>
+但是如果x1,x2如果是和16对齐的话，那么完全可以直接将内存设置成为0或者是-1, 而对于非对齐的则还是退化成为按照pixel来绘制。
+而对于非对齐部分，我们还可以直接去填充值，进一步做优化。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-java"> function <span class="org-type">void</span> <span class="org-function-name">drawPixelsIn16Bits</span>(<span class="org-type">int</span> <span class="org-variable-name">x1</span>, <span class="org-type">int</span> <span class="org-variable-name">x2</span>, <span class="org-type">int</span> <span class="org-variable-name">y</span>) {
+    var <span class="org-type">int</span> <span class="org-variable-name">off</span>, <span class="org-variable-name">c</span>, <span class="org-variable-name">sft</span>, <span class="org-variable-name">x</span>;
+    <span class="org-type">let</span> <span class="org-variable-name">c</span> = Screen.div16(x1);
+    <span class="org-type">let</span> <span class="org-variable-name">off</span> = Screen.mul32(y) + c;
+    <span class="org-type">let</span> <span class="org-variable-name">sft</span> = x1 &amp; 15;
+    <span class="org-comment-delimiter">// </span><span class="org-comment">let sft = x1 - Screen.mul16(c);</span>
+    <span class="org-type">let</span> <span class="org-variable-name">x</span> = x1;
+    <span class="org-keyword">if</span> (color) {
+        <span class="org-keyword">while</span>(~(x &gt; x2)) {
+            <span class="org-type">let</span> <span class="org-variable-name">screen</span>[off] = (screen[off] | tt[sft]);
+            <span class="org-type">let</span> <span class="org-variable-name">sft</span> = sft + 1;
+            <span class="org-type">let</span> <span class="org-variable-name">x</span> = x + 1;
+        }
+    } <span class="org-keyword">else</span> {
+        <span class="org-keyword">while</span>(~(x &gt; x2)) {
+            <span class="org-type">let</span> <span class="org-variable-name">screen</span>[off] = (screen[off] &amp; (~ tt[sft]));
+            <span class="org-type">let</span> <span class="org-variable-name">sft</span> = sft + 1;
+            <span class="org-type">let</span> <span class="org-variable-name">x</span> = x + 1;
+        }
+    }
+    <span class="org-keyword">return</span>;
+}
+
+ function <span class="org-type">void</span> <span class="org-function-name">drawRectangle</span>(<span class="org-type">int</span> <span class="org-variable-name">x1</span>, <span class="org-type">int</span> <span class="org-variable-name">y1</span>, <span class="org-type">int</span> <span class="org-variable-name">x2</span>, <span class="org-type">int</span> <span class="org-variable-name">y2</span>) {
+     var <span class="org-type">int</span> <span class="org-variable-name">x</span>,<span class="org-variable-name">y</span>,<span class="org-variable-name">fill</span>,<span class="org-variable-name">c</span>,<span class="org-variable-name">off</span>,<span class="org-variable-name">off2</span>,<span class="org-variable-name">sft</span>;
+     var <span class="org-type">int</span> <span class="org-variable-name">c1</span>, <span class="org-variable-name">c2</span>, <span class="org-variable-name">x1e</span>, <span class="org-variable-name">x2e</span>;
+     <span class="org-type">let</span> <span class="org-variable-name">c1</span> = Screen.div16((x1 + 15));
+     <span class="org-type">let</span> <span class="org-variable-name">c2</span> = Screen.div16(x2);
+     <span class="org-type">let</span> <span class="org-variable-name">x1e</span> = Screen.mul16(c1);
+     <span class="org-type">let</span> <span class="org-variable-name">x2e</span> = Screen.mul16(c2);
+
+     <span class="org-keyword">if</span> (c1 &gt; c2) {
+         <span class="org-type">let</span> <span class="org-variable-name">y</span> = y1;
+         <span class="org-keyword">while</span> (~(y &gt; y2)) {
+             <span class="org-keyword">do</span> Screen.drawPixelsIn16Bits(x1, x2, y);
+             <span class="org-type">let</span> <span class="org-variable-name">y</span> = y + 1;
+         }
+         <span class="org-keyword">return</span>;
+     }
+
+     <span class="org-type">let</span> <span class="org-variable-name">fill</span> = 0;
+     <span class="org-keyword">if</span> (color) {
+        <span class="org-type">let</span> <span class="org-variable-name">fill</span> = ~fill;
+     }
+     <span class="org-type">let</span> <span class="org-variable-name">y</span> = y1;
+     <span class="org-type">let</span> <span class="org-variable-name">off</span> = Screen.mul32(y) + c1;
+     <span class="org-keyword">while</span> (~(y &gt; y2)) {
+         <span class="org-comment-delimiter">// </span><span class="org-comment">edge</span>
+         <span class="org-comment-delimiter">// </span><span class="org-comment">c1 (x1 to x1e-1) low bits</span>
+         <span class="org-comment-delimiter">// </span><span class="org-comment">c2 (x2e to x2) high bits</span>
+         <span class="org-keyword">do</span> Screen.drawPixelsIn16Bits(x1, x1e-1, y);
+         <span class="org-keyword">do</span> Screen.drawPixelsIn16Bits(x2e, x2, y);
+
+         <span class="org-comment-delimiter">// </span><span class="org-comment">block.</span>
+         <span class="org-type">let</span> <span class="org-variable-name">off2</span> = off;
+         <span class="org-type">let</span> <span class="org-variable-name">c</span> = c1;
+         <span class="org-keyword">while</span>(c &lt; <span class="org-type">c2</span>) {
+             <span class="org-type">let</span> <span class="org-variable-name">screen</span>[off2] = fill;
+             <span class="org-type">let</span> <span class="org-variable-name">c</span> = c + 1;
+             <span class="org-type">let</span> <span class="org-variable-name">off2</span> = off2 + 1;
+         }
+         <span class="org-type">let</span> <span class="org-variable-name">off</span> = off + 32;
+         <span class="org-type">let</span> <span class="org-variable-name">y</span> = y + 1;
+     }
+     <span class="org-keyword">return</span>;
+ }
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgb351166" class="outline-2">
+<h2 id="orgb351166"><span class="section-number-2">7</span> 优化绘制矩形-优化乘除法</h2>
+<div class="outline-text-2" id="text-7">
+<p>
+在绘制矩形上，有4个数学运算是最频繁的
+</p>
+<ul class="org-ul">
+<li>mul16. x * 16</li>
+<li>mul32. x * 32</li>
+<li>div16. x / 16</li>
+<li>mod16. x % 16</li>
+</ul>
+
+<p>
+其中mul16, mul32可以通过多次叠加来完成，mod16可以通过 (x &amp; 15） 来完成，而div16则可以通过移位来实现。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-java"><span class="org-comment-delimiter">// </span><span class="org-comment">tt[i] = (1 &lt;&lt; i).</span>
+    function <span class="org-type">int</span> <span class="org-function-name">div16</span>(<span class="org-type">int</span> <span class="org-variable-name">x</span>) {
+        var <span class="org-type">int</span> <span class="org-variable-name">sum</span>, <span class="org-variable-name">i</span>;
+        <span class="org-keyword">while</span> (i &lt; 12) {
+            <span class="org-keyword">if</span> (x &amp; tt[i+4]) {
+                <span class="org-type">let</span> <span class="org-variable-name">sum</span> = sum + tt[i];
+            }
+            <span class="org-type">let</span> <span class="org-variable-name">i</span> = i + 1;
+        }
+    }
+</pre>
+</div>
+
+<p>
+然后我们还可以将循环展开来进一步减少开销。做到这一步，09/Pong的刷新速度就可以接受了。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-java">function <span class="org-type">int</span> <span class="org-function-name">div16</span>(<span class="org-type">int</span> <span class="org-variable-name">x</span>) {
+    var <span class="org-type">int</span> <span class="org-variable-name">sum</span>, <span class="org-variable-name">i</span>;
+    <span class="org-comment-delimiter">// </span><span class="org-comment">while (i &lt; 12) {</span>
+    <span class="org-comment-delimiter">//     </span><span class="org-comment">if (x &amp; tt[i+4]) {</span>
+    <span class="org-comment-delimiter">//         </span><span class="org-comment">let sum = sum + tt[i];</span>
+    <span class="org-comment-delimiter">//     </span><span class="org-comment">}</span>
+    <span class="org-comment-delimiter">//     </span><span class="org-comment">let i = i + 1;</span>
+    <span class="org-comment-delimiter">// </span><span class="org-comment">}</span>
+
+    <span class="org-keyword">if</span> (x &amp; tt[4]) { <span class="org-type">let</span> <span class="org-variable-name">sum</span> = sum + tt[0]; }
+    <span class="org-keyword">if</span> (x &amp; tt[5]) { <span class="org-type">let</span> <span class="org-variable-name">sum</span> = sum + tt[1]; }
+    <span class="org-keyword">if</span> (x &amp; tt[6]) { <span class="org-type">let</span> <span class="org-variable-name">sum</span> = sum + tt[2]; }
+    <span class="org-keyword">if</span> (x &amp; tt[7]) { <span class="org-type">let</span> <span class="org-variable-name">sum</span> = sum + tt[3]; }
+    <span class="org-keyword">if</span> (x &amp; tt[8]) { <span class="org-type">let</span> <span class="org-variable-name">sum</span> = sum + tt[4]; }
+    <span class="org-keyword">if</span> (x &amp; tt[9]) { <span class="org-type">let</span> <span class="org-variable-name">sum</span> = sum + tt[5]; }
+    <span class="org-keyword">if</span> (x &amp; tt[10]) { <span class="org-type">let</span> <span class="org-variable-name">sum</span> = sum + tt[6]; }
+    <span class="org-keyword">if</span> (x &amp; tt[11]) { <span class="org-type">let</span> <span class="org-variable-name">sum</span> = sum + tt[7]; }
+    <span class="org-keyword">if</span> (x &amp; tt[12]) { <span class="org-type">let</span> <span class="org-variable-name">sum</span> = sum + tt[8]; }
+    <span class="org-keyword">if</span> (x &amp; tt[13]) { <span class="org-type">let</span> <span class="org-variable-name">sum</span> = sum + tt[9]; }
+    <span class="org-keyword">if</span> (x &amp; tt[14]) { <span class="org-type">let</span> <span class="org-variable-name">sum</span> = sum + tt[10]; }
+    <span class="org-keyword">if</span> (x &amp; tt[15]) { <span class="org-type">let</span> <span class="org-variable-name">sum</span> = sum + tt[11]; }
+    <span class="org-keyword">return</span> sum;
+}
+
+</pre>
+</div>
+</div>
+</div>
+</div>
+</body>
+</html>

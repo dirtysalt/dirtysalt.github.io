@@ -1,0 +1,78 @@
+#+title: 42. Trapping Rain Water
+
+https://leetcode.com/problems/trapping-rain-water/
+
+这算是一道特别景点的题目了。两种解法：动态规划和使用堆栈。
+
+----------
+动态规划好理解，对某一个点i, 我只要找出这个i左边和右边最高的点，假设分别是l,r.
+
+那么对于点i来说，它的最高高度就是min(l, r)，所以最多存水 max(0, min(l, r) - h[i]).
+
+#+BEGIN_SRC python
+class Solution:
+    def trap(self, height):
+        """
+        :type height: List[int]
+        :rtype: int
+        """
+        n = len(height)
+        if n == 0: return 0
+        left = [0] * n
+        right = [0] * n
+
+        right[-1] = height[-1]
+        for i in reversed(range(n-1)):
+            right[i] = max(height[i], right[i + 1])
+        left[0] = height[0]
+        for i in range(1, n):
+            left[i] = max(height[i], left[i - 1])
+
+        ans = 0
+        for i in range(n):
+            ans += min(left[i], right[i]) - height[i]
+        return ans
+#+END_SRC
+
+----------
+使用堆栈的方法就灵活一些：
+- 我们维持一个堆栈，这个堆栈是从大小排列的，比如[2, 1, 0]
+- 当我们看到一个比栈顶大的元素x时，我们开始计算栈顶可以存储的水位
+- 这个水位取决于两个值：x以及为栈下方第一个>=x的数。只有这样才知道能围多高
+- 计算完毕之后，将x作为这一段的代表，相当于这一段高度都是x.
+
+我觉得举例子比较好说明，假设是 [2, 1, 0, 1, 3].
+- 假设栈的表示是 (h[i], i), i表示下标，h[i]表示高度。
+- 我们现在已经处理了[(2, 0), (1,1), (0,2)], 现在处理(1, 3)
+- 因为栈顶高度0 <= 1, 所以0是可以被高度1围住的，水量是(3-2) * (1-0) = 1.
+- 然后是 1 <= 1, 所以依然可以被高度1围住，数量是(3-1) * (1-1) = 0.
+- 然后是 2 > 1，停止继续往下看。
+- 然后就是如何更新这个栈？我们其实可以压入(1, 1). 这个(1,1)表示从1-3这块区间已经被高度1完全填满了。
+
+#+BEGIN_SRC python
+class Solution:
+    def trap(self, height: List[int]) -> int:
+        st = []
+        ans = 0
+        for (idx, h) in enumerate(height):
+            if st and st[-1][1] <= h:
+                tmp = 0
+                while st and st[-1][1] <= h: # 这里我们先假设可以以高度h围住
+                    (j, h2) = st.pop()
+                    tmp += (h - h2) * (idx - j)
+                if st: # 考虑如果没有办法围住的话，那么都需要放弃
+                    ans += tmp
+                    st.append((j, h))
+                else:
+                    st.append((idx, h))
+            else:
+                st.append((idx, h))
+
+        return ans
+#+END_SRC
+
+这种栈的解决方法有点绕，但是里面有个有趣的思想是，你可以将需要更新多个值的操作，变为只需要更新一个值的操作，前提是：
+a. 这种更新操作计数是可累加的. b. 存在某种表示方法允许这种转换.
+以上面为例，当我看到3这个点时，对0这个点计算的数量应该是：min(2, 3) - 0, 然后我们却可以转换两步：
+- 1 - 0 = 1
+- min(2, 3) - 1 = 1

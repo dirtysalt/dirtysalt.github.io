@@ -1,0 +1,423 @@
+#+title: 非规格浮点数来带的性能下降
+
+最近同事推荐我一篇文章 [[https://www.toutiao.com/a6763437360362291723][一个有趣的实验，用0.1f替换0，性能提升7倍]]，看完对 [[https://en.wikipedia.org/wiki/Single-precision_floating-point_format][浮点数的表示形式]] 和 [[https://en.wikipedia.org/wiki/Denormal_number][非规格浮点数]] 有了更加深入的理解。然后如果想看浮点数二进制表示的话，可以使用这个 [[https://www.h-schmidt.net/FloatConverter/IEEE754.html][在线工具]].
+
+** 浮点数表示格式
+
+关于浮点数的表示格式（单精度浮点数），这里也摘抄一下，
+
+#+BEGIN_QUOTE
+The IEEE 754 standard specifies a binary32 as having:
+- Sign bit: 1 bit
+- Exponent width: 8 bits
+- Significand precision: 24 bits (23 explicitly stored)（默认是1.xxxx）
+
+file:images/single-precision-floating-point-repr.png
+
+Exponent encoding（指数部分的编码格式）
+The single-precision binary floating-point exponent is encoded using an offset-binary representation, with the zero offset being 127; also known as exponent bias in the IEEE 754 standard.
+- Emin = 01H−7FH = −126
+- Emax = FEH−7FH = 127
+- Exponent bias = 7FH = 127
+
+The stored exponents 00H and FFH are interpreted specially.
+
+| Exponent	      | fraction = 0     | 	fraction ≠ 0            | 	Equation                       |
+| 00H	           | zero             | 	subnormal number        | 	(−1)sign×2−126× 0.fraction     |
+| 01H, ..., FEH	 | normal value	 | normal value                | (−1)sign×2exponent−127× 1.fraction |
+| FFH	           | ±infinity        | 	NaN (quiet, signalling) |                                    |
+
+The minimum positive normal value is 2−126 ≈ 1.18 × 10−38 and the minimum positive (subnormal) value is 2−149 ≈ 1.4 × 10−45.
+
+#+END_QUOTE
+
+对于符合规格的浮点数来说，假设有效位的最高位是1，也就是"1.xxx"表示有效底数。但是当需要表示非常小的数的时候，就可能退化成为非规格浮点数（subnormal, denormal）。非规格浮点数的exponent bits是全0，假设有效位的最高位是0, 也就是"0.xxx"表示有效底数。
+
+想要写程序看浮点数二进制表示也很容易，不需要自己写代码，因为这个操作CPU就内置了。只需要简单地存入浮点数，然后转换成为bytes就好了。
+
+#+BEGIN_SRC python
+#!/usr/bin/env python
+# coding:utf-8
+# Copyright (C) dirlt
+
+import struct
+
+# assume we are on little-endian CPU.
+v = 0.15625
+bs = struct.pack('>f', v)
+print('0x' + bytearray(bs).hex())
+
+v = 1.10000002
+bs = struct.pack('>f', v)
+i = struct.unpack('>I', bs)[0]
+assert (i == 1066192077)
+#+END_SRC
+
+** 避免使用非规格浮点数
+
+非规格浮点数，相比规格浮点数，可以表示更小的数。但是x86 CPU对于非规格浮点数的处理效率远低于规格浮点数，才会出现最开始的性能问题。如果应用场景可以将非常小的数当做0的话（最小的正规格浮点数是 2^−126 ≈ 1.1754943508 × 10−38），那么可以告诉CPU：
+1. 将输入denormal number当做0. 标记是denormals-are-zero (DAZ)
+2. 将输出denormal number当做0. 标记是flush-to-zero (FTZ)
+
+可以有下面几种方式设置
+
+#+BEGIN_SRC cpp
+// ====================
+// both DAZ and FTZ.
+#include <fenv.h>
+fesetenv(FE_DFL_DISABLE_SSE_DENORMS_ENV);
+
+// ====================
+#include <xmmintrin.h>
+//DAZ
+_mm_setcsr( _mm_getcsr() | 0x0040 );
+//FTZ
+_mm_setcsr( _mm_getcsr() | 0x8000 );
+
+// ====================
+//To enable DAZ
+#include <pmmintrin.h>
+_MM_SET_DENORMALS_ZERO_MODE(_MM_DENORMALS_ZERO_ON);
+//To enable FTZ
+#include <xmmintrin.h>
+_MM_SET_FLUSH_ZERO_MODE(_MM_FLUSH_ZERO_ON);
+#+END_SRC
+
+另外一种方法是 [[https://stackoverflow.com/questions/9314534/why-does-changing-0-1f-to-0-slow-down-performance-by-10x][SO原贴]] 里面提到的使用 `-ffast-math` 优化开关，打开这个开关也会打开DAZ和FTZ，但是还会对某些数学运算做优化。
+
+#+BEGIN_QUOTE
+compiling an executable (not library) with -ffast-math links some extra startup code that sets FTZ (flush to zero) and DAZ (denormal are zero) in the MXCSR, so the CPU never has to take a slow microcode assist for denormals.
+
+Compiler switches. -ffast-math, -msse or -mfpmath=sse will disable denormals and make a few other things faster, but unfortunately also do lots of other approximations that might break your code. Test carefully! The equivalent of fast-math for the Visual Studio compiler is /fp:fast but I haven't been able to confirm whether this also disables denormals.
+#+END_QUOTE
+
+** 程序复现和性能分析
+
+我们文章 [[https://www.toutiao.com/a6763437360362291723][一个有趣的实验，用0.1f替换0，性能提升7倍]] 里面的C程序摘抄修改如下。通过 DISABLE_DENORMS 宏来决定是否禁止非规格浮点数处，通过 STEP 来设置 "0.1f" 或者是 0.
+
+#+BEGIN_SRC c
+/* coding:utf-8
+ * Copyright (C) dirlt
+ */
+
+
+#include <stdio.h>
+#include <fenv.h>
+
+// #define STEP 0.1f;
+// #define STEP 0;
+
+int main() {
+    #ifdef DISABLE_DENORMS
+
+    fesetenv(FE_DFL_DISABLE_SSE_DENORMS_ENV);
+
+    #endif
+
+    const float x = 1.1;
+    const float z = 1.123;
+    float y = x;
+    int j = 0;
+    for(j = 0; j < 90000000; j++){
+        y *= x;
+        y /= z;
+        y += STEP;
+        y -= STEP;
+    }
+    printf("%.2f\n", y);
+    return 0;
+}
+
+#+END_SRC
+
+编译脚本如下. 编译和运行4个程序：
+1. STEP = 0（整数版本）
+2. STEP = 0, DISABLE_DENORMS=1 （禁止非规格浮点的整数版本）
+3. STEP = 0, -ffast-math 打开（数学运算优化版本）
+4. STEP = 0.1f（浮点版本）
+
+#+BEGIN_SRC
+
+rm -rf a.out
+gcc -O2 -Wall -DSTEP=0 temp.c -S -o int.s
+gcc -O2 -Wall int.s
+echo "int version: "; time ./a.out
+
+
+rm -rf a.out
+gcc -O2 -Wall -DSTEP=0 -DDISABLE_DENORMS=1 -DUSE_SSE=1 temp.c -S -o int.norm.s
+gcc -O2 -Wall int.norm.s
+echo "norm int version: "; time ./a.out
+
+rm -rf a.out
+gcc -O2 -Wall -DSTEP=0 -ffast-math temp.c -S -o int.fmath.s
+gcc -O2 -Wall int.fmath.s
+echo "fmath int version: "; time ./a.out
+
+rm -rf a.out
+gcc -O2 -Wall -DSTEP=0.1f temp.c -S -o float.s
+gcc -O2 -Wall float.s
+echo "float version: "; time ./a.out
+
+# echo "diff int.s float.s"
+# diff int.s float.s
+
+#+END_SRC
+
+运行结果如下，可以看到运行效率从高到低是：
+1. 数学库优化版本
+2. 禁止非规格浮点的整数版本
+3. 浮点版本
+4. 整数版本
+
+#+BEGIN_EXAMPLE
+➜  playbook ./exp.sh
+int version:
+0.00
+
+real	0m7.632s
+user	0m7.567s
+sys	0m0.030s
+norm int version:
+0.00
+
+real	0m0.482s
+user	0m0.475s
+sys	0m0.004s
+fmath int version:
+0.00
+
+real	0m0.112s
+user	0m0.109s
+sys	0m0.001s
+float version:
+0.00
+
+real	0m0.684s
+user	0m0.646s
+sys	0m0.007s
+#+END_EXAMPLE
+
+*** 浮点版本和整数版本对比
+首先为什么float version效率要比int version高。虽然这个问题原文上也有提到，但是我觉得还是没有解释透彻。
+
+在程序执行一段时间之后，y就变成了denormal number了。这个值非常小，以至于执行 `y += 0.1f` 之后，
+y变成了 normal number, 并且就是 0.1f（更准确的说是0.1f的规格浮点数）。然后再执行 `y -=0.1f` 之后，
+这个y就变成了0。注意这个0是浮点数的0(exp = 0, fraction = 0). 那么之后所有的操作，就都是规格浮点数的操作了。
+也即是说，整个过程中，只发生过一次非规格浮点数的计算。
+
+而如果执行 `y += 0; y-=0; `的话，y原来是非规格浮点数，之后还是非规格浮点数。也就是说，在执行一段时间之后，
+整数版本之后执行的都是非规格浮点数运算，可想这个性能的下降。
+
+*** 禁止非规格浮点的整数版本和浮点版本对比
+
+可以看到虽然两个版本差距不大，但是禁止非规格浮点的整数版本还是要略快。这个快，仅仅是因为指令少的缘故。
+
+禁止非规格浮点的整数版本循环部分如下：
+#+BEGIN_SRC asm
+LBB0_1:                                 ## =>This Inner Loop Header: Depth=1
+	mulss	%xmm0, %xmm3 ;; xmm0 = x, xmm3 = y
+	divss	%xmm1, %xmm3 ;; xmm1 = z, xmm3 = y
+	addss	%xmm2, %xmm3 ;; xmm2 = 0, xmm3 = y (简化成为了1条）
+	mulss	%xmm0, %xmm3
+	divss	%xmm1, %xmm3
+	addss	%xmm2, %xmm3
+	mulss	%xmm0, %xmm3
+	divss	%xmm1, %xmm3
+	addss	%xmm2, %xmm3
+	addl	$-3, %eax
+	jne	LBB0_1
+#+END_SRC
+因为这里做了循环展开，每个循环其实就3条指令（mulss, divss, addss）。
+
+而浮点版本循环部分如下：
+#+BEGIN_SRC asm
+LBB0_1:                                 ## =>This Inner Loop Header: Depth=1
+	mulss	%xmm0, %xmm4 ;; xmm0 = x, xmm4 = y
+	divss	%xmm1, %xmm4 ;; xmm1 = z, xmm4 = y
+	addss	%xmm2, %xmm4 ;; xmm2 = 0.1f, xmm4 = y
+	addss	%xmm3, %xmm4 ;; xmm3 = -0.1f, xmm4 = y
+	mulss	%xmm0, %xmm4
+	divss	%xmm1, %xmm4
+	addss	%xmm2, %xmm4
+	addss	%xmm3, %xmm4
+	mulss	%xmm0, %xmm4
+	divss	%xmm1, %xmm4
+	addss	%xmm2, %xmm4
+	addss	%xmm3, %xmm4
+	addl	$-3, %eax
+	jne	LBB0_1
+#+END_SRC
+同样有循环展开，但是是4条指令（mulss, divss, addss, addss)
+
+*** 为什么数学运算优化版本最快？
+
+因为它指令最少，每64个循环执行两条指令。很明显它用了SIMD技术。
+
+#+BEGIN_SRC asm
+LBB0_1:                                 ## =>This Inner Loop Header: Depth=1
+	mulps	%xmm2, %xmm1
+	mulps	%xmm2, %xmm0
+	addl	$-64, %eax
+	jne	LBB0_1
+#+END_SRC
+
+** 数学运算优化版本分析
+
+数学运算优化版本是怎么使用SIMD的呢？下面是完整的汇编代码。第一眼看过去会比较头大，而且里面有很多奇怪的常数。
+这个突破口还是在最后面汇总结果的地方，从这个地方入手会容易看懂。
+
+#+BEGIN_SRC asm
+	.section	__TEXT,__text,regular,pure_instructions
+	.macosx_version_min 10, 13
+	.section	__TEXT,__literal16,16byte_literals
+	.p2align	4
+LCPI0_0:
+	.long	1065353216              ## float 1
+	.long	1065353216              ## float 1
+	.long	1065353216              ## float 1
+	.long	1065353216              ## float 1
+LCPI0_1:
+	.long	1066192077              ## float 1.10000002
+	.long	1065353216              ## float 1
+	.long	1065353216              ## float 1
+	.long	1065353216              ## float 1
+LCPI0_2:
+	.long	1062793501              ## float 0.847429096
+	.long	1062793501              ## float 0.847429096
+	.long	1062793501              ## float 0.847429096
+	.long	1062793501              ## float 0.847429096
+	.section	__TEXT,__text,regular,pure_instructions
+	.globl	_main
+	.p2align	4, 0x90
+_main:                                  ## @main
+	.cfi_startproc
+## BB#0:
+	movaps	LCPI0_0(%rip), %xmm0    ## xmm0 = [1.000000e+00,1.000000e+00,1.000000e+00,1.000000e+00]
+	movaps	LCPI0_1(%rip), %xmm1    ## xmm1 = [1.100000e+00,1.000000e+00,1.000000e+00,1.000000e+00]
+	movl	$90000000, %eax         ## imm = 0x55D4A80
+	movaps	LCPI0_2(%rip), %xmm2    ## xmm2 = [8.474291e-01,8.474291e-01,8.474291e-01,8.474291e-01]
+	.p2align	4, 0x90
+LBB0_1:                                 ## =>This Inner Loop Header: Depth=1
+	mulps	%xmm2, %xmm1
+	mulps	%xmm2, %xmm0
+	addl	$-64, %eax
+	jne	LBB0_1
+## BB#2:
+	pushq	%rbp
+Lcfi0:
+	.cfi_def_cfa_offset 16
+Lcfi1:
+	.cfi_offset %rbp, -16
+	movq	%rsp, %rbp
+Lcfi2:
+	.cfi_def_cfa_register %rbp
+	mulps	%xmm1, %xmm0
+	movaps	%xmm0, %xmm1
+	movhlps	%xmm1, %xmm1            ## xmm1 = xmm1[1,1]
+	mulps	%xmm0, %xmm1
+	movshdup	%xmm1, %xmm0    ## xmm0 = xmm1[1,1,3,3]
+	mulps	%xmm1, %xmm0
+	cvtss2sd	%xmm0, %xmm0
+	leaq	L_.str(%rip), %rdi
+	movb	$1, %al
+	callq	_printf
+	xorl	%eax, %eax
+	popq	%rbp
+	retq
+	.cfi_endproc
+
+	.section	__TEXT,__cstring,cstring_literals
+L_.str:                                 ## @.str
+	.asciz	"%.2f\n"
+
+
+.subsections_via_symbols
+
+#+END_SRC
+
+*** 汇总结果代码
+
+#+BEGIN_SRC asm
+	mulps	%xmm1, %xmm0
+	movaps	%xmm0, %xmm1
+	movhlps	%xmm1, %xmm1            ## xmm1 = xmm1[1,1]
+	mulps	%xmm0, %xmm1
+	movshdup	%xmm1, %xmm0    ## xmm0 = xmm1[1,1,3,3]
+	mulps	%xmm1, %xmm0
+	cvtss2sd	%xmm0, %xmm0
+#+END_SRC
+
+里面涉及到的指令我这里贴一下链接
+- https://www.felixcloutier.com/x86/movaps
+- https://www.felixcloutier.com/x86/mulps
+- https://www.felixcloutier.com/x86/movhlps
+- https://www.felixcloutier.com/x86/movshdup
+- https://www.felixcloutier.com/x86/cvtss2sd
+
+xmm寄存器是128bits，可以存放4个32bits浮点数。我这做了一下计算过程中xmm0和xmm1的内容
+
+| code                     | xmm0                                                       | xmm1                                     |
+|--------------------------+------------------------------------------------------------+------------------------------------------|
+|                          | [a0,b0,c0,d0]                                              | [a1,b1,c1,d1]                            |
+| mulps    %xmm1, %xmm0    | [a0a1, b0b1, c0c1, d0d1]                                   | [a1,b1,c1,d2]                            |
+| movaps    %xmm0, %xmm1   | ...                                                        | [a0a1, b0b1, c0c1, d0d1]                 |
+| movhlps    %xmm1, %xmm1  | ...                                                        | [c0c1, d0d1, c0c1, d0d1]                 |
+| mulps    %xmm0, %xmm1    | ...                                                        | [a0a1c0c1, b0b1d0d1, c0c1c0c1, d0d1d0d1] |
+| movshdup    %xmm1, %xmm0 | [b0b1d0d1, b0b1d0d1, c0c1c0c1, d0d1d0d1]                   | ...                                      |
+| mulps    %xmm1, %xmm0    | [a0a1b0b1c0c1d0d1, (b0b1d0d1) ^ 2, (c0c1) ^ 4, (d0d1) ^ 4] | ...                                      |
+| cvtss2sd    %xmm0, %xmm0 | [a0a1b0b1c0c1d0d1, 0,0,0]                                  | ...                                      |
+
+所以汇总结果代码，其实是将xmm0和xmm1里面8个单精度浮点数相乘。
+
+*** 循环部分代码
+
+循环部分代码很简单：
+1. 将xmm2乘到xmm1上
+2. 将xmm2乘到xmm0上
+3. 循环计数减去64
+
+#+BEGIN_SRC asm
+LBB0_1:                                 ## =>This Inner Loop Header: Depth=1
+	mulps	%xmm2, %xmm1
+	mulps	%xmm2, %xmm0
+	addl	$-64, %eax
+	jne	LBB0_1
+#+END_SRC
+
+如果对照C代码，我们可以假设，C代码最终被优化成为一条指令 `y *= delta`.
+#+BEGIN_SRC c
+        y *= x; // 两条指令其实就是 y *= (x / z)
+        y /= z;
+        y += 0; // 因为是0，所以删除
+        y -= 0; // 因为是0，所以删除
+#+END_SRC
+
+所以现在问题就是，如何初始化xmm0, xmm1和xmm2(存放delta的值）
+
+*** 初始化部分代码
+
+#+BEGIN_SRC asm
+## BB#0:
+	movaps	LCPI0_0(%rip), %xmm0    ## xmm0 = [1.000000e+00,1.000000e+00,1.000000e+00,1.000000e+00]
+	movaps	LCPI0_1(%rip), %xmm1    ## xmm1 = [1.100000e+00,1.000000e+00,1.000000e+00,1.000000e+00]
+	movl	$90000000, %eax         ## imm = 0x55D4A80
+	movaps	LCPI0_2(%rip), %xmm2    ## xmm2 = [8.474291e-01,8.474291e-01,8.474291e-01,8.474291e-01]
+#+END_SRC
+
+- xmm0 = [1, 1, 1, 1]
+- xmm1 = [1.10000002, 1, 1, 1]. 这里1.10000002其实是1.1的近似
+- xmm2 = [8.474291e-01,8.474291e-01,8.474291e-01,8.474291e-01] 这个值比较奇怪，但是姑且放着。
+
+暂时先不考虑xmm2为什么是这个值，整个计算过程就不难理解了。因为循环部分只是将y相乘，乘法满足结合律，所以我们可以并行处理（分治算法）。
+- 现将y拆分 y = y0 * y1 * ... y7（divide）
+- 将[y0..y3]存放在xmm1, [y4..y7]存放在xmm0
+- 每次迭代 yi = yi * delta
+- 最终再将 yi 相乘，就可以得到最终的y.（conquer)
+
+然后就要搞清楚为什么xmm2设置成为那个值。
+- 假设我们总共需要迭代N次，所以期望值是 y = y * ((x / z) ** N)
+- 因为每次循环计数减去64，所以每个yi其实迭代了 N/64次，也就是乘 (delta) ** (N/64)
+- 最终计算结果 y = (y0 * y1 .. y7) * (delta ** (N / 8))
+- 所以 delta = (x / z) ** 8
+- 所以 delta = (1.1 / 1.123) ** 8 = 0.8474292130710331

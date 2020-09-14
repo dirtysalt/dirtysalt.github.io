@@ -1,0 +1,28 @@
+#+title: YouTube Scalability
+
+#+BEGIN_EXPORT HTML
+<iframe width="560" height="315" src="https://www.youtube.com/embed/w5WVu624fY8" frameborder="0" allow="autoplay; encrypted-media" allowfullscreen></iframe>
+#+END_EXPORT
+
+https://www.youtube.com/watch?v=w5WVu624fY8
+
+WebServers上面压力并不大，通过psyco JIT来加速
+
+file:images/youtube-scalability-web-servers.png
+
+头部video通过CDN来加速，长尾的video落在youtube服务器上，但是长尾的量加起来也是非常大的。
+
+file:images/youtube-scalability-serving-video.png
+
+thumbnail 小文件，请求数量大，会造成很多磁盘读。开始使用apache来server, 但是换成了lighttpd. 为了优化lighttpd, 使用了多线程方式，主线程读取已经在cache里面的，如果没有在cache中那么交给另外worker thread去完成。还有增加squid来做缓存，但是一段时间会出现性能问题，就定期重启。不过即便如此磁盘随机读还是没有绕过去，并且管理这些thumbnail开销也很大（比如rsync会OOM）。正确的做法应该是存储在object store(bigtable)上。
+
+file:images/youtube-scalability-serving-thumbnails.png
+
+Database用的是MySQL，存储元数据和用户数据。在Linux 2.4有个swapping问题，造成MySQL性能有严重问题。但是当时还在等high-level hardware过来，这哥们用了个临时的办法：把kernel swapping功能先关闭掉，来渡过难关知道new hardware到来。当数据读写速度越来越高时，很自然的办法是replication, 读写分离。但是如果写入速度过快的话，主从之间差异会越来越大。最后从两个方面优化：1）应用层面入手切分成为两个cluster 2) RAID优化（RAID10->5 x RAID1 ）提升20-30%的吞吐量。
+
+
+file:images/youtube-scalability-databases-0.png
+
+file:images/youtube-scalability-databases-1.png
+
+数据库问题最后怎么解决呢？还是Sharding大法好啊！一拨人专注改进当前方案，另外一拨人考虑如何long term地解决这个问题（也就是sharding)

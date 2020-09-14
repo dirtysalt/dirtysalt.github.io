@@ -1,0 +1,137 @@
+#+title: HDFS
+
+** HDFS Shell
+- balancer 可以限制比例阈值和传输带宽
+- fsck 检查hdfs文件系统并作修复
+
+** Filesystem Corruption and Missing Blocks
+- HadoopRecovery < Storage < TWiki https://www.opensciencegrid.org/bin/view/Storage/HadoopRecovery
+- HadoopOperations < Storage < TWiki https://www.opensciencegrid.org/bin/view/Storage/HadoopOperations
+如果hdfs文件系统出现损坏的话，可以在webpage上面看到报警提示
+
+file:images/hdfs-filesystem-corruption-and-missing-blocks.png
+
+或者可以通过运行命令hadoop dfsadmin -report看到系统状况
+#+BEGIN_EXAMPLE
+dp@dp1:~$ hadoop dfsadmin -report
+Configured Capacity: 487173353816064 (443.08 TB)
+Present Capacity: 466468596971008 (424.25 TB)
+DFS Remaining: 288401443913728 (262.3 TB)
+DFS Used: 178067153057280 (161.95 TB)
+DFS Used%: 38.17%
+Under replicated blocks: 1
+Blocks with corrupt replicas: 1
+Missing blocks: 1
+#+END_EXAMPLE
+
+按照提示可以运行hadoop fsck来检查整个文件系统。首先使用hadoop fsck /察看整个文件系统的状态如何。如果某个文件出现问题的话那么会报告
+#+BEGIN_EXAMPLE
+/hbase/.corrupt/dp18.umeng.com%3A60020.1349065853563: CORRUPT block blk_6229461233186357508
+/hbase/.corrupt/dp18.umeng.com%3A60020.1349065853563:  Under replicated blk_6229461233186357508_18529950. Target Replicas is 3 but found 1 replica(s).
+#+END_EXAMPLE
+说明文件/hbase/.corrupt/dp18.umeng.com%3A60020.1349065853563存在问题。
+
+我们可以进一步察看这个文件的状态。使用下面的命令 hadoop fsck /hbase/.corrupt/dp18.umeng.com%3A60020.1349065853563 -files -locations -blocks -racks
+#+BEGIN_EXAMPLE
+dp@dp2:~$ hadoop fsck /hbase/.corrupt/dp18.umeng.com%3A60020.1349065853563 -files -locations -blocks -racks
+FSCK started by dp (auth:SIMPLE) from /10.18.10.55 for path /hbase/.corrupt/dp18.umeng.com%3A60020.1349065853563 at Mon Oct 08 15:17:07 CST 2012
+/hbase/.corrupt/dp18.umeng.com%3A60020.1349065853563 66050 bytes, 1 block(s):
+/hbase/.corrupt/dp18.umeng.com%3A60020.1349065853563: CORRUPT block blk_6229461233186357508
+ Under replicated blk_6229461233186357508_18529950. Target Replicas is 3 but found 1 replica(s).
+0. blk_6229461233186357508_18529950 len=66050 repl=1 [/default-rack/10.18.10.71:50010]
+
+Status: CORRUPT
+ Total size:	66050 B
+ Total dirs:	0
+ Total files:	1
+ Total blocks (validated):	1 (avg. block size 66050 B)
+  ********************************
+  CORRUPT FILES:	1
+  CORRUPT BLOCKS: 	1
+  ********************************
+ Minimally replicated blocks:	1 (100.0 %)
+ Over-replicated blocks:	0 (0.0 %)
+ Under-replicated blocks:	1 (100.0 %)
+ Mis-replicated blocks:		0 (0.0 %)
+ Default replication factor:	3
+ Average block replication:	1.0
+ Corrupt blocks:		1
+ Missing replicas:		2 (200.0 %)
+ Number of data-nodes:		29
+ Number of racks:		1
+FSCK ended at Mon Oct 08 15:17:07 CST 2012 in 1 milliseconds
+
+
+The filesystem under path '/hbase/.corrupt/dp18.umeng.com%3A60020.1349065853563' is CORRUPT
+
+#+END_EXAMPLE
+
+-----
+
+默认情况下面如果hdfs发现某个block under replicated的话，会自动对这个block做replication的，直到replicaion factor达到需求。但是有时候hdfs也会stuck住。除了重启的话，也可以试试上面链接提到的方法。
+- 首先将这个文件的rep factor设置为1，hadoop fs -setrep 1 <file>
+- 然后将这个文件的rep factor修改回3，hadoop fs -setrep 3 <file>
+- #note: 不过很悲剧的是，即使我按照这个方法，这个block似乎也没有回复到指定的factor上面
+- #note: 不是所有的hdfs file都是使用replication=3的方案的，对于mapreduce提交的jar以及libjars（在/user/<user>/.staging/<jobid>/下面）的，考虑到需要被多个tasktracker同时取到，replication的数目会偏高，通常是10
+
+** 文件系统API
+HDFS文件系统的操作步骤主要如下：
+- 首先通过configuration获得FileSystem实例
+- 然后通过FileSystem这个实例操作文件系统上的文件
+- 代码可以参考 [[file:codes/java/hdfs/src/main/java/com/dirlt/java/hdfs/GetFS.java][code on github]]
+
+影响获取到的具体文件系统是fs.default.name这个值，hdfs文件系统API支持下面几个文件系统(不仅限于，只是常用的）
+- Local file fs.LocalFileSystem
+- HDFS hdfs hdfs.DistributedFileSystem
+  - No file update options(record append, etc). all files are write-once.
+  - Designed for streaming. Random seeks devastate performance.
+- HAR(Hadoop Archive) har fs.HarFileSystem
+
+以 com.dirlt.java.hdfs.GetFS 为例，如果使用java -cp方式运行的话，那么结果如下
+#+BEGIN_EXAMPLE
+fs.default.name = file:///
+uri = file:///
+uri = file:///
+#+END_EXAMPLE
+
+而如果以hadoop来运行的话，因为configuration首先会加载conf/core-site.xml里面存在fs.default.name，因此运行结果如下
+#+BEGIN_EXAMPLE
+➜  hdfs git:(master) ✗ export HADOOP_CLASSPATH=./target/classes
+➜  hdfs git:(master) ✗ hadoop com.dirlt.java.hdfs.GetFS
+fs.default.name = hdfs://localhost:9000
+uri = hdfs://localhost:9000
+uri = file:///
+#+END_EXAMPLE
+
+如果指定的URI schema在configuration里面找不到对应实现的话，那么就会使用fs.default.name作为默认的文件系统。
+
+** 一致性问题
+- hdfs一致性模型是reader不能够读取到当前被write的block，除非writer调用sync强制进行同步
+  - FileSystem有下面几个方法需要稍微说明一下 flush,sync,hflush,hsync
+  - flush是DataOutputStream的virtual method，调用flush会调用底层stream的flush，或许我们可以简单地认为这个实现就是将缓冲区的数据刷到device上面
+  - sync是FSDataOutputStream特有的，老版本相当是将datanode数据同步到namenode，这样reader就可以读取到当前的block，但是在高版本deprecated
+  - hflush则是高版本推荐的sync用法
+  - hsync不仅仅有hflush功能，还能够调用对应的datanode将数据刷到local fs上面。
+  - #note: 但是似乎不太work. 参考代码 [[file:codes/java/hdfs/src/main/java/com/dirlt/java/hdfs/TestConsistency.java][code on github]]
+
+** 读写进度
+- hdfs每次将64KB数据写入datanode pipeline的时候都会调用progress.
+- 对于本地文件系统的话，可以跟进到RawLocalFileSystem.create发现progress这个方法并没有使用。
+- 对于分布式文件系统的话，可以跟进到DFSClient.DFSOutputStream.DataStreamer在run里面调用progress
+  - 但是过程似乎有点复杂，所以也不确实是否真的写入64KB才会调用progress
+- 代码可以参考 [[file:codes/java/hdfs/src/main/java/com/dirlt/java/hdfs/TestProgress.java][code on github]]
+
+** 获取集群运行状况
+- 参考代码 [[file:codes/java/hdfs/src/main/java/com/dirlt/java/hdfs/ClusterSummary.java][code on github]]
+- 通过DFSClient可以获取集群运行状况
+
+** All datanodes are bad. Aborting
+当时的情况是增加了datanode的处理线程数目但是没有重启regionserver.怀疑原因可能是文件句柄数量不够，重启regionserver之后恢复正常。
+
+#+BEGIN_EXAMPLE
+2013-06-05 03:45:16,866 FATAL org.apache.hadoop.hbase.regionserver.wal.HLog: Could not append. Requesting close of hlog
+java.io.IOException: All datanodes 10.11.0.41:50010 are bad. Aborting...
+        at org.apache.hadoop.hdfs.DFSClient$DFSOutputStream.processDatanodeError(DFSClient.java:3088)
+        at org.apache.hadoop.hdfs.DFSClient$DFSOutputStream.access$1900(DFSClient.java:2627)
+        at org.apache.hadoop.hdfs.DFSClient$DFSOutputStream$DataStreamer.run(DFSClient.java:2799)
+#+END_EXAMPLE

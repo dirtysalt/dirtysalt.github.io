@@ -1,0 +1,81 @@
+#+title: Your Server as a Function
+
+** Abstract
+** Introduction
+We present three abstractions around which we structure our server software at Twitter. They adhere to the style of func-tional programming—emphasizing immutability, the composition of first-class functions, and the isolation of side effects—and com-bine to present a large gain in flexibility, simplicity, ease of reason-ing, and robustness.(借鉴函数编程思想，不可变性，作为first-class的函数进行组合，以及将side-effects独立出来)
+- Futures. The results of asynchronous operations are represented by futures which compose to express dependencies between operations.
+- Services. Systems boundaries are represented by asynchronous functions called services. They provide a symmetric and uni-form API: the same abstraction represents both clients and servers.
+- Filters. Application-agnostic concerns (e.g. timeouts, retries, au-thentication) are encapsulated by filters which compose to build services from multiple independent modules.
+- Server operations (e.g. acting on an incoming RPC or a time-out) are defined in a declarative fashion, relating the results of the (possibly many) subsequent sub-operations through the use of fu-ture combinators.
+- Operations are phrased as value transformations, encouraging the use of immutable data structures and, we believe, enhancing correctness through simplicity of reasoning.
+- Operations describe what is computed; execution is handled separately. This frees the programmer from attending to the minu-tiae of setting up threads, ensuring pools and queues are sized cor-rectly, and making sure that resources are properly reclaimed—these concerns are instead handled by our runtime library, Fina-gle.
+- Relinquishing the programmer from these responsibilities, the runtime is free to adapt to the situation at hand. This is used to exploit thread locality, implement QoS, multiplex network I/O, and to thread through tracing metadata (`a la Google Dapper).
+
+** Futures
+- A future is a container used to hold the result of an asynchronous operation such as a network RPC, a timeout, or a disk I/O opera- tion.
+- A future is either empty—the result is not yet available; suc- ceeded—the producer has completed and has populated the future with the result of the operation; or failed—the producer failed, and the future contains the resulting exception. An immediately successful future is constructed with Future. value; an immediately failed future with Future.exception.
+- An empty future is represented by a Promise, which is a writable future allowing for at most one state transition, to either of the nonempty states. Promises are similar to I-structures, except that they embody failed as well as successful computations; they are rarely used directly.(Promise用来hold Future)
+- Futures compose in two ways. First, a future may be defined as a function of other futures, giving rise to a dependency graph which is evaluated in the manner of dataflow programming. Second, inde- pendent futures are executed concurrently by default—execution is sequenced only where a dependency exists. All operations returning futures are expected to be asynchronous, though this is not enforced.(Future有下面这些组合方式)
+  - Dependent composition # transformation via 'flatMap'
+  - Handling errors # short-circuits and use 'rescue'
+  - Composing multiple dependencies # # reduce via 'collect'
+  - Recursive composition #
+** Services and Filters
+- A service is an asynchronous function, typically representing some remote endpoint to which RPCs are dispatched; it is distinguished from a regular function in Scala by enforcing that its return value is represented by a Future
+  - type Service[Req, Rep] = Req => Future[Rep]
+  - Services represent clients and servers symmetrically and are used by Finagle.
+  - HTTP Proxy in one line 'Http.serve(":8080", Http.newService("twitter.com:80"))'
+- Filters implement application-independent functionality; they are composed with services to modify service behavior.
+  - type Filter[Req, Rep] = (Req, Service[Req, Rep]) => Future[Rep]
+  - Filters provide a combinator, andThen, which is used to com- bine filters with other filters—producing composite filters—or with services—producing a new service whose behavior is modified by the filter.
+
+** Discussion
+*** Declarative programming with futures
+The style of declarative programming encouraged by futures forces the programmer to structure his system as a set of components whose data dependencies are witnessed by the various future com-binators. *This is a sort of systems description, divorcing the seman-tics of an operation, which are described by the programmer, from execution details, handled by Finagle.* This has been enormously beneficial, freeing the programmer from the tedium of managing threads, queues, resource pools, and resource reclamation, allowing him instead to focus on application semantics.
+
+This achieves a kind of modularity as we separate concerns of program semantics from execution details. We focus our efforts on efficient execution in Finagle, and indeed employ different execu-tion strategies for different types of servers. *For example, Finagle can implement thread affinity, so that all I/O belonging to a logical server request are handled on a single operating system thread, re- ducing context switching costs. *Intriguing opportunities lurk here: How can we use runtime information to improve execution strate-gies? Because Finagle implements the runtime, we were able to add features like Dapper-style RPC tracing without changing APIs or otherwise modify any existing user code.*
+
+Additionally, the style encourages the programmer to think about data-flow over control-flow, which in turn tends to lead to code whose semantics are preserved under non-deterministic con-current computation: synchronization concerns are subsumed by the data-flow, as expressed by future combinators. The emphasis on data-flow encourages the programmer to structure his software in terms of transformations of immutable values, not as a sequence of mutations of shared data.  *We believe this makes it simpler to reason about shared data, especially in the presence of concurrency. This is perhaps the principal advantage of Future-based concurrency.*
+
+Another, perhaps surprising, benefit is that since future types are “infectious”— *any value derived from a future must itself be encapsulated with a future—asynchronous behavior is witnessed by a program’s static types.* A programmer can then tell simply by a method signature whether dispatching it is likely to be expensive. Futures are cheap in construction and maintenance. *Our current implementation allocates 16 bytes for the central data structure, and our runtime library multiplexes operations onto several underlying OS threads, using efficient data structures (for actions like time-outs), and the operating system I/O multiplexing facilities (for I/O actions.)*
+
+*** Futures in practice
+We introduced an interrupt mechanism to bridge the gap. In-terrupts enable consumers of a future to notify the asynchronous operation responsible for populating it, typically because the result is no longer needed. *Interrupts flow in the opposite direction of the data carried by futures, and they are advisory. Interrupts don’t di-rectly change the state of the future, but a producer may act on it. We added interrupt handling to the bottom-most part of our net-work clients.* In practice, only a handful of places in our code base, such as our timeout filter, were modified to raise interrupts.(interrupt并不会改变future状态, 但是producer能够识别它。整个interrupt是以data flow相反的方向传播的，然后finagle在最底层做interrupt处理)
+
+While interrupts violate the pure data flow model presented by futures, consumers are still oblivious to their producers. Interrupts are advisory, and do not directly affect the state of the future.
+
+Interrupts are not without problems. They introduce new seman- tic complications: Should combinators propagate interrupts to all futures? Or only the outstanding ones? What if a future is shared between multiple consumers? We don’t have great answers to these questions, but in practice interrupts are used rarely, and then almost exclusively by Finagle; we have not encountered any problems with their semantics or their implementation.(Interrupt语义方面没有特别好的办法来解决)
+
+*** Filters
+This is an excerpt from its current configura- tion:
+- recordHandletime
+- traceRequest
+- collectJvmStats
+- parseRequest
+- logRequest
+- recordClientStats
+- sanitize
+- respondToHealthCheck andThen
+- applyTrafficControl  andThen
+- virtualHostServer
+
+*** The cost of abstraction
+High level programming languages and constructs do not come for free. Future combinators allocate new futures on the garbage collected heap; closures, too, need to be allocated on the heap, since their invocation is deferred. While we’ve focused on reducing the allocation footprints—and indeed created many tools for allocation analysis—it is an ongoing concern.(产生很多内存碎片导致性能下降)
+
+The tail latencies of most of our servers are governed by minor heap garbage collections. In isolation, this implies only a small ser-vice degradation. However our large fan-out system amplifies such effects as overall request latency is governed by the slowest com-ponent; with large request distribution—often 100s of systems—encountering minor garbage collection in the request path is com-mon. Dean and Barroso describe similar experiences at Google.（一些尾部比较长的延迟都主要是因为minor GC造成的）
+
+A frequent source of unintentional garbage collection pressure is the ease with which space leaks can be introduced by the in-advertent capturing of references in closures. This is amplified by long-lived operations, for example, closures that are tied to lifetime of a connection, and not of a request. Miller et.al.’s Spores proposes to mitigate these types of leaks by giving the programmer fine-grained control over the environment captured by a closure.（closure捕获了很多外部变量，而这个closure本身是长时间使用的，导致内存没有办法释放）
+
+In most of our servers, major collections are rare. This gives rise to another kind of space leak: if a Promise is promoted to the major heap (for example because the operation it represents took an unexpectedly long time), its referent value, even if its useful lifetime is miniscule, survives until the next major garbage collection.
+
+Development discipline is an important mitigating factor. In order to ensure that allocation regressions aren’t introduced, we have developed a tool, JVMGCPROF which runs regularly along with our tests, providing reports on per-request allocation rates and lifetimes.
+This is an area of ongoing effort with many intriguing possibil-ities. Since Finagle controls logical-to-physical thread multiplex-ing and is aware of request boundaries, it can bias allocation. This opens up the possibility that, with the cooperation of the underlying JVM, we may make use of region allocation techniques.(jvmgcprof可以观察每个request到来时分配对象的频率以及这些对象的lifetime. finagle本身可以改进内存分配策略)
+
+*** Futures, Services, and Filters at Twitter
+** Related work
+- Lwt is a cooperative threading library for OCaml whose chief abstraction, the lightweight thread, is similar to our Future.
+- Haskell and Go provide cheap user-space threads, reduc-ing the overhead of thread-based concurrency. These runtimes man-age threads as a cheap resource, and frees the programmer from the obligation of manually managing threads. However, they are dis-tinct from futures in two ways.
+  - First, they do not provide a clean data flow model—their threads do not compose as naturally as do futures.(没有提供data flow model, 所以线程没有办法和future很好地组合)
+  - Second, the management of threads is built into their run-times, and thus limit the amount of runtime specialization that can be done by a separate library like Finagle.(thread management是语言内置而不是library方式提供)
+
+** Conclusions

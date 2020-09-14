@@ -1,0 +1,190 @@
+#+title: Redis Cluster Tutorial
+
+https://redis.io/topics/cluster-tutorial
+
+-----
+之前使用redis的方式一直是redis server + twemproxy. 最近twemproxy/nutcracker出了一些问题，具体来说是因为nutcracker所在的机器网络流量到顶了，导致很多cache请求延迟或者是是被丢弃，所以外部服务API延迟特别高。
+
+下面是方式nutcracker的错误日志，可以看到很多很多packet出现了错误所以被丢弃。
+#+BEGIN_EXAMPLE
+[2018-01-08 09:34:11.008] nc_connection.c:423 sendv on sd 1152 failed: Broken pipe
+[2018-01-08 09:34:11.014] nc_connection.c:423 sendv on sd 101 failed: Broken pipe
+[2018-01-08 09:34:11.021] nc_connection.c:423 sendv on sd 542 failed: Broken pipe
+[2018-01-08 09:34:33.957] nc_connection.c:423 sendv on sd 791 failed: Broken pipe
+[2018-01-08 09:34:48.245] nc_connection.c:423 sendv on sd 6685 failed: Broken pipe
+[2018-01-08 09:34:56.064] nc_connection.c:423 sendv on sd 5225 failed: Broken pipe
+[2018-01-08 09:34:56.083] nc_connection.c:423 sendv on sd 3016 failed: Broken pipe
+[2018-01-08 09:34:56.089] nc_connection.c:423 sendv on sd 5797 failed: Broken pipe
+[2018-01-08 09:34:56.258] nc_connection.c:423 sendv on sd 2039 failed: Broken pipe
+[2018-01-08 09:35:02.790] nc_connection.c:423 sendv on sd 1269 failed: Broken pipe
+[2018-01-08 09:35:02.792] nc_connection.c:423 sendv on sd 9350 failed: Broken pipe
+[2018-01-08 09:35:02.993] nc_connection.c:423 sendv on sd 2616 failed: Broken pipe
+[2018-01-08 09:35:08.429] nc_connection.c:423 sendv on sd 1537 failed: Broken pipe
+#+END_EXAMPLE
+
+趁着这个事情，就顺带调研一下Redis Cluster, 看看这个东西是否可以解决我们的问题，以及这个方案的优点和缺点。细看下来，如果client层不做轮训(RR)的话，流量最终还是会打在一个机器上。
+
+-----
+
+简单来说，Redis Cluster(RC)实现上将key sharding到多台redis servers上，然后每个shard是master/slaves结构。
+- sharding plan是相对静态的，在创建cluster的时候就确定下来了。如果增加和减少节点的话，需要手动reshard.
+- 每个shard是独立的，下面的master和slave之间可以相互切换(failover)。
+ - 如果master掉线的话，负责这个shard的slaves可以选举出master来。
+ - 如果通过redis-cli登录某个redis-server的话，通过 `keys *` 可以查看落在这个server上的所有keys.
+ - 可以通过命令 `CLUSTER FAILOVER`指令来模拟failover
+- 默认地所有shards必须都在线，如果某个shard unavailable的话，那么整个cluster就down了。
+
+Redis Cluster是在原来redis server上面实现的分布式功能，原来redis server还是负责原来的单机功能，然后在port + 10000这个端口上实现cluster protocol(binary, use little bandwidth and processing time)
+
+-----
+RC配置参数中有几个比较重要的：
+1. cluster-enabled <yes/no> 这个需要选择yes
+2. cluster-config-file <filename> 用于保存topology
+3. cluster-node-timeout <millseconds> 解决brain splitting问题
+4. cluster-slave-validity-factor <factor> 主从同步最大差距。slave和master短线时间超过5 * factor seconds的话，那么slave自动被摘除。
+5. cluster-migration-barrier <count>  和replicas migration相关的参数
+6. cluster-require-full-coverage <yes/no> 是否所有shards available才能使用
+
+Redis Cluster sharding plan并没有实现比较复杂的consistent hashing, 而是使用相对静态的hashing方案。RC将整个hash ring切分成了2^14 = 16384个hash slots, 然后将CRC16(key) % 16384映射到对应的hash slot. 每个shard负责一个范围的hash slots. 如果我们启动3节点的话，那么
+- node A负责0 - 5500 hash slots
+- node B负责5501 - 11000 hash slots
+- node C负责11001 - 16383 hash slots
+
+为了让这个映射更加可控，key里面可以包含{}, 这样RC会使用{}里面的部分当做key. 这种方式叫做hash tags. 比如this{foo}key和another{foo}key最终会对应到同样一个hash slot.
+
+RC实现的是最终一致性：master写入之后就立刻返回ack, 然后异步写到slaves上（也可以通过WAIT指令还来达到同步写）。除非开启AOF，否则redis server不会写磁盘，这样的话理论上是会造成数据不一致的。不过即使开启了AOF依然有可能会出现不一致，只不过概率会更低罢了。brain splitting是一个不能通过开启AOF降低不一致出现概率的情况，RC实现了这么个机制：出现brain splitting时，在一段时间内client依然可以写入，但是超过这个时间写入就会失败。这个算是解决网络抖动的权衡实现吧。
+
+Replicas Migration要解决的场景如下：假设node AB为主从，A是master, B是slave。如果AB都掉线的话，那么整个cluster就没有办法使用了。可以想到的一个解决办法是，为每个master都配置多个slaves比如3个。但是这样也会有问题，就是机器冗余程度非常高，不太cost effective.
+
+更好的解决办法是，在整个cluster里面多加几个slaves, 这些slaves的从属关系可以动态变化：如果发现某个shard的master没有slave的话，那么这些冗余的slaves就可以成为这个master的slave. `cluster-migration-barrier`参数指每个master下面最少的slave数量。
+
+-----
+搭建RC不是一件困难的实现，但是工作量也不少。按照教程创建一个 `cluster-test` 目录，复制一份redis.conf到这个目录下面。为了方便搭建和测试，我写了下面这个脚本。只启动3个实例，没有使用replicas. 因为redis-server很多参数都可以在命令行里面设置，所以redis.conf配置文件其实可以只需要一份。
+#+BEGIN_SRC Shell
+#!/usr/bin/env bash
+# Copyright (C) dirlt
+
+for x in 7002 7003 7004
+do
+    mkdir -p $x
+    cp redis.conf $x/redis.conf
+    cd $x
+    if [ -f redis.pid  ]; then
+        echo "kill redis-server at port $x"
+        kill `cat redis.pid`
+        sleep 1
+    fi
+    if [ $1"X" != "stopX" ]; then
+        ../../src/redis-server redis.conf --port $x
+        echo "start redis-server at port $x"
+    fi
+    cd -
+done
+ps aux | grep redis-server
+#+END_SRC
+
+运行完成之后，还需要运行脚本来bring cluster up. 这个ruby脚本是redis source code里面自带的。我封装脚本如下
+#+BEGIN_SRC Shell
+#!/usr/bin/env bash
+# Copyright (C) dirlt
+
+options=""
+for x in 7002 7003 7004
+do
+    mkdir -p $x
+    options="$options 127.0.0.1:$x"
+done
+
+../src/redis-trib.rb create --replicas 0 $options
+#+END_SRC
+
+运行结果如下
+#+BEGIN_EXAMPLE
+➜  cluster-test ./create_cluster
+>>> Creating cluster
+>>> Performing hash slots allocation on 3 nodes...
+Using 3 masters:
+127.0.0.1:7002
+127.0.0.1:7003
+127.0.0.1:7004
+M: 2e492869fc8b970fda5b25ba4915e55e72464716 127.0.0.1:7002
+   slots:0-5460 (5461 slots) master
+M: 676973dee74fa434cb18341a72049896e3bf8e3a 127.0.0.1:7003
+   slots:5461-10922 (5462 slots) master
+M: 5b82bc3289af1a119bad7feca0a3611e563c4b45 127.0.0.1:7004
+   slots:10923-16383 (5461 slots) master
+Can I set the above configuration? (type 'yes' to accept): yes
+>>> Nodes configuration updated
+>>> Assign a different config epoch to each node
+>>> Sending CLUSTER MEET messages to join the cluster
+Waiting for the cluster to join.
+>>> Performing Cluster Check (using node 127.0.0.1:7002)
+M: 2e492869fc8b970fda5b25ba4915e55e72464716 127.0.0.1:7002
+   slots:0-5460 (5461 slots) master
+   0 additional replica(s)
+M: 5b82bc3289af1a119bad7feca0a3611e563c4b45 127.0.0.1:7004
+   slots:10923-16383 (5461 slots) master
+   0 additional replica(s)
+M: 676973dee74fa434cb18341a72049896e3bf8e3a 127.0.0.1:7003
+   slots:5461-10922 (5462 slots) master
+   0 additional replica(s)
+[OK] All nodes agree about slots configuration.
+>>> Check for open slots...
+>>> Check slots coverage...
+[OK] All 16384 slots covered.
+#+END_EXAMPLE
+
+然后我们可以登录任何一个节点，来查看整个集群的情况. 如果好奇的话也可以查看每个目录下面nodes.conf(topology info)
+#+BEGIN_EXAMPLE
+➜  cluster-test redis-cli -c -p 7004
+127.0.0.1:7004> cluster nodes
+2e492869fc8b970fda5b25ba4915e55e72464716 127.0.0.1:7002 master - 0 1515589267762 1 connected 0-5460
+5b82bc3289af1a119bad7feca0a3611e563c4b45 127.0.0.1:7004 myself,master - 0 0 3 connected 10923-16383
+676973dee74fa434cb18341a72049896e3bf8e3a 127.0.0.1:7003 master - 0 1515589268771 2 connected 5461-10922
+
+➜  cluster-test cat 7003/nodes.conf
+5b82bc3289af1a119bad7feca0a3611e563c4b45 127.0.0.1:7004 master - 0 1515588061264 3 connected 10923-16383
+2e492869fc8b970fda5b25ba4915e55e72464716 127.0.0.1:7002 master - 0 1515588060256 1 connected 0-5460
+676973dee74fa434cb18341a72049896e3bf8e3a 127.0.0.1:7003 myself,master - 0 0 2 connected 5461-10922
+vars currentEpoch 3 lastVoteEpoch 0
+#+END_EXAMPLE
+每行由下面这些字段组成：
+- Node ID
+- ip:port
+- flags: master, slave, myself, fail, ...
+- if it is a slave, the Node ID of the master
+- Time of the last pending PING still waiting for a reply.
+- Time of the last PONG received.
+- Configuration epoch for this node (see the Cluster specification).
+- Status of the link to this node.
+- Slots served
+
+-----
+我们现在的webapp使用的是flask框架，通过flask-cache来访问redis cache. flask-cache假设redis-server是单集而非集群，所以如果要使用RC的话，还需要更换到 [[https://github.com/Richard-Mathie/Flask-Cache-Redis-Cluster][这个]] 库。
+
+[[https://github.com/Richard-Mathie/Flask-Cache-Redis-Cluster][Flask-Cache-Redis-Cluster]] 这个库底层使用的是 [[https://github.com/Grokzen/redis-py-cluster][redis-py-cluster]]. 我非常关心 `mget`的实现，因为我们的webapp大量地依赖于mget的高性能实现，而RC的自身设计似乎就暗示mget不太可能有特别好的实现。
+
+看完代码之后，发现的确mget的实现比较naive.
+#+BEGIN_SRC Python
+    def mget(self, keys, *args):
+        """
+        Returns a list of values ordered identically to ``keys``
+
+        Cluster impl:
+            Itterate all keys and send GET for each key.
+            This will go alot slower than a normal mget call in StrictRedis.
+
+            Operation is no longer atomic.
+        """
+        return [self.get(arg) for arg in list_or_args(keys, args)]
+#+END_SRC
+
+而redis-py的mget实现是通过redis-server本身来完成的，这样可以非常高效
+#+BEGIN_SRC Python
+    def mget(self, keys, *args):
+        """
+        Returns a list of values ordered identically to ``keys``
+        """
+        args = list_or_args(keys, args)
+        return self.execute_command('MGET', *args)
+#+END_SRC

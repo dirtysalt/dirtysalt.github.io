@@ -1,0 +1,92 @@
+#+title: 517. Super Washing Machines
+
+https://leetcode.com/problems/super-washing-machines/
+
+https://leetcode-cn.com/problems/super-washing-machines/solution/
+
+看了官方的题解，但是没有搞明白为什么这么计算是最优的，不过这个计算过程对于培养直觉可能还有点帮助。
+
+我觉得这个解释有点意思 https://leetcode.com/problems/super-washing-machines/discuss/369787/topic
+
+#+BEGIN_EXAMPLE
+首先求出最终的目标target，如果没有最终目标，直接返回-1.
+
+对于每个洗衣机，我们计算他需要移走多少衣服（负数表示他需要获得多少衣服）从任意一边开始计算，比如从左边：
+
+第一个洗衣机如果移走了衣服，那么肯定移给了他右边的洗衣机，所以右边的洗衣机在遍历时，要加上左边需要移走的；
+如果一个洗衣机需要移来衣服，他也是从右边的洗衣机获得，右边的洗衣机需要移来的衣服也是要加上左边的，故over这个变量要一直加下去。
+而且，他为负就表示从右边索要，他为正，说明左边来的已经超出了需要，转移给右边。
+
+对于任何一个洗衣机，如果他需要移走的衣服是正数，最终移动的数量肯定要大于这个数（显然），如果是负数，就不用大于他的绝对值了（因为可以从两边移动到这里）。
+而对于自己本来就比目标大的，最终移动的次数一定大于自己衣服减去目标数，因为不管是左边需要，还是右边需要，对于这个洗衣机，每次都最多只能出一个。
+这个最终移动的下界就是答案（他存在吗？存在，只要按照我们遍历的顺序去做，按照over指示的去做就可以达到）
+
+有点像之前二叉树上面去分摊均匀的一道题目，题号不记得了。
+#+END_EXAMPLE
+
+可以考虑一下：
+- 对于一个洗衣机，如果它超过平均值，那么它至少需要传递 (x-avg).
+- 如果它没有超过平均值，那么它可以接收两边的衣服，所以只需要考虑传递入的衣服
+- 我们从左向右遍历到节点i，假设左边多出x件的话（也就是需要传递给右边x件）
+  - 我们在处理左边的时候，将这多出的x件全部移动到最右节点i上
+  - 然后只需要考虑从i上将这x件移动到右边
+
+或许没有办法证明是最优的，但是始终这种类似直觉的思想解决问题，至少得到个相对较优解还是不错的。
+
+#+BEGIN_SRC python
+class Solution:
+    def findMinMoves(self, machines: List[int]) -> int:
+        S = sum(machines)
+        n = len(machines)
+        if S % n != 0:
+            return -1
+        avg = S // n
+        acc = 0
+        ans = 0
+        for x in machines:
+            adjust = x - avg
+            acc += (x - avg)
+            ans = max(ans, adjust, abs(acc))
+        return ans
+#+END_SRC
+
+----------
+
+解答里面提到而二叉树均摊问题在这里 https://leetcode.com/problems/distribute-coins-in-binary-tree/. 这个明显没有想象的难，因为所有的挪动都是顺序完成的。
+我们只需要考虑某个子树需要收入/分发出多少个coin即可，从部分考虑最终得到整体。
+
+#+BEGIN_SRC python
+class Solution:
+    def distributeCoins(self, root: TreeNode) -> int:
+        ans = 0
+
+        def pre(root: TreeNode):
+            if root is None:
+                return 0, 0
+
+            lc, lv = pre(root.left)
+            rc, rv = pre(root.right)
+            return lc + rc + 1, lv + rv + root.val
+
+        count, total = pre(root)
+        if total % count != 0:
+            return -1
+        avg = total // count
+
+        def visit(root):
+            nonlocal ans
+            if root is None:
+                return 0, 0
+
+            lc, lv = visit(root.left)
+            rc, rv = visit(root.right)
+            c = lc + rc + 1
+            v = lv + rv + root.val
+            if v != c * avg:
+                delta = abs(v - c * avg)
+                ans += delta
+            return c, v
+
+        visit(root)
+        return ans
+#+END_SRC

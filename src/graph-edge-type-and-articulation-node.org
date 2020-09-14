@@ -1,0 +1,171 @@
+#+title: 图的各种边和割点计算
+
+如果对图进行DFS，按照访问节点的各个顺序，那么可以将边进行分类。其中无向图包括 1. 树边(tree-edge) 和 2. 反向边(backward-edge).
+有向图相比无向图多了两类： 3. 正向边(forward-edge)  和 4. 交叉边(cross-edge). 关于这些边如何定义，可以参考任何一本算法和数据结构的书。
+
+我这里参考的书籍是 《[数据结构与算法分析_Java语言描述(第2版)].韦斯》，甚至代码里面的例子都是书里面的。
+
+- [[file:codes/contest/misc/test_undigraph_edges.py][无向图边计算]]
+- [[file:codes/contest/misc/test_digraph_edges.py][有向图边计算]]
+- [[file:codes/contest/misc/test_articulation_node.py][割点计算]]
+
+#+BEGIN_SRC python
+class State:
+    def __init__(self, n):
+        self.ts = 0
+        self.in_ts = [-1] * n
+        self.out_ts = [-1] * n
+        self.ps_ts = [-1] * n
+        self.parents = [-1] * n
+
+    def enter(self, v):
+        self.in_ts[v] = self.ts
+        self.ts += 1
+
+    def exit(self, v):
+        self.out_ts[v] = self.ts
+        self.ts += 1
+
+    def process(self, v):
+        self.ps_ts[v] = self.ts
+        self.ts += 1
+
+    def set_parent(self, v, p):
+        self.parents[v] = p
+
+    def get_parent(self, v):
+        return self.parents[v]
+
+def undi_dfs(G: Graph):
+    n = len(G)
+    tree_edges = []
+    back_edges = []
+    state = State(n)
+
+    def fn(v):
+        state.enter(v)
+        state.process(v)
+        mat = G.mat
+        for v2 in range(n):
+            if mat[v][v2] != 0:
+                # 如果没有访问的话，那么记录下parent关系，这个在判断是否为回边的时候需要去除
+                if state.in_ts[v2] == -1:
+                    state.set_parent(v2, v)
+                    tree_edges.append((v, v2))
+                    fn(v2)
+
+                # 如果 v->v2, 但是v2访问的时间更早并且不是父子关系的话，那么认为是回边
+                elif state.get_parent(v) != v2 and state.in_ts[v] > state.in_ts[v2]:
+                    assert (state.out_ts[v2] == -1)
+                    back_edges.append((v, v2))
+
+        state.exit(v)
+
+    fn(0)
+    return state, tree_edges, back_edges
+
+def di_dfs(G: Graph, ss):
+    n = len(G)
+    tree_edges = []
+    back_edges = []
+    fwd_edges = []
+    cross_edges = []
+
+    state = State(n)
+
+    def fn(v):
+        state.enter(v)
+        state.process(v)
+        mat = G.mat
+        for v2 in range(n):
+            if mat[v][v2] != 0:
+                # 如果没有访问的话，那么记录下parent关系，这个在判断是否为回边的时候需要去除
+                if state.in_ts[v2] == -1:
+                    state.set_parent(v2, v)
+                    tree_edges.append((v, v2))
+                    fn(v2)
+
+
+                # 如果 v->v2, 但是v2访问的时间更早并且不是父子关系的话，那么认为是回边
+                # 并且要求这个时候v2还没有访问完成
+                elif state.get_parent(v) != v2 and \
+                        state.in_ts[v] > state.in_ts[v2] and \
+                        state.out_ts[v2] == -1:
+                    back_edges.append((v, v2))
+
+                else:
+                    assert (state.out_ts[v2] != -1)
+                    # 如果v2访问完成时间是大于v访问初始时间，那么就是正向边
+                    if state.out_ts[v2] > state.in_ts[v]:
+                        fwd_edges.append((v, v2))
+                    else:
+                        cross_edges.append((v, v2))
+
+        state.exit(v)
+
+    for s in ss:
+        fn(s)
+    return state, tree_edges, back_edges, fwd_edges, cross_edges
+
+#+END_SRC
+
+
+如果一个图可以一次DFS将所有节点遍历到，那么这个图就是联通的(connected). 对于一个连通图来说，这个图中存在某个节点，如果将这个节点删除（以及它上面的边）
+的话，那么这个图就变成非连通的，那么这个节点就是割点。计算割点的时候使用到了反向边(backward-edge)这个概念。割点满足的条件也好理解：如果一个节点，它下面
+的孩子如果没有办法达到这个节点的父节点的话，那么这个节点就是一个割点。那么怎么定义子节点到父节点呢？这就是一个反向边。此外根节点是一个特例。
+
+#+BEGIN_SRC python
+
+class State:
+    def __init__(self, n):
+        self.num = [-1] * n
+        self.parent = [-1] * n
+        self.low = [-1] * n
+        self.counter = 0
+
+    def assign_number(self, v):
+        self.low[v] = self.counter
+        self.num[v] = self.counter
+        self.counter += 1
+
+
+def find_articulation_nodes(G: Graph):
+    # low[v] = min(num[v], min(low[x] for x in children), min(num[x] for (v, x) in back_edges)
+    # low的含义是这个节点向上回溯，能关联到序号最低的节点是什么
+    # 如果某个节点v，它其中一个孩子x, low[x] <= num[v]的话，说明这个x没有办法
+    # 连接到序号更低的节点，那么v节点就是一个割点
+    n = len(G)
+    res = set()
+    state = State(n)
+
+    def fn(v):
+        state.assign_number(v)
+        for t in range(n):
+            if G.mat[v][t] != 0:
+
+                # tree edges.
+                if state.num[t] == -1:
+                    state.parent[t] = v
+                    fn(t)
+
+                    if state.low[t] >= state.num[v]:
+                        # v is articulation node.
+                        res.add(v)
+                    state.low[v] = min(state.low[v], state.low[t])
+
+                # back edges.
+                elif state.parent[v] != t and state.num[v] > state.num[t]:
+                    state.low[v] = min(state.low[v], state.num[t])
+
+    start = 0
+    fn(start)
+    count = 0
+    for t in range(n):
+        if G.mat[start][t] != 0:
+            count += 1
+            if count >= 2:
+                res.add(start)
+                break
+    return list(res)
+
+#+END_SRC

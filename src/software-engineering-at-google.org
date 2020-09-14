@@ -1,0 +1,131 @@
+#+title: Software Engineering at Google
+
+** Introduction
+** Software development
+*** The source repository
+关于Google代码仓库详情，可以参考文章 [[file:why-google-stores-billions-of-lines-of-code-in-a-single-repository.org][Why Google Stores Billions of Lines of Code in a Single Repository]]
+
+除了Chrome和Android两个项目（使用单独的开源仓库），以及一些涉及商业核心机密的代码仓库（限制读取权限），其他所有的代码仓库都是对外公开并且基于trunk开发。
+
+基于trunk的开发可以让问题定位更加容易，并且减少merge的工作量，同时加快代码（和依赖它的代码）的更新和修复速度。
+
+所有的subtree都有几个owners, 只有这些owners对他们负责的subtree有写入权限，其他人如果想要修改的话可以提交PR, 这样确保提交进来的代码质量. owners的数量可多可少，但是至少需要两个而且最好是地理上分开的（比如时区跨度比较大），多的话可能可以是整个team.
+
+尽可能地让所有check in都触发run tests, 来尽快定位问题。一旦没有通过tests，会立刻通知代码的提交者。同时对于大型项目会设置"build cop", 职责是监督整个source tree的build状态确保始终可以build, 一旦发现出现问题，要协助作者修复问题或者是回滚代码。
+
+-  Why Google Stores Billions of Lines of Code in a Single Repository , Rachel Potvin, presentation. https://www.youtube.com/watch?v=W71BTkUbdqE
+-  The Motivation for a Monolithic Codebase , Rachel Potvin, Josh Levenberg, to be published in Communications of the ACM, July 2016.
+-  Scaling Mercurial at Facebook,  Durham Goode, Siddharth P. Agarwa, Facebook blog post, January 7th, 2014. https://code.facebook.com/posts/218678814984400/scaling-mercurial-at-facebook/
+-  Why We (Still) Believe In Private Offices , David Fullerton, Stack Overflow blog post, January 16th, 2015. https://blog.stackoverflow.com/2015/01/why-we-still-believe-in-private-offices/
+-  Continuous Integration at Google Scale , John Micco, presentation, EclipseCon, 2013. http://eclipsecon.org/2013/sites/eclipsecon.org.2013/files/2013-03-24%20Continuous%20Integration%20at%20Google%20Scale.pdf
+
+*** The Build System
+Blaze构建系统，使用high-level描述式语言编写BUILD文件，根据各个项目提供的BUILD文件解决依赖问题（依赖描述必须是完备的），并且优化编译步骤。
+
+虽然Go语言编译器可以通过分析文件生成BUILD文件，但是这个BUILD通常都是check in到仓库里面，这样可以将编译器和构建工具作用解耦，充分利用Blaze构建系统的强大功能。
+
+建立在几百台甚至上千台机器上的分布式编译系统，可以快速地构建出结果并且同时跑完test cases.
+
+构建系统必须是非常可靠的，并且每个过程都是确定的，比如说要能正确地解决cache问题或者是编译器变动造成的问题等。两个人在不同环境下面，只要BUILD文件是相同的，那么得到的结果也必须是一致的。
+
+因为构建系统对中间结果进行了缓存，所以导致构建速度可以很快很快。一旦构建速度很快，我们就可以做presubmit check。每个subtree都会指定要求presubmit check需要运行哪些test cases, 这个过程可以是同步的（提交PR之前一定要完成），也可以是异步的（先提交PR之后附带run tests结果）
+
+*** Code Review
+CR有一套web-based tools来完成，一旦checkin除了触发运行test cases之外，还会通知reviewer需要进行CR并且附带测试运行结果等。
+
+所有的commit都必须经过一个reviewer. 紧急情况下，subtree的owner临时不经过review进入代码，但是之后必须经过review.
+某个commit可能会有多个reviewers，但是只要其中一个reviewer通过的话，就能先入库，这样可以加快开发速度。
+
+这套CR工具能够根据subtree的ownership, 以及这个commit是哪个author发起的，结合历史上reviewers的情况，自动选择一个或者几个合适的reviewers出来供选择。
+但是author也可以自己选择经过哪个reviewer, 主要避免某个reviewer响应太慢的问题，又或者是根据改动的大小可以选择多个reviwers.
+
+CR的讨论结果最终会以mail-list格式进行归档以便后续查询。除了author/owner/reviewer之外，其他人也可以对代码进行批注（比如指出错误或者是优化方案）来通知author和owner。
+
+除了main repo之外，G还有一个experimental repo, 这个repo可以不用强制CR，但是即便如此CR在这个repo里面也是广泛被使用的。虽然这个repo主要用于提交实验代码，
+但是我们还是鼓励工程师往main repo提交，而不是先在exp repo上提交然后迁移回到main repo, 这样的话很难做有效的CR.
+
+*** Testing
+入库的代码要求有对应的测试代码，集成测试，回归测试。从web上面浏览代码的时候，旁边还能看到这些代码的test coverage.
+
+Load testing在开发之前就必须确定下来。团队要求编写一个表格或者图表列举关键点的性能，比如要求支撑的多大的QPS，以及这个QPS下的延迟情况等。
+
+*** Bug Tracking
+看上去很像github issue，所有的bug fix要带上issue编号。
+
+*** Programming languages
+G官方语言：Java, C++, Python, Go, JS, 每门语言都有一个style guides来指导风格。
+
+除去这些通用编程语言外，还也有一些定制化的DSLs。
+
+语言之间的数据交换是用Protocol-Buffers来完成的。
+
+G尽可能地让不同语言的开发流程一致，比如即便使用C++/Go也可以使用Blaze命令来编译和运行等，而不用直接去gcc或者是go这种不同的命令行。
+
+*** Debugging and Profiling tools
+G所有的服务器都链接了一些便于调试和剖析的lib. 比如
+- 出现crash的时候可以保存coredump文件
+- 如果出现OOM的话，会将live objects抽样并且记录下来
+- 观察in/out RPCs情况比如超时 [[file:dapper.org][Dapper]]
+- 在web端上动态修改日志等级并且观察日志
+
+前段时间有幸参观了G中国的办公室，并且观察了同事的工作开发环境。G恨不得将所有的工作在浏览器里面完成。
+
+*** Release Engineering
+原则上要求尽可能频繁地release, 比如每周或者是两周出一个release, 但是有些团队每天可能就出一个release.
+
+之所以可以这么有效地每天出release, 得益于整个发布流程很自动化，不需要专门的release engineer来完成。
+
+发布过程如下：（这些过程都可以在web上完成）
+- 从main branch上某个处于green的状态，同步一份代码到branch上。
+- 可选地进入一些cherry pick等，并且运行test cases观察是否通过。
+
+上线过程：
+- 将产出内部打包然后放到staging server上，让小部分用户试用观察，或者可以从prod server切部分流量过来观察。但是不使用staging处理结果。
+- staging状态通过后，就可以变为canary状态，正式处理部分prod server上请求。和staging差别就是，会使用canary状态的处理结果。
+- 之后不断地灰度发布直到完全上线。
+
+*** Launch Approval
+*** Post-mortems
+*** Frequent rewrites
+Most software at Google gets rewritten every few years.
+
+定期重写的好处有下面这些：
+- 适合后续发展需要。软件通常是按照10x来设计的，通常2-3年就会达到，所以需要redesign/reimpl
+- 减少复杂性。可能某些功太过复杂，但是并不是很重要，那么重写的时候就可以删掉。
+- 转移知识和建立ownership. 对于重写的同学，可以在这个过程中将上一代设计和实现细节学到手，并且对这个项目负责起来。
+- 促进工程师在部门间移动。其他部门的工程师可以带来更多更好的点子。
+- 使用更先进的技术，比如某个lib从v2升级到v3等，或者是使用全新的编程语言。
+
+** Project management
+*** 20% time
+*** OKR
+*** Project Approval
+即便作为一个已经在G工作10多年的老员工（经理），作者现在也还是不太明白，什么时候应该批准或者不批准一个项目。作者认为大部分原因在于，和项目性质和团队有关系。
+
+有一些项目是bottom-up的方式提出来的，通常这些项目都是工程师和所在团队主动提出的，而一些项目则是top-down的，我的理解应该是一些战略性质的项目比如Chromium.
+
+*** Corporation reorganizations
+团队经常会被打散然后重组，可能是因为项目的原因，也可能是因为技术效率或是组织效率。
+
+** People management
+*** Roles
+工程和管理是两条不同的职业发展路线。大致有下面几个角色：
+
+- Engineering Manager. 工程师经理。SWE可能会管理人，而EM就是完全管理人。EM都是从SWE过来的，有技术背景。EM的主要工作是为某个项目挑选好人并且管理好人。
+- Software Engineer(SWE). 软件工程师。G里面大部分都是这类人，SWE的职位可以做到很高，甚至比EM还高，这样可以避免大家一窝蜂地都转管理。 "At the higher levels, showing leadership is required, but that can come in many forms. For example creating great software that has a huge impact or is used by very many other engineers is sufficient."
+- Research Scientist. 研究科学家。RS的bar比SWE还要高，不仅要求学术上有深的造诣，并且要求编码能力也非常强。一些在G的PhD甚至只能作为SWE而不能作为RS. RS通常和SWE在一起工作。
+- Site Reliability Engineer(SRE). 编码水平可以比SWE要求低一下，但是在其他一些方面比如网络或者是unix系统内部有深入了解。
+- Product Manager(PM). 产品经理。在项目里面侧重从产品角度思考问题，自己不进行编码，但是和SWE在一起工作，确保他们产生的代码是自己想要的。
+- Program Manager /Technical Program Manager. 和PM有点类似，但是他们不管理产品，而是确保整个流程运行通畅。
+
+SWE vs PM的比例可以从4:1到30:1
+
+*** Facilities
+*** Training
+*** Transfers
+*** Performance appraisal and rewards
+首先需要自己或者是经理的提名，然后自我评价和其他同事以及经理的评价，然后再提交到升职委员会决定你是否可以升职。
+
+Google has a very careful and detailed promotion process, which involves nomination by self or manager, self-review, peer reviews, manager appraisals; the actual decisions are then made by promotion committees based on that input, and the results can be subject to further review by promotion appeals committees. Ensuring that the right people get promoted is critical to maintaining the right incentives for employees.
+
+** Conclusion

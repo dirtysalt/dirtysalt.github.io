@@ -1,0 +1,97 @@
+#+title: Protobuf Encoding
+
+https://developers.google.com/protocol-buffers/docs/encoding
+
+对于下面这样的结构，假设 a = 150 的话，那么编码是 08 96 01
+
+#+BEGIN_SRC Protobuf
+message Test1 {
+  optional int32 a = 1;
+}
+#+END_SRC
+
+protobuf是按照key-value pair来进行编码的，key包含 (field_number, wire_type).
+
+因为wire_type包含下面6种，所以key可以用 (field_number << 3) | wire_type 进行编码。
+
+| Type | Meaning          | Used For                                                 |
+|------+------------------+----------------------------------------------------------|
+|    0 | Varint           | int32, int64, uint32, uint64, sint32, sint64, bool, enum |
+|    1 | 64-bit           | fixed64, sfixed64, double                                |
+|    2 | Length-delimited | string, bytes, embedded messages, packed repeated fields |
+|    3 | Start group      | groups (deprecated)                                      |
+|    4 | End group        | groups (deprecated)                                      |
+|    5 | 32-bit           | fixed32, sfixed32, float                                 |
+
+解析过程是数据驱动的：先解析key, 判断wire_type和代码的type是否compatible, 然后解析value.
+
+对于length-delimited类型来说，先是length, 然后是length长度的字节流。因为string, bytes, embedded messages以及repeated fields都是同一种类型方式，所以实际上可以用string去解析embedded messages，得到的就会是raw bytes.
+
+repeated fields在proto2的编码方式还是key-value, key-value并不是相邻的，可能散落一个message字节流的各个位置。但是这样打包会带来key的重复开销，所以在proto3使用packed方式，要求key-value是相邻的，布局格式是 key, payload_size, value1, value2 ...
+
+考虑最开始的例子，a是int32, 那么type是0. field_number = 1, 所以key = (1 << 3) | 0 = 8, 那么 96 01是怎么来的呢？
+
+------
+
+为了节省空间，protobuf对于非fixed size的数字做的是变长编码
+- 一个字节来说，msb表示后续是否还有字节，1表示还是，0表示结束
+- 使用little-endian的编码方式
+
+比如300的编码表示是 1010 1100 0000 0010
+- 第一个字节因为msb是1，所以表示不是结尾。payload是 010 1100
+- 第二个字节因为msb是0，所以表示结尾。payload是 000 0010
+- 因为按照little-endian编码，所以有效payload其实是 000 0010 010 1100 = 300
+
+#+BEGIN_SRC Python
+#!/usr/bin/env python
+# coding:utf-8
+# Copyright (C) dirlt
+
+def unpack_varint(bs, offset):
+    ans = 0
+    move = 0
+    while True:
+        b = bs[offset]
+        offset += 1
+        payload = b & 0x7f
+        ans |= (payload << move)
+        move += 7
+        if (b >> 7) == 0:
+            break
+    return ans, offset
+
+
+def pack_varint(bs, value):
+    while value >= 128:
+        x = value & 0x7f
+        bs.append((1 << 7) | x)
+        value = value >> 7
+    bs.append(value)
+
+
+bs = bytearray()
+pack_varint(bs, 300)
+print(bs)
+ans, offset = unpack_varint(bs, 0)
+assert offset == len(bs)
+print(ans, offset)
+#+END_SRC
+
+可以看到varint这种编码方式是没有符号的，所以对于负数来说需要先映射到正数。映射规律比较简单，但是实现有点巧妙
+
+| Signed Original | Encoded As |
+|-----------------+------------|
+|               0 |          0 |
+|               1 |          2 |
+|              -2 |          3 |
+|      2147483647 | 4294967294 |
+|     -2147483648 | 4294967295 |
+
+对于32位的正数可以实现为 (x << 1) ^ (x >> 31). 这里 x >> 31是算术偏移，结果是全1或者是全0.
+
+如果是正数那么保持，如果是负数就全部取反。对于正数来说这个处理很好理解，对于负数就要分析一下了。
+
+有两个点需要观察到，假设正数x
+- 那么-x的编码是 (~x + 1), 然后对 -x 继续 ~(~x+1) + 1的话就变回x.
+- 对-x << 1 然后取反是什么结果呢？~((~x + 1) << 1) = (~(~x + 1)) << 1 + 1 = (x -1) << 1 + 1 = 2x - 1
+所以对于-2来说 (-2 << 1) 取反就是3，对于-3来说就是5。

@@ -1,0 +1,252 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Dremel: Interactive Analysis of Web-Scale Datasets</title>
+<meta name="generator" content="Org mode" />
+<meta name="author" content="dirtysalt" />
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content">
+<h1 class="title">Dremel: Interactive Analysis of Web-Scale Datasets</h1>
+<div id="table-of-contents">
+<h2>Table of Contents</h2>
+<div id="text-table-of-contents">
+<ul>
+<li><a href="#org97747ca">1. Abstract</a></li>
+<li><a href="#org78d9170">2. Introduction</a></li>
+<li><a href="#org0b45e80">3. Background</a></li>
+<li><a href="#orgc61126b">4. Data Model</a></li>
+<li><a href="#org3b4dd95">5. Nested Columnar Storage</a></li>
+<li><a href="#orgc1cd3cf">6. Query Language</a></li>
+<li><a href="#org4d7a4e3">7. Query Execution</a></li>
+<li><a href="#org64100d5">8. Experiments</a></li>
+<li><a href="#orgc2b6152">9. Observations</a></li>
+<li><a href="#org5754efd">10. Related Work</a></li>
+<li><a href="#org440f4d1">11. Conclusion</a></li>
+</ul>
+</div>
+</div>
+<ul class="org-ul">
+<li><a href="http://research.google.com/pubs/pub36632.html">http://research.google.com/pubs/pub36632.html</a> @ 2010</li>
+<li><a href="http://www.yankay.com/google-dremel-rationale">http://www.yankay.com/google-dremel-rationale</a></li>
+</ul>
+
+<div id="outline-container-org97747ca" class="outline-2">
+<h2 id="org97747ca"><span class="section-number-2">1</span> Abstract</h2>
+<div class="outline-text-2" id="text-1">
+<ul class="org-ul">
+<li>Dremel is a scalable, interactive ad-hoc query system for analy-sis of read-only nested data. （着重处理只读的嵌套数据，主要针对交互式的ad-hoc查询，并且有良好的可扩展性）</li>
+<li>By combining multi-level execution trees and columnar data layout, it is capable of running aggrega-tion queries over trillion-row tables in seconds. （秒级处理trillion数据/million million，精髓就是多层树型执行模型，以及数据按照column方式进行存储）</li>
+<li>The system scales to thousands of CPUs and petabytes of data, and has thousands of users at Google.（使用规模，上千个CPU，以及PB级别的数据，上千个用户使用）</li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-org78d9170" class="outline-2">
+<h2 id="org78d9170"><span class="section-number-2">2</span> Introduction</h2>
+<div class="outline-text-2" id="text-2">
+<ul class="org-ul">
+<li>This paper describes a system called Dremel1 that supports inter-active analysis of very large datasets over shared clusters of com-modity machines. （允许在廉价的集群上面进行大规模数据的交互式分析）</li>
+<li>Unlike traditional databases, it is capable of op-erating on in situ nested data. In situ refers to the ability to access data ‘in place’, e.g., in a distributed file system（支持在in-place的嵌套数据，这点和传统的关系型数据库不太一样）</li>
+<li>Dremel can execute many queries over such data that would ordinarily require a sequence of MapReduce jobs, but at a fraction of the execution time. （dremel所作的工作非常类似于多个MR一起工作，但是时间远远比这些MR一起执行要少）</li>
+<li>Dremel is not intended as a replacement for MR and is often used in conjunction with it to analyze outputs of MR pipelines or rapidly prototype larger computations.（dremel定位来说不是MR的replacement，并且经常和MR配合使用）</li>
+</ul>
+
+<hr />
+
+<p>
+下面是一些在google内部使用到dremel的地方：
+</p>
+<ul class="org-ul">
+<li>Analysis of crawled web documents.</li>
+<li>Tracking install data for applications on Android Market.</li>
+<li>Crash reporting for Google products.</li>
+<li>OCR results from Google Books.</li>
+<li>Spam analysis.</li>
+<li>Debugging of map tiles on Google Maps.</li>
+<li>Tablet migrations in managed Bigtable instances.</li>
+<li>Results of tests run on Google’s distributed build system.</li>
+<li>Disk I/O statistics for hundreds of thousands of disks.</li>
+<li>Resource monitoring for jobs run in Google’s data centers.</li>
+<li>Symbols and dependencies in Google’s codebase.</li>
+</ul>
+
+<hr />
+
+<p>
+下面是dremel三个比较重要的技术点： Dremel builds on ideas from web search and parallel DBMSs.（dremel很多技术来自与web检索以及并行DMBS）
+</p>
+<ul class="org-ul">
+<li>First, its architecture borrows the concept of a serving tree used in distributed search engines . Just like a web search request, a query gets pushed down the tree and is rewritten at each step. The result of the query is assembled by aggregating the replies received from lower levels of the tree. （首先在架构上面借鉴了分布式搜索引擎的serving tree概念，能够将一个query进行rewrite成为多个小的查询，分摊到底层节点执行然后在上层聚合起来）</li>
+<li>Second, Dremel provides a high-level, SQL-like language to express ad hoc queries. In contrast to layers such as Pig and Hive, it executes queries natively without translating them into MR jobs. （提供了SQL-like的查询语言，和Pig以及Hive不太一样的是，dremel直接执行而没有转换成为MR jobs）</li>
+<li>Lastly, and importantly, Dremel uses a column-striped storage representation, which enables it to read less data from secondary storage and reduce CPU cost due to cheaper compression. Column stores have been adopted for analyzing relational data but to the best of our knowledge have not been extended to nested data mod-els. The columnar storage format that we present is supported by many data processing tools at Google, including MR, Sawzall , and FlumeJava. （使用了列式存储，使得查询的话可以只是读取部分数据，减少IO以及CPU时间。列式存储广泛用于关系数据模型但是没有用于嵌套数据模型）</li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-org0b45e80" class="outline-2">
+<h2 id="org0b45e80"><span class="section-number-2">3</span> Background</h2>
+<div class="outline-text-2" id="text-3">
+<p>
+下图表示行式存储和列式存储的区别
+</p>
+
+
+<div class="figure">
+<p><img src="images/dremel-columnar-representation.png" alt="dremel-columnar-representation.png" />
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgc61126b" class="outline-2">
+<h2 id="orgc61126b"><span class="section-number-2">4</span> Data Model</h2>
+<div class="outline-text-2" id="text-4">
+<p>
+in a short word, "protobuf"
+</p>
+</div>
+</div>
+
+<div id="outline-container-org3b4dd95" class="outline-2">
+<h2 id="org3b4dd95"><span class="section-number-2">5</span> Nested Columnar Storage</h2>
+<div class="outline-text-2" id="text-5">
+<p>
+这节讲的内容主要就是说，如何在行式存储和为列式存储之间无损地进行转换。
+</p>
+<ul class="org-ul">
+<li>Splitting Records into Columns</li>
+<li>Record Assembly</li>
+</ul>
+
+<p>
+如何在column里面保存下value的一些位置信息。需要添加上
+</p>
+<ul class="org-ul">
+<li>Repetition levels.</li>
+<li>Definition levels.</li>
+</ul>
+<p>
+后面以下图为例
+</p>
+
+<p>
+<img src="images/dremel-sample-record.png" alt="dremel-sample-record.png" /> <img src="images/dremel-sample-column.png" alt="dremel-sample-column.png" />
+</p>
+
+<p>
+所谓r的意思就是说，最近包含这个value，并且repeat的field，是第几个。0表示record开始，有特殊意义。我们以Name.Language.Country为例。
+</p>
+<ul class="org-ul">
+<li>第一个us是开始的记录，所以为r==0</li>
+<li>在Code=='en'这个部分有一个NULL值，可以看到Language重复出现了，所以r==2</li>
+<li>第二个gb，可以看到Language并没有重复，是在那层Name里面的第一个，而Name重复了，那么r==1</li>
+<li>而在Url=='http://B'这里，没有出现Language，而Name重复了，那么r==1</li>
+</ul>
+
+<p>
+而d的意思就是说，这个value的field path上面，有多少个字段是可以undefined的，但是却出现了。同样以Country为例
+</p>
+<ul class="org-ul">
+<li>第一个us可以看到三个字段其实都可以不存在，但是却都存在了，所以d==3</li>
+<li>后面NULL，只有Name和Language出现了，所以d==2</li>
+<li>后面NULL，只有Name出现了，所以d==1</li>
+<li>gb这条记录，三个字段都出现所以d==3</li>
+</ul>
+
+<p>
+作者认为对于一个value来说，完全可以根据这个value对应的field name，以及r，d，完全构造出nested data。并且作者针对种种特性做了encoding的优化，使得column在存储上面尽可能地紧凑。
+</p>
+
+<p>
+#note: now see <a href="parquet.html">Parquet</a>
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgc1cd3cf" class="outline-2">
+<h2 id="orgc1cd3cf"><span class="section-number-2">6</span> Query Language</h2>
+</div>
+<div id="outline-container-org4d7a4e3" class="outline-2">
+<h2 id="org4d7a4e3"><span class="section-number-2">7</span> Query Execution</h2>
+<div class="outline-text-2" id="text-7">
+<hr />
+
+<p>
+Tree architecture. Dremel uses a multi-level serving tree to execute queries (see Figure 7). A root server receives incoming queries, reads metadata from the tables, and routes the queries to the next level in the serving tree. The leaf servers communicate with the storage layer or access the data on local disk.
+</p>
+
+
+<div class="figure">
+<p><img src="images/dremel-tree-architecture.png" alt="dremel-tree-architecture.png" />
+</p>
+</div>
+
+<p>
+The execution model presented above is well-suited for aggregation queries returning small and medium-sized results, which are a very common class of interactive queries. Large aggregations and other classes of queries may need to rely on execution mechanisms known from parallel DBMSs and MR. （需要注意的是，这种模型只是适合返回中小规模数据聚合结果，因为这个是交互式查询里面最典型的场景。而对于需要返回大规模数据的话，还是使用并行数据库或者是MR会更好）
+</p>
+
+<hr />
+
+<p>
+Query dispatcher. Dremel is a multi-user system, i.e., usually several queries are executed simultaneously. A query dispatcher schedules queries based on their priorities and balances the load. Its other important role is to provide fault tolerance when one server becomes much slower than others or a tablet replica becomes un-reachable. （一方面可以用来处理优先级以及平衡负载，另外一方面可以用来监控哪些server运行比较慢来完成容错处理。文中提到的模型类似于threadpool机制，每个server上面启动多少个thread，每个thread相当于一个slot。和MR差别就是，因为这个thread可以执行任何工作，所以可以把thread看作slot，而在MR里面只能将process看做slot）
+</p>
+
+<p>
+During query ex-ecution, the query dispatcher computes a histogram of tablet pro-cessing times. If a tablet takes a disproportionately long time to process, it reschedules it on another server. Some tablets may need
+to be redispatched multiple times.（在执行过程中，dispatcher会绘制每个tablet处理时间的直方图。如果某个tablet处理时间过长的话，那么会被reschedule到其他server上面的slot，对于一个tablet可能会被reschedule多次）
+</p>
+
+<p>
+The leaf servers read stripes of nested data in columnar represen-tation. The blocks in each stripe are prefetched asynchronously; the read-ahead cache typically achieves hit rates of 95%. Tablets are usually three-way replicated. When a leaf server cannot access one tablet replica, it falls over to another replica. （预取可以达到95%的cache命中）
+</p>
+
+<p>
+The query dispatcher honors a parameter that specifies the min-imum percentage of tablets that must be scanned before returning a result. As we demonstrate shortly, setting such parameter to a lower value (e.g., 98% instead of 100%) can often speed up execu-tion significantly, especially when using smaller replication factors.（允许指定某个tablet返回部分数据。通过将这个比例调低可以很大程度上加快执行速度，尤其是对于small-replication factor的tablet来说（这点也还算比较好理解，对于多副本来说如果某个副本读取速度慢的话，可以转向其他的副本读取，可以加快速度。如果只有一个副本的话，而这个副本disk有问题或者是本身的IO util就比较高，那么读取时间就会偏长）
+</p>
+</div>
+</div>
+
+<div id="outline-container-org64100d5" class="outline-2">
+<h2 id="org64100d5"><span class="section-number-2">8</span> Experiments</h2>
+</div>
+<div id="outline-container-orgc2b6152" class="outline-2">
+<h2 id="orgc2b6152"><span class="section-number-2">9</span> Observations</h2>
+<div class="outline-text-2" id="text-9">
+<p>
+Dremel scans quadrillions of records per month. Figure 15 shows the query response time distribution in a typical monthly workload of one Dremel system, on a logarithmic scale. As the figure indi-cates, most queries are processed under 10 seconds, well within the interactive range. Some queries achieve a scan throughput close to 100 billion records per second on a shared cluster, and even higher on dedicated machines. （可以看到大部分的读取时间都非常小，没有长尾）
+</p>
+
+
+<div class="figure">
+<p><img src="images/dremel-query-response-time-distribution.png" alt="dremel-query-response-time-distribution.png" />
+</p>
+</div>
+
+<ul class="org-ul">
+<li>Scan-based queries can be executed at interactive speeds on disk-resident datasets of up to a trillion records.</li>
+<li>Near-linear scalability in the number of columns and servers is achievable for systems containing thousands of nodes.</li>
+<li>MR can benefit from columnar storage just like a DBMS.</li>
+<li>Record assembly and parsing are expensive. Software layers (beyond the query processing layer) need to be optimized to directly consume column-oriented data.（行式和列式存储之间的转换代价非常大）</li>
+<li>MR and query processing can be used in a complementary fashion; one layer’s output can feed another’s input.</li>
+<li>In a multi-user environment, a larger system can benefit from economies of scale while offering a qualitatively better user experience.</li>
+<li>If trading speed against accuracy is acceptable, a query can be terminated much earlier and yet see most of the data.（只有一小部分的查询时间非常长）</li>
+<li>The bulk of a web-scale dataset can be scanned fast. Getting to the last few percent within tight time bounds is hard.（并且这小部分的查询时间非常难以保证）</li>
+<li>Dremel’s codebase is dense; it comprises less than 100K lines of C++, Java, and Python code.（10w行代码）</li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-org5754efd" class="outline-2">
+<h2 id="org5754efd"><span class="section-number-2">10</span> Related Work</h2>
+</div>
+<div id="outline-container-org440f4d1" class="outline-2">
+<h2 id="org440f4d1"><span class="section-number-2">11</span> Conclusion</h2>
+</div>
+</div>
+</body>
+</html>

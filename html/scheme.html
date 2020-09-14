@@ -1,0 +1,363 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>scheme</title>
+<meta name="generator" content="Org mode" />
+<meta name="author" content="dirtysalt" />
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content">
+<h1 class="title">scheme</h1>
+<div id="table-of-contents">
+<h2>Table of Contents</h2>
+<div id="text-table-of-contents">
+<ul>
+<li><a href="#org15f59c7">1. 两种delay/force实现</a></li>
+<li><a href="#orgb81add1">2. define-syntax</a></li>
+<li><a href="#org6a8669a">3. 重新认识closure</a></li>
+<li><a href="#org5a7b0ab">4. let,let*,letrec</a></li>
+</ul>
+</div>
+</div>
+<p>
+links:
+</p>
+<ul class="org-ul">
+<li><a href="https://schemers.org/">https://schemers.org/</a></li>
+<li><a href="http://www.scheme.com/">http://www.scheme.com/</a></li>
+<li>SICP <a href="http://mitpress.mit.edu/sicp/">http://mitpress.mit.edu/sicp/</a></li>
+<li>TSPL <a href="http://www.scheme.com/tspl4/">http://www.scheme.com/tspl4/</a></li>
+<li>Daniel P. Friedman <a href="http://www.cs.indiana.edu/~dfried/">http://www.cs.indiana.edu/~dfried/</a></li>
+<li><a href="ftp://ftp.cs.utexas.edu/pub/garbage/cs345/schintro-v14/schintro_toc.html">An Introduction to Scheme and its Implementation</a></li>
+</ul>
+
+
+<div id="outline-container-org15f59c7" class="outline-2">
+<h2 id="org15f59c7"><span class="section-number-2">1</span> 两种delay/force实现</h2>
+<div class="outline-text-2" id="text-1">
+<p>
+第一个是使用闭包，第二个使用mcons可变对象。可能可变对象的开销比较小。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-scheme">
+<span class="org-comment-delimiter">;</span><span class="org-comment">(define (my-delay f)</span>
+<span class="org-comment-delimiter">;  </span><span class="org-comment">(let [(x #f)]</span>
+<span class="org-comment-delimiter">;    </span><span class="org-comment">(lambda ()</span>
+<span class="org-comment-delimiter">;      </span><span class="org-comment">(or x</span>
+<span class="org-comment-delimiter">;          </span><span class="org-comment">(begin</span>
+<span class="org-comment-delimiter">;            </span><span class="org-comment">(set! x (f))</span>
+<span class="org-comment-delimiter">;            </span><span class="org-comment">x)))))</span>
+<span class="org-comment-delimiter">;</span>
+<span class="org-comment-delimiter">;</span><span class="org-comment">(define (my-force f) (f))</span>
+
+(<span class="org-keyword">define</span> (<span class="org-function-name">my-delay</span> th)
+  (mcons #f th))
+
+<span class="org-comment-delimiter">;; </span><span class="org-comment">&#36824;&#21487;&#20197;&#20351;&#29992;macro&#23450;&#20041;&#22909;&#30475;&#19968;&#20123;</span>
+<span class="org-comment-delimiter">;</span><span class="org-comment">(require compatibility/defmacro)</span>
+<span class="org-comment-delimiter">;</span><span class="org-comment">(define-macro (my-delay th)</span>
+<span class="org-comment-delimiter">;  </span><span class="org-comment">`(mcons #f (lambda () ,th)))</span>
+
+(<span class="org-keyword">define</span> (<span class="org-function-name">my-force</span> p)
+  (<span class="org-keyword">if</span> (mcar p)
+      (mcdr p)
+      (<span class="org-keyword">begin</span> (set-mcar! p #t)
+             (set-mcdr! p ((mcdr p)))
+             (mcdr p))))
+
+
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgb81add1" class="outline-2">
+<h2 id="orgb81add1"><span class="section-number-2">2</span> define-syntax</h2>
+<div class="outline-text-2" id="text-2">
+<p>
+`define-syntax` 可能是racket语言专有的，感觉功能上比 `define-macro` 要更简单容易使用：
+</p>
+<ol class="org-ol">
+<li>支持hygienic变量绑定</li>
+<li>可以在一个special form里面定义多种形式</li>
+<li>不用写,和,@, 宏会自动展开表达式</li>
+</ol>
+
+<div class="org-src-container">
+<pre class="src src-scheme">
+(<span class="org-keyword">define-syntax</span> <span class="org-variable-name">my-delay</span> <span class="org-comment-delimiter">; </span><span class="org-comment">name</span>
+  (<span class="org-keyword">syntax-rules</span> () <span class="org-comment-delimiter">; </span><span class="org-comment">keywords</span>
+    <span class="org-comment-delimiter">;; </span><span class="org-comment">special form cases</span>
+    [(my-delay th) (mcons #f (<span class="org-keyword">lambda</span> () th))]))
+
+(<span class="org-keyword">define-syntax</span> <span class="org-variable-name">my-if</span>
+  (<span class="org-keyword">syntax-rules</span> (then else)
+    [(my-if e1 then e2 else e3) (<span class="org-keyword">if</span> e1 e2 e3)]
+    [(my-if e1 then e2) (<span class="org-keyword">if</span> e1 e2 #f)]))
+(my-if #t then 20 else 30)
+(my-if #t then 20)
+
+(<span class="org-keyword">define-syntax</span> <span class="org-variable-name">my-double</span>
+  (<span class="org-keyword">syntax-rules</span> ()
+    [(my-double e)
+     (<span class="org-keyword">let</span> [(x e)]
+       <span class="org-comment-delimiter">; </span><span class="org-comment">hygienic variable bindings</span>
+       <span class="org-comment-delimiter">; </span><span class="org-comment">no need to call (gensym)</span>
+       (+ x x))]))
+(my-double (<span class="org-keyword">begin</span> (printf <span class="org-string">"hello~n"</span>) 10))
+
+(<span class="org-keyword">define-syntax</span> <span class="org-variable-name">while</span>
+  (<span class="org-keyword">syntax-rules</span> ()
+    [(while e1 e2)
+     (<span class="org-keyword">letrec</span> [(loop (<span class="org-keyword">lambda</span> ()
+                   (<span class="org-keyword">if</span> e1 (<span class="org-keyword">begin</span> e2 (loop)) #f)))]
+       (loop))]))
+
+(<span class="org-keyword">let</span> [(x 0)]
+  (while (&lt; x 5)
+         (<span class="org-keyword">begin</span>
+           (printf <span class="org-string">"save~n"</span>)
+           (set! x (+ x 1)))))
+
+</pre>
+</div>
+</div>
+</div>
+<div id="outline-container-org6a8669a" class="outline-2">
+<h2 id="org6a8669a"><span class="section-number-2">3</span> 重新认识closure</h2>
+<div class="outline-text-2" id="text-3">
+<p>
+关于closure的一些问题：
+</p>
+<ol class="org-ol">
+<li>closure包含了什么? closure包含了函数定义，以及创建这个函数时的上下文（或者叫做环境）。</li>
+<li>什么时候创建closure? 在函数定义的时候，此时不仅仅需要保存函数定义，还要保存此时的环境。</li>
+<li>closure什么时候被调用? 当被call的时候，closure被调用。</li>
+<li>closure是如何计算的?
+<ul class="org-ul">
+<li>首先去除closure的函数定义部分，看这个函数有哪些形式参数;</li>
+<li>在当前的环境current-env下面计算相应的实际参数，并且绑定到形式参数上，形成param-bindings;</li>
+<li>然后将param-bindings添加到closure所在环境closure-env上;</li>
+<li>最后在closure-env上面，计算closure的函数体部分。</li>
+</ul></li>
+</ol>
+
+<p>
+下面这段代码是 <a href="https://www.coursera.org/learn/programming-languages-part-b/">https://www.coursera.org/learn/programming-languages-part-b/</a> 这么课程的作业，我摘取了代码片段来帮助说明上面这些问题
+</p>
+
+<div class="org-src-container">
+<pre class="src src-scheme">(struct fun  (nameopt formal body) <span class="org-builtin">#:transparent</span>) <span class="org-comment-delimiter">;; </span><span class="org-comment">a recursive(?) 1-argument function</span>
+(struct call (funexp actual)       <span class="org-builtin">#:transparent</span>) <span class="org-comment-delimiter">;; </span><span class="org-comment">function call</span>
+<span class="org-comment-delimiter">;; </span><span class="org-comment">a closure is not in "source" programs but /is/ a MUPL value; it is what functions evaluate to</span>
+(struct closure (env fun) <span class="org-builtin">#:transparent</span>)
+
+(<span class="org-keyword">define</span> (<span class="org-function-name">eval-under-env</span> e env)
+  <span class="org-comment-delimiter">;; </span><span class="org-comment">(display "env = ") (print env) (display ", e = ")(print e) (newline)</span>
+  (<span class="org-keyword">cond</span> [(var? e)
+         (envlookup env (var-string e))]
+
+         [(fun? e) (closure env e)] <span class="org-comment-delimiter">;; </span><span class="org-comment">&#36825;&#37324;&#20165;&#20165;&#21019;&#24314;closure&#23545;&#35937;</span>
+
+         [(call? e)
+         (<span class="org-keyword">let</span> ([clj (eval-under-env (call-funexp e) env)])
+           (<span class="org-keyword">if</span> (closure? clj)
+               (<span class="org-keyword">let*</span> ([fn (closure-fun clj)]
+                      [clj-env (closure-env clj)]
+                      <span class="org-comment-delimiter">;; </span><span class="org-comment">&#22914;&#26524;&#26159;&#26377;&#21517;&#31216;&#20989;&#25968;&#30340;&#35805;&#65292;&#22312;&#21407;&#26377;&#30340;env&#22522;&#30784;&#19978;&#22686;&#21152;name-&gt;clj&#30340;&#32465;&#23450;</span>
+                      [ext-env (<span class="org-keyword">if</span> (fun-nameopt fn) (extend-env (fun-nameopt fn) clj env) env)]
+                      [ext-clj-env (<span class="org-keyword">if</span> (fun-nameopt fn) (extend-env (fun-nameopt fn) clj clj-env) clj-env)]
+                      [new-env (extend-env (fun-formal fn)
+                                           <span class="org-comment-delimiter">;; </span><span class="org-comment">&#22312;&#24403;&#21069;&#29615;&#22659;&#19979;&#38754;&#23545;&#23454;&#21442;&#27714;&#20540;&#65292;&#36825;&#20010;&#27714;&#20540;&#20063;&#21487;&#20197;&#20351;&#29992;&#24403;&#21069;&#20989;&#25968;</span>
+                                           (eval-under-env (call-actual e) ext-env)
+                                           <span class="org-comment-delimiter">;; </span><span class="org-comment">&#32465;&#23450;&#21040;closure&#30340;&#29615;&#22659;&#19978;&#65292;&#23545;body&#20869;&#37096;&#27714;&#20540;</span>
+                                           ext-clj-env)])
+                 (eval-under-env (fun-body fn) new-env))
+               (error <span class="org-string">"MULP call applied to non-closure"</span>)))]))
+</pre>
+</div>
+
+<p>
+因为closure实现上需要保存环境，如果翻译成为C语言的话，通常需要在函数参数列表最后面增加一个参数 <code>void *env</code>. closure在运行效率上没有什么问题，
+所有对于变量的访问都可以转换成为直接内存访问，而不用去在运行时查表找到内存。closure效率问题主要是在空间上，就是如何来保存这个env.
+</p>
+
+<p>
+一种比较有效的实现，就是我们不保存整个env, 而是将函数里面所有使用到的外部符号解析出来，然后只保存这些符号映射表。这些外部符号变量称为自由变量(free variables).
+因为每个函数里面通常使用的外部变量不是很多，所以这些符号映射表并不是很大，相对保存整个env可以节省不少空间。
+</p>
+
+<p>
+具体实现上，可以分为两步：1. 首先分析整个函数体，分析出这个函数体使用了哪些外部符号(freevars) 2. 在生成代码或者是解释代码阶段，可以给这些freevars生成映射表。
+如果是生成代码的话，还可以计算这个映射表的大小，以及每个变量所在的偏移。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-scheme"><span class="org-comment-delimiter">;; </span><span class="org-comment">&#26816;&#26597;&#27599;&#20010;&#34920;&#36798;&#24335;&#20013;&#20351;&#29992;&#20102;&#37027;&#20123;&#21464;&#37327;&#65292;&#24182;&#19988;&#36820;&#22238;</span>
+<span class="org-comment-delimiter">;; </span><span class="org-comment">&#22312;fun&#36825;&#20010;&#34920;&#36798;&#24335;&#20013;&#65292;&#25490;&#38500;&#25481;&#24418;&#21442;&#65292;&#23601;&#26159;&#20351;&#29992;fun&#30340;freevars.</span>
+(<span class="org-keyword">define</span> (<span class="org-function-name">compute-free-vars</span> e)
+  (<span class="org-keyword">define</span> (<span class="org-function-name">C</span> e)
+    (<span class="org-keyword">cond</span> [(var? e) (cons e (set-add (set) (var-string e)))]
+
+          [(add? e)
+           (<span class="org-keyword">let</span> ([v1 (C (add-e1 e))]
+                 [v2 (C (add-e2 e))])
+             (cons (add (car v1) (car v2)) (set-union (cdr v1) (cdr v2))))]
+
+          [(fun? e)
+           (<span class="org-keyword">let*</span> ([name (fun-nameopt e)]
+                  [formal (fun-formal e)]
+                  [v2 (C (fun-body e))]
+                  <span class="org-comment-delimiter">;; </span><span class="org-comment">body&#37324;&#38754;&#21487;&#20197;&#20351;&#29992;name&#21644;formal. &#25152;&#20197;&#25490;&#38500;</span>
+                  [vars (set-remove (set-remove (cdr v2) formal) name)])
+             (cons (fun-challenge name formal (car v2) vars) vars))]
+
+          [(mlet? e)
+           (<span class="org-keyword">let*</span> ([v1 (C (mlet-e e))]
+                  [v2 (C (mlet-body e))]
+                  <span class="org-comment-delimiter">;; </span><span class="org-comment">e&#37324;&#38754;&#19981;&#33021;&#20351;&#29992;mlet-var&#65292;&#25152;&#20197;&#19981;&#25490;&#38500;</span>
+                  <span class="org-comment-delimiter">;; </span><span class="org-comment">&#20294;&#26159;body&#37324;&#38754;&#21487;&#20197;&#20351;&#29992;mlet-var&#65292;&#25152;&#20197;&#25490;&#38500;</span>
+                  [vars (set-union (cdr v1) (set-remove (cdr v2) (mlet-var e)))])
+             (cons (mlet (mlet-var e) (car v1) (car v2)) vars))])))
+
+(<span class="org-keyword">define</span> (<span class="org-function-name">create-env-by-vars</span> env vars)
+  (<span class="org-keyword">if</span> (set-empty? vars) null
+      (<span class="org-keyword">let</span> ([var (set-first vars)])
+        (extend-env var (envlookup env var)
+                    (create-env-by-vars env (set-rest vars))))))
+
+(<span class="org-keyword">define</span> (<span class="org-function-name">eval-under-env-c</span> e env)
+  <span class="org-comment-delimiter">;; </span><span class="org-comment">(display "env = ") (print env) (display ", e = ")(print e) (newline)</span>
+  (<span class="org-keyword">cond</span> [(var? e)
+         (envlookup env (var-string e))]
+
+        [(fun-challenge? e)
+         (<span class="org-keyword">let</span> ([new-env (create-env-by-vars env (fun-challenge-freevars e))])
+           (closure new-env e))] <span class="org-comment-delimiter">;; </span><span class="org-comment">&#36825;&#37324;&#20165;&#20165;&#21019;&#24314;closure&#23545;&#35937;</span>
+
+        [(call? e)
+         (<span class="org-keyword">let</span> ([clj (eval-under-env-c (call-funexp e) env)])
+           (<span class="org-keyword">if</span> (closure? clj)
+               (<span class="org-keyword">let*</span> ([fn (closure-fun clj)]
+                      [clj-env (closure-env clj)]
+                      <span class="org-comment-delimiter">;; </span><span class="org-comment">&#22914;&#26524;&#26159;&#26377;&#21517;&#31216;&#20989;&#25968;&#30340;&#35805;,&#22312;&#21407;&#26377;&#30340;env&#22522;&#30784;&#19978;&#22686;&#21152;name-&gt;clj&#30340;&#32465;&#23450;</span>
+                      [ext-env (<span class="org-keyword">if</span> (fun-challenge-nameopt fn) (extend-env (fun-challenge-nameopt fn) clj env) env)]
+                      [ext-clj-env (<span class="org-keyword">if</span> (fun-challenge-nameopt fn) (extend-env (fun-challenge-nameopt fn) clj clj-env) clj-env)]
+                      [new-env (extend-env (fun-challenge-formal fn)
+                                           <span class="org-comment-delimiter">;; </span><span class="org-comment">&#22312;&#24403;&#21069;&#29615;&#22659;&#19979;&#38754;&#23545;&#23454;&#21442;&#27714;&#20540;,&#36825;&#20010;&#27714;&#20540;&#20063;&#21487;&#20197;&#20351;&#29992;&#24403;&#21069;&#20989;&#25968;</span>
+                                           (eval-under-env-c (call-actual e) ext-env)
+                                           <span class="org-comment-delimiter">;; </span><span class="org-comment">&#32465;&#23450;&#21040;closure&#30340;&#29615;&#22659;&#19978;,&#23545;body&#20869;&#37096;&#27714;&#20540;</span>
+                                           ext-clj-env)])
+                 <span class="org-comment-delimiter">;                 </span><span class="org-comment">(display "call ....") (newline)</span>
+                 <span class="org-comment-delimiter">;                 </span><span class="org-comment">(display "new-env = ") (print new-env) (newline)</span>
+                 <span class="org-comment-delimiter">;                 </span><span class="org-comment">(display "fun-formal = ") (print (fun-formal fn)) (newline)</span>
+                 <span class="org-comment-delimiter">;                 </span><span class="org-comment">(display "call-actual = ") (print (call-actual e)) (newline)</span>
+                 <span class="org-comment-delimiter">;                 </span><span class="org-comment">(display "fun-body = ") (print (fun-body fn)) (newline)</span>
+                 (eval-under-env-c (fun-challenge-body fn) new-env))
+               (error <span class="org-string">"MULP call applied to non-closure"</span>)))]))
+
+</pre>
+</div>
+</div>
+</div>
+<div id="outline-container-org5a7b0ab" class="outline-2">
+<h2 id="org5a7b0ab"><span class="section-number-2">4</span> let,let*,letrec</h2>
+<div class="outline-text-2" id="text-4">
+<p>
+它们之间的差别是，let是一次性绑定，let*则是顺序绑定。letrec是let的扩展，解决递归函数问题，语义上相同用于一次性现将所有的ids创建好。
+</p>
+
+<p>
+let和let*之间的差别可以用下面代码说明
+</p>
+
+<div class="org-src-container">
+<pre class="src src-scheme">(<span class="org-keyword">define</span> <span class="org-function-name">x</span> 10)
+
+(<span class="org-keyword">let</span> ([x 5]
+      [y (+ x 1)])
+  y) <span class="org-comment-delimiter">;; </span><span class="org-comment">11</span>
+
+(<span class="org-keyword">let*</span> ([x 5]
+      [y (+ x 1)])
+  y) <span class="org-comment-delimiter">;; </span><span class="org-comment">6</span>
+</pre>
+</div>
+
+
+<p>
+那么letrec是如何解决递归问题的呢？这点我在完成 <a href="https://www.coursera.org/learn/programming-languages-part-b/">https://www.coursera.org/learn/programming-languages-part-b/</a> 这么课程的作业在考虑。
+因为这个作业里面需要使用自己定义的MUPL语言来实现curring map. 一种是直接返回函数，一种则是使用mlet绑定匿名函数到变量，然后返回变量。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-scheme">
+<span class="org-comment-delimiter">;;; </span><span class="org-comment">&#20351;&#29992;scheme&#35821;&#35328;&#23454;&#29616;curring map.</span>
+(<span class="org-keyword">define</span> (<span class="org-function-name">my-map-let</span> f)
+  (<span class="org-keyword">letrec</span> ([foo (<span class="org-keyword">lambda</span> (xs)
+                  (<span class="org-keyword">if</span> (null? xs) null
+                      (cons (f (car xs)) (foo (cdr xs)))))])
+    foo))
+
+(<span class="org-keyword">define</span> (<span class="org-function-name">my-map</span> f)
+  (<span class="org-keyword">define</span> (<span class="org-function-name">foo</span> xs)
+    (<span class="org-keyword">if</span> (null? xs) null
+        (cons (f (car xs)) (foo (cdr xs)))))
+  foo)
+
+<span class="org-comment-delimiter">;;; </span><span class="org-comment">&#19979;&#38754;MUPL&#23545;&#24212;&#29256;&#26412;</span>
+
+(<span class="org-keyword">define</span> <span class="org-function-name">mupl-map</span>
+  (<span class="org-keyword">let</span> ([xs (var <span class="org-string">"xs"</span>)]
+        [fn (var <span class="org-string">"fn"</span>)]
+        [loop (var <span class="org-string">"loop"</span>)])
+    (fun #f <span class="org-string">"fn"</span>
+         (fun <span class="org-string">"loop"</span> <span class="org-string">"xs"</span>
+              (ifaunit xs (aunit)
+                       (apair (call fn (fst xs)) (call loop (snd xs))))))))
+
+(<span class="org-keyword">define</span> <span class="org-function-name">mupl-map-mlet</span>
+  (<span class="org-keyword">let</span> ([xs (var <span class="org-string">"xs"</span>)]
+        [fn (var <span class="org-string">"fn"</span>)]
+        [loop (var <span class="org-string">"loop"</span>)])
+    (fun #f <span class="org-string">"fn"</span>
+         (mlet <span class="org-string">"loop"</span>
+               (fun #f <span class="org-string">"xs"</span>
+                    (ifaunit xs (aunit)
+                             (apair (call fn (fst xs)) (call loop (snd xs)))))
+               loop))))
+</pre>
+</div>
+
+<p>
+但是因为MUPL里面的mlet语义其实类似scheme里面的let而不是letrec, 所以在 <code>(call loop)</code> 时候会找不到定义。是否可以将mlet实现成为letrec呢？如何实现呢？
+</p>
+
+<p>
+我想了想其实是不需要的，MUPL和scheme不同，MUPL可以将 <code>(fun ...)</code> 对象赋值，而scheme没有类似 <code>(let ([x (define (loop ...))]))</code> 这样的结构。
+上面函数我们稍作修改其实就可以工作了。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-scheme">(<span class="org-keyword">define</span> <span class="org-function-name">mupl-map-mlet</span>
+  (<span class="org-keyword">let</span> ([xs (var <span class="org-string">"xs"</span>)]
+        [fn (var <span class="org-string">"fn"</span>)]
+        [loop (var <span class="org-string">"loop"</span>)])
+    (fun #f <span class="org-string">"fn"</span>
+         (mlet <span class="org-string">"anything"</span>
+               (fun <span class="org-string">"loop"</span> <span class="org-string">"xs"</span>
+                    (ifaunit xs (aunit)
+                             (apair (call fn (fst xs)) (call loop (snd xs)))))
+               (var <span class="org-string">"anything"</span>)))))
+</pre>
+</div>
+</div>
+</div>
+</div>
+</body>
+</html>

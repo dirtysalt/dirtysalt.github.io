@@ -1,0 +1,2604 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tcmalloc</title>
+<meta name="generator" content="Org mode" />
+<meta name="author" content="dirtysalt" />
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content">
+<h1 class="title">tcmalloc</h1>
+<div id="table-of-contents">
+<h2>Table of Contents</h2>
+<div id="text-table-of-contents">
+<ul>
+<li><a href="#org4f0b06a">1. 写在前面</a></li>
+<li><a href="#org1f28b61">2. 函数入口</a></li>
+<li><a href="#org6f42f84">3. 全局内存</a></li>
+<li><a href="#org7b3ee8f">4. 管理对象</a>
+<ul>
+<li><a href="#orgc4c1e20">4.1. TCMallocGuard</a></li>
+<li><a href="#orga4ea213">4.2. PageHeapAllocator</a></li>
+<li><a href="#orgfdcbc99">4.3. SizeMap</a></li>
+<li><a href="#orgb7040f1">4.4. Central Cache</a>
+<ul>
+<li><a href="#org4860e10">4.4.1. Data Structure</a></li>
+<li><a href="#orgc27f45e">4.4.2. Init</a></li>
+<li><a href="#org7f9549d">4.4.3. InsertRange</a></li>
+<li><a href="#org4c6bc50">4.4.4. RemoveRange</a></li>
+<li><a href="#org25b4a87">4.4.5. Populate</a></li>
+</ul>
+</li>
+<li><a href="#org94ced01">4.5. PageHeap</a>
+<ul>
+<li><a href="#orgb0dcdfb">4.5.1. Data Structure</a></li>
+<li><a href="#org07c7702">4.5.2. New</a></li>
+<li><a href="#orgf21e195">4.5.3. Carve</a></li>
+<li><a href="#org0d08b5a">4.5.4. GrowHeap</a></li>
+<li><a href="#org64ff2fd">4.5.5. Delete</a></li>
+<li><a href="#org0ce5ccb">4.5.6. IncrementalScavenge</a></li>
+<li><a href="#orgf2a13f6">4.5.7. ReleaseAtLeastNPages</a></li>
+<li><a href="#orgb3b9bb3">4.5.8. Split</a></li>
+<li><a href="#org44632a2">4.5.9. GetNextRange</a></li>
+</ul>
+</li>
+<li><a href="#org0b863e7">4.6. TCMalloc_PageMap3</a></li>
+<li><a href="#org1b59cb4">4.7. PackedCache</a></li>
+<li><a href="#orgab13f69">4.8. Thread Cache</a>
+<ul>
+<li><a href="#org53b1c4e">4.8.1. Data Structure</a></li>
+<li><a href="#org0cb48db">4.8.2. InitModule</a></li>
+<li><a href="#orgd8819e6">4.8.3. InitTSD</a></li>
+<li><a href="#org79dbd7e">4.8.4. GetCache</a></li>
+<li><a href="#org0c4c983">4.8.5. CreateCacheIfNecessary</a></li>
+<li><a href="#orgbb2c532">4.8.6. NewHeap</a></li>
+<li><a href="#org7afd0b7">4.8.7. BecomeIdle</a></li>
+<li><a href="#orga11aec2">4.8.8. Init</a></li>
+<li><a href="#orgb9c5a4f">4.8.9. ThreadCache::FreeList</a></li>
+<li><a href="#org0b11ac6">4.8.10. IncreaseCacheLimitLocked</a></li>
+<li><a href="#orgdc10650">4.8.11. DeleteCache</a></li>
+<li><a href="#org21e1080">4.8.12. Cleanup</a></li>
+<li><a href="#org6a1ad55">4.8.13. ReleaseToCentralCache</a></li>
+<li><a href="#orgf4f5f83">4.8.14. Allocate</a></li>
+<li><a href="#org48bfed3">4.8.15. FetchFromCentralCache</a></li>
+<li><a href="#orgf2fbb24">4.8.16. Deallocate</a></li>
+<li><a href="#orgfba4734">4.8.17. ListTooLong</a></li>
+<li><a href="#org40c3d78">4.8.18. Scavenge</a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li><a href="#orgec3ed57">5. 用户对象</a>
+<ul>
+<li><a href="#org8ebae35">5.1. 函数入口</a></li>
+<li><a href="#orge2cfa58">5.2. 分配逻辑</a></li>
+<li><a href="#org0fd4930">5.3. 释放逻辑</a></li>
+</ul>
+</li>
+<li><a href="#orgeb606b7">6. 扩展组件</a>
+<ul>
+<li><a href="#orge780305">6.1. Sampler</a></li>
+<li><a href="#org5994f73">6.2. MallocExtension</a></li>
+<li><a href="#org4f1be04">6.3. MallocHook</a></li>
+<li><a href="#orgd982505">6.4. HeapChecker</a></li>
+<li><a href="#org7a84b73">6.5. HeapProfiler</a></li>
+<li><a href="#org8d93607">6.6. CPUProfiler</a></li>
+</ul>
+</li>
+<li><a href="#org379d733">7. Discussion</a>
+<ul>
+<li><a href="#orgde1eed6">7.1. tcmalloc中的 MmapSysAllocator::Alloc 疑问(nwlzee)</a></li>
+</ul>
+</li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-org4f0b06a" class="outline-2">
+<h2 id="org4f0b06a"><span class="section-number-2">1</span> 写在前面</h2>
+<div class="outline-text-2" id="text-1">
+<ul class="org-ul">
+<li>内存管理内幕 <a href="http://www.ibm.com/developerworks/cn/linux/l-memory/">http://www.ibm.com/developerworks/cn/linux/l-memory/</a></li>
+<li>hoard内存分配器 <a href="http://www.hoard.org/">http://www.hoard.org/</a></li>
+<li>dlmalloc内存分配器 <a href="http://gee.cs.oswego.edu/dl/html/malloc.html">http://gee.cs.oswego.edu/dl/html/malloc.html</a></li>
+<li>ptmalloc2内存分配器 <a href="http://www.malloc.de/en/index.html">http://www.malloc.de/en/index.html</a></li>
+<li>jemalloc内存分配器 <a href="http://people.freebsd.org/~jasone/jemalloc/bsdcan2006/jemalloc.pdf">http://people.freebsd.org/~jasone/jemalloc/bsdcan2006/jemalloc.pdf</a></li>
+<li>jemalloc地址 <a href="http://www.canonware.com/download/jemalloc/">http://www.canonware.com/download/jemalloc/</a></li>
+<li>tcmalloc内存分配器 <a href="http://google-perftools.googlecode.com/svn/trunk/doc/tcmalloc.html">http://google-perftools.googlecode.com/svn/trunk/doc/tcmalloc.html</a></li>
+<li>tcmalloc地址 <a href="http://google-perftools.googlecode.com/files/google-perftools-1.8.3.tar.gz">http://google-perftools.googlecode.com/files/google-perftools-1.8.3.tar.gz</a></li>
+</ul>
+
+<p>
+<b>如果你对使用tcmalloc有什么问题的话，请给我发邮件。我会尽量给你答复，对于常见的问题也会整理到FAQ上面。</b>
+</p>
+
+<p>
+jemalloc论文上面谈到了很多关于内存分配器方面的基本概念与问题。
+性能指标主要体现在分配时间以及平均和高峰内存使用大小上面。但是两个指标很难单独测量，所以现在比较权威的测量方式还是使用benchmark然后看看运行时间以及内存使用量。内存碎片分为内部碎片和外部碎片。
+内部碎片通常都是因为分配的话会进行round之后而没有使用的部分，而外部碎片指已经回收但是因为地址不连续等原因没有办法被应用程序使用的部分。
+jemalloc提高CPU Cache命中率有两个途径：
+</p>
+<ul class="org-ul">
+<li>首先尽可能地让内存使用更小。working set可以放在cache-line里面全部存放效率就会比较好。</li>
+<li>另外就是应该让连续开辟的对象放在一起。jemalloc是假设在一个线程内部调用两次的malloc的话，那么通常是在一起访问的。</li>
+</ul>
+<p>
+第一个假设非常合理，但是第二个假设不一定是合理的。jemalloc首先确保第一个前提，然后尽可能地保证第二个条件。
+另外cache命中率的一个问题就是false-cache-line.简单的说就是两个线程开辟的对象(A,B)可能连在一起，可以一起载入cache-line.线程1对于A的修改会造成线程2下一次读取B的时候，需要重新从内存载入，因为对于A的修改会使得所在的cache-line失效。解决这个问题的办法就是有多个allocation arena.不同的线程尽可能在不同的arena下面开辟。
+</p>
+
+<p>
+锁冲突是造成传统malloc在多线程情况下表现差的主要原因。解决的方法和解决false-cache-line是一样的，都是开辟多个allocation arena然后让不同的线程尽可能地在不同的arena分配。
+</p>
+
+<p>
+ptmalloc2解决为了解决锁冲突这个问题，也采用了arena-per-thread的方法。但是ptmalloc2内部依然存在一个大的问题，就是各个arena之间是没有办法迁移的。
+如果一个线程一开始开辟很大但是之后释放了，那个这块内存是没有办法被其他线程所使用的。
+</p>
+
+<p>
+同样tcmalloc会为每一个线程分配一个arena,这样每一个线程分配时候都不需要进行加锁。但是tcmalloc解决了ptmalloc2的内存迁移问题。
+tcmalloc如果发现thread cache内部占用率高但是使用率低的话，那么会将部分内存存放在中心部分。基本上jemalloc原理上和tcmalloc相似。
+每个线程有一个arena池，但是线程按照round-robin方式在每一个arena上面取。代价是需要加锁，但是假设冲突应该不严重。
+</p>
+
+<p>
+后面我们着重针对tcmalloc进行分析。tcmalloc文档写的足够好了，看完一遍基本上就知道内部原理了。所以这里我也只是自己总结一下，然后用自己的理解写出来。里面尽量附上代码分析:)
+tcmalloc代码写得相当得好，虽然很多地方没有看懂(而且我猜想有很多地方已经过时了但是没有删去，所以对于代码阅读有一定的影响).基本上阅读完tcmalloc阅读和编写代码能力会提高很多。
+看下面分析之前，还是强烈建议先阅读一次文档。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org1f28b61" class="outline-2">
+<h2 id="org1f28b61"><span class="section-number-2">2</span> 函数入口</h2>
+<div class="outline-text-2" id="text-2">
+<p>
+tcmalloc.cc
+</p>
+
+<p>
+tcmallo.cc里面定义了函数入口.对于安排在section(google_malloc)不知道有作用。当然下面有很多相关的函数比如tc_memalign，但是这些并不影响阅读主线。
+我们只需要关心两个函数tc_malloc以及tc_free即可。
+</p>
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-preprocessor">#include</span> <span class="org-string">&lt;malloc.h&gt;</span>
+<span class="org-preprocessor">#define</span> <span class="org-variable-name">__THROW</span>
+<span class="org-preprocessor"># define</span> <span class="org-function-name">ATTRIBUTE_SECTION</span>(<span class="org-variable-name">name</span>) <span class="org-keyword">__attribute__</span> ((section (#name)))
+<span class="org-keyword">extern</span> <span class="org-string">"C"</span> {
+  <span class="org-type">void</span>* <span class="org-function-name">tc_malloc</span>(<span class="org-type">size_t</span> <span class="org-variable-name">size</span>) <span class="org-type">__THROW</span>
+      <span class="org-function-name">ATTRIBUTE_SECTION</span>(google_malloc);
+  <span class="org-type">void</span> <span class="org-function-name">tc_free</span>(<span class="org-type">void</span>* <span class="org-variable-name">ptr</span>) <span class="org-type">__THROW</span>
+      <span class="org-function-name">ATTRIBUTE_SECTION</span>(google_malloc);
+}
+</pre>
+</div>
+
+<p>
+然后在libc_override_gcc_and_weak.h和libc_override_glibc.h进行了函数替换
+</p>
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-preprocessor">#define</span> <span class="org-function-name">ALIAS</span>(<span class="org-variable-name">tc_fn</span>)   <span class="org-keyword">__attribute__</span> ((alias (#tc_fn)))
+<span class="org-keyword">extern</span> <span class="org-string">"C"</span> {
+  <span class="org-type">void</span>* <span class="org-function-name">__libc_malloc</span>(<span class="org-type">size_t</span> <span class="org-variable-name">size</span>)                ALIAS(tc_malloc);
+  <span class="org-type">void</span> <span class="org-function-name">__libc_free</span>(<span class="org-type">void</span>* <span class="org-variable-name">ptr</span>)                     ALIAS(tc_free);
+} <span class="org-comment-delimiter">// </span><span class="org-comment">extern "C"</span>
+<span class="org-keyword">extern</span> <span class="org-string">"C"</span> {
+  <span class="org-type">void</span>* <span class="org-function-name">malloc</span>(<span class="org-type">size_t</span> <span class="org-variable-name">size</span>) <span class="org-type">__THROW</span>               <span class="org-function-name">ALIAS</span>(tc_malloc);
+  <span class="org-type">void</span> <span class="org-function-name">free</span>(<span class="org-type">void</span>* <span class="org-variable-name">ptr</span>) <span class="org-type">__THROW</span>                    <span class="org-function-name">ALIAS</span>(tc_free);
+} <span class="org-comment-delimiter">// </span><span class="org-comment">extern "C"</span>
+</pre>
+</div>
+
+<p>
+同时在里面还覆盖了malloc_hook和free_hook这两个函数，不允许用户自己进行hook.
+我猜想tcmalloc应该是自己提供了malloc_hook和free_hook的定义.
+</p>
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-keyword">extern</span> <span class="org-string">"C"</span> {
+<span class="org-keyword">static</span> <span class="org-type">void</span>* <span class="org-function-name">glibc_override_malloc</span>(<span class="org-type">size_t</span> <span class="org-variable-name">size</span>, <span class="org-keyword">const</span> <span class="org-type">void</span> *<span class="org-variable-name">caller</span>) {
+  <span class="org-keyword">return</span> tc_malloc(size);
+}
+<span class="org-keyword">static</span> <span class="org-type">void</span> <span class="org-function-name">glibc_override_free</span>(<span class="org-type">void</span> *<span class="org-variable-name">ptr</span>, <span class="org-keyword">const</span> <span class="org-type">void</span> *<span class="org-variable-name">caller</span>) {
+  tc_free(ptr);
+}
+<span class="org-type">void</span>* (* MALLOC_HOOK_MAYBE_VOLATILE __malloc_hook)(size_t, <span class="org-keyword">const</span> <span class="org-type">void</span>*)
+    = &amp;glibc_override_malloc;
+<span class="org-type">void</span> (* MALLOC_HOOK_MAYBE_VOLATILE __free_hook)(<span class="org-type">void</span>*, <span class="org-keyword">const</span> <span class="org-type">void</span>*)
+    = &amp;glibc_override_free;
+} <span class="org-comment-delimiter">// </span><span class="org-comment">extern "C"</span>
+</pre>
+</div>
+
+<p>
+仔细阅读tcmalloc.cc接口面还发现了下面这些接口非常有意思
+</p>
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-comment-delimiter">// </span><span class="org-comment">&#36820;&#22238;&#24403;&#21069;malloc&#20449;&#24687;,&#22312;malloc.h&#37324;&#38754;&#26377;&#23450;&#20041;</span>
+<span class="org-keyword">struct</span> <span class="org-type">mallinfo</span> <span class="org-function-name">tc_mallinfo</span>(<span class="org-type">void</span>) <span class="org-type">__THROW</span> <span class="org-function-name">ATTRIBUTE_SECTION</span>(google_malloc);
+<span class="org-comment-delimiter">// </span><span class="org-comment">&#36825;&#20010;&#25351;&#38024;&#23454;&#38469;&#21487;&#29992;&#20869;&#23384;&#22823;&#23567;</span>
+<span class="org-type">size_t</span> <span class="org-function-name">tc_malloc_size</span>(<span class="org-type">void</span>* <span class="org-variable-name">p</span>) <span class="org-type">__THROW</span> <span class="org-function-name">ATTRIBUTE_SECTION</span>(google_malloc);
+<span class="org-comment-delimiter">// </span><span class="org-comment">&#25171;&#21360;&#24403;&#21069;malloc&#29366;&#24577;</span>
+<span class="org-type">void</span> <span class="org-function-name">tc_malloc_stats</span>(<span class="org-type">void</span>) <span class="org-type">__THROW</span>  <span class="org-function-name">ATTRIBUTE_SECTION</span>(google_malloc);
+<span class="org-comment-delimiter">// </span><span class="org-comment">&#20462;&#25913;malloc&#21442;&#25968;,&#22312;malloc.h&#37324;&#38754;&#26377;&#20462;&#25913;&#36873;&#39033;</span>
+<span class="org-type">int</span> <span class="org-function-name">tc_mallopt</span>(<span class="org-type">int</span> <span class="org-variable-name">cmd</span>, <span class="org-type">int</span> <span class="org-variable-name">value</span>) <span class="org-type">__THROW</span> <span class="org-function-name">ATTRIBUTE_SECTION</span>(google_malloc);
+</pre>
+</div>
+<p>
+可以结合当前的ptmalloc2(glibc.2.3.4)来看看这些接口的行为.了解这些行为主要是对于内存分配器如果出问题的话，那么至少有方法可以了解内部情况.
+</p>
+</div>
+</div>
+
+<div id="outline-container-org6f42f84" class="outline-2">
+<h2 id="org6f42f84"><span class="section-number-2">3</span> 全局内存</h2>
+<div class="outline-text-2" id="text-3">
+<p>
+system-alloc.h
+</p>
+
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-keyword">extern</span> <span class="org-type">void</span>* <span class="org-function-name">TCMalloc_SystemAlloc</span>(<span class="org-type">size_t</span> <span class="org-variable-name">bytes</span>, <span class="org-type">size_t</span> *<span class="org-variable-name">actual_bytes</span>,
+                                  <span class="org-type">size_t</span> <span class="org-variable-name">alignment</span> = 0);
+<span class="org-keyword">extern</span> <span class="org-type">void</span> <span class="org-function-name">TCMalloc_SystemRelease</span>(<span class="org-type">void</span>* <span class="org-variable-name">start</span>, <span class="org-type">size_t</span> <span class="org-variable-name">length</span>);
+</pre>
+</div>
+<p>
+基本可以认为Release部分没有任何操作。对于SystemAlloc底层实现非常巧妙.首先tcmalloc定义了SysAllocator这个接口，然后底层有两个实现：
+</p>
+<ul class="org-ul">
+<li>SbrkSysAllocator.使用sbrk来分配内存</li>
+<li>MmapSysAllocator.使用mmap来分配内存</li>
+</ul>
+<p>
+SysAllocator需要实现一个接口void* Alloc(size_t size, size_t *actual_size, size_t alignment);因为全局只是需要一个这样的对象，
+所以这个对象可以静态分配即可.然后定义了一个DefaultSysAllocator允许设置Children.
+</p>
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-keyword">static</span> <span class="org-type">char</span> <span class="org-variable-name">sbrk_space</span>[<span class="org-keyword">sizeof</span>(SbrkSysAllocator)];
+<span class="org-keyword">static</span> <span class="org-type">char</span> <span class="org-variable-name">mmap_space</span>[<span class="org-keyword">sizeof</span>(MmapSysAllocator)];
+<span class="org-keyword">static</span> <span class="org-type">char</span> <span class="org-variable-name">default_space</span>[<span class="org-keyword">sizeof</span>(DefaultSysAllocator)];
+</pre>
+</div>
+
+<p>
+在初始化InitSystemAllocators的时候将sbrk_space以及mmap_space作为default_space的两个children.
+</p>
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-type">MmapSysAllocator</span> *<span class="org-variable-name">mmap</span> = <span class="org-keyword">new</span> (mmap_space) <span class="org-type">MmapSysAllocator</span>();
+<span class="org-type">SbrkSysAllocator</span> *<span class="org-variable-name">sbrk</span> = <span class="org-keyword">new</span> (sbrk_space) <span class="org-type">SbrkSysAllocator</span>();
+<span class="org-type">DefaultSysAllocator</span> *<span class="org-variable-name">sdef</span> = <span class="org-keyword">new</span> (default_space) <span class="org-type">DefaultSysAllocator</span>();
+<span class="org-keyword">if</span> (kDebugMode &amp;&amp; <span class="org-keyword">sizeof</span>(<span class="org-type">void</span>*) &gt; 4) {
+  sdef-&gt;SetChildAllocator(mmap, 0, mmap_name);
+  sdef-&gt;SetChildAllocator(sbrk, 1, sbrk_name);
+} <span class="org-keyword">else</span> {
+  sdef-&gt;SetChildAllocator(sbrk, 0, sbrk_name);
+  sdef-&gt;SetChildAllocator(mmap, 1, mmap_name);
+}
+</pre>
+</div>
+<p>
+实际操作时候都是先sbrk尝试先，然后使用mmap.DefaultAllocator按照children顺序尝试分配，也就意味着首先使用sbrk如果不成功尝试mmap
+</p>
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-type">void</span>* <span class="org-constant">DefaultSysAllocator</span>::<span class="org-function-name">Alloc</span>(<span class="org-type">size_t</span> <span class="org-variable-name">size</span>, <span class="org-type">size_t</span> *<span class="org-variable-name">actual_size</span>,
+                                 <span class="org-type">size_t</span> <span class="org-variable-name">alignment</span>) {
+  <span class="org-keyword">for</span> (<span class="org-type">int</span> <span class="org-variable-name">i</span> = 0; i &lt; kMaxAllocators; i++) {
+    <span class="org-keyword">if</span> (<span class="org-negation-char">!</span>failed_[i] &amp;&amp; allocs_[i] != <span class="org-constant">NULL</span>) {
+      <span class="org-type">void</span>* <span class="org-variable-name">result</span> = allocs_[i]-&gt;Alloc(size, actual_size, alignment);
+      <span class="org-keyword">if</span> (result != <span class="org-constant">NULL</span>) {
+        <span class="org-keyword">return</span> result;
+      }
+      TCMalloc_MESSAGE(__FILE__, __LINE__, <span class="org-string">"%s failed.\n"</span>, names_[i]);
+      failed_[i] = <span class="org-constant">true</span>;
+    }
+  }
+  <span class="org-comment-delimiter">// </span><span class="org-comment">After both failed, reset "failed_" to false so that a single failed</span>
+  <span class="org-comment-delimiter">// </span><span class="org-comment">allocation won't make the allocator never work again.</span>
+  <span class="org-keyword">for</span> (<span class="org-type">int</span> <span class="org-variable-name">i</span> = 0; i &lt; kMaxAllocators; i++) {
+    failed_[i] = <span class="org-constant">false</span>;
+  }
+  <span class="org-keyword">return</span> <span class="org-constant">NULL</span>;
+}
+</pre>
+</div>
+<p>
+可以说系统里面所有使用的内存都是从这个地方分配的，包括thread_cache,page_allocator以及管理对象。
+此外还需要注意的是，因为会有多线程调用这个东西，所以在SystemAlloc之前的话会调用自选锁进行锁定。SpinLockHolder lock_holder(&amp;spinlock);
+</p>
+</div>
+</div>
+
+<div id="outline-container-org7b3ee8f" class="outline-2">
+<h2 id="org7b3ee8f"><span class="section-number-2">4</span> 管理对象</h2>
+<div class="outline-text-2" id="text-4">
+<ul class="org-ul">
+<li>tcmalloc_guard.h</li>
+<li>static_vars.h</li>
+<li>page_heap_allocator.h</li>
+<li>common.h</li>
+<li>central_freelist.h</li>
+<li>page_heap.h</li>
+<li>page_map.h</li>
+<li>packed-cache-inl.h</li>
+<li>thread_cache.h</li>
+</ul>
+</div>
+
+<div id="outline-container-orgc4c1e20" class="outline-3">
+<h3 id="orgc4c1e20"><span class="section-number-3">4.1</span> TCMallocGuard</h3>
+<div class="outline-text-3" id="text-4-1">
+<p>
+tcmalloc_guard.h
+</p>
+
+<p>
+TCMallocGuard主要是为了确保在tc_malloc之前所有静态变量都已经完成了初始化。首先全局存在一个static TCMallocGuard module_enter_exit_hook;
+这个变量来确保静态初始化，但是同时为了防止重复初始化还加了引用计数进行判断
+</p>
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-keyword">static</span> <span class="org-type">int</span> <span class="org-variable-name">tcmallocguard_refcount</span> = 0;  <span class="org-comment-delimiter">// </span><span class="org-comment">no lock needed: runs before main()</span>
+<span class="org-constant">TCMallocGuard</span>::<span class="org-function-name">TCMallocGuard</span>() {
+  <span class="org-keyword">if</span> (tcmallocguard_refcount++ == 0) {
+    ReplaceSystemAlloc();    <span class="org-comment-delimiter">// </span><span class="org-comment">defined in libc_override_*.h // &#36825;&#20010;&#23545;&#20110;Linux&#26469;&#35828;&#27809;&#26377;&#20219;&#20309;&#25805;&#20316;</span>
+    tc_free(tc_malloc(1)); <span class="org-comment-delimiter">// </span><span class="org-comment">&#36825;&#20010;&#22320;&#26041;&#20010;&#20154;&#35273;&#24471;&#27809;&#26377;&#24517;&#35201;&#65292;&#21487;&#33021;&#21482;&#26159;&#20026;&#20102;&#30475;&#30475;&#26159;&#21542;&#21487;&#20197;&#20877;InitTSD&#20043;&#21069;run&#36215;&#26469;</span>
+    <span class="org-constant">ThreadCache</span>::InitTSD(); <span class="org-comment-delimiter">// </span><span class="org-comment">&#21021;&#22987;&#21270;&#19968;&#19979;tc&#30340;&#32447;&#31243;&#23616;&#37096;&#21464;&#37327;</span>
+    tc_free(tc_malloc(1));
+    <span class="org-keyword">if</span> (RunningOnValgrind()) { <span class="org-comment-delimiter">// </span><span class="org-comment">&#20174;&#20195;&#30721;&#19978;&#30475;&#21487;&#33021;&#26159;&#20174;&#29615;&#22659;&#21464;&#37327;&#37324;&#38754;&#33719;&#21462;&#30340;&#12290;</span>
+      <span class="org-comment-delimiter">// </span><span class="org-comment">Let Valgrind uses its own malloc (so don't register our extension).</span>
+    } <span class="org-keyword">else</span> {
+      <span class="org-constant">MallocExtension</span>::Register(<span class="org-keyword">new</span> <span class="org-type">TCMallocImplementation</span>);
+    }
+  }
+}
+</pre>
+</div>
+
+<p>
+对于释放来说的话也非常简单，可以根据环境变量来选择是否打印统计信息
+</p>
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-constant">TCMallocGuard</span>::~<span class="org-function-name">TCMallocGuard</span>() {
+  <span class="org-keyword">if</span> (--tcmallocguard_refcount == 0) {
+    <span class="org-keyword">const</span> <span class="org-type">char</span>* <span class="org-variable-name">env</span> = getenv(<span class="org-string">"MALLOCSTATS"</span>);
+    <span class="org-keyword">if</span> (env != <span class="org-constant">NULL</span>) {
+      <span class="org-type">int</span> <span class="org-variable-name">level</span> = atoi(env);
+      <span class="org-keyword">if</span> (level &lt; 1) level = 1;
+      PrintStats(level);
+    }
+  }
+}
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orga4ea213" class="outline-3">
+<h3 id="orga4ea213"><span class="section-number-3">4.2</span> PageHeapAllocator</h3>
+<div class="outline-text-3" id="text-4-2">
+<p>
+page_heap_allocator.h
+</p>
+
+<p>
+如果管理对象预先知道了大小那么可以静态分配使用in-placement new方式完成，但是如果管理对象是动态分配的话，那么如何管理这些对象的分配呢？
+答案非常简单使用sample_alloc.所以sample_alloc就是这个分配器知道了每次分配对象的大小，回收缓存起来挂在free_list上面，分配首先从free_list尝试分配，
+如果free_list为空的话，那么久会调用全局内存分配。
+</p>
+
+<p>
+page_heap_allocator.h里面实现了一个sample_alloc叫做PageHeapAllocator.原理来说非常简单，这里就不赘述了。需要注意的是每一个节点肯定都是&gt;sizeof(void*)的，
+所以每个节点不用分配额外的next指针空间，这个是一个基本上所以写过内存分配器程序员公开的技巧了。另外需要关注的是每次向全局内存空间要的大小是多少
+</p>
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-keyword">static</span> <span class="org-keyword">const</span> <span class="org-type">int</span> <span class="org-variable-name">kAllocIncrement</span> = 128 &lt;&lt; 10; <span class="org-comment-delimiter">// </span><span class="org-comment">128K</span>
+</pre>
+</div>
+<p>
+里面还维护了一个inuse()接口表示当前有多少个object正在被使用。
+</p>
+
+<p>
+另外为了更好的统计管理对象使用的内存，在common.cc里面记录了元信息分配的内存大小
+</p>
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-keyword">static</span> <span class="org-type">uint64_t</span> <span class="org-variable-name">metadata_system_bytes_</span> = 0;
+<span class="org-type">void</span>* <span class="org-function-name">MetaDataAlloc</span>(<span class="org-type">size_t</span> <span class="org-variable-name">bytes</span>) {
+  <span class="org-type">void</span>* <span class="org-variable-name">result</span> = TCMalloc_SystemAlloc(bytes, <span class="org-constant">NULL</span>);
+  <span class="org-keyword">if</span> (result != <span class="org-constant">NULL</span>) {
+    metadata_system_bytes_ += bytes;
+  }
+  <span class="org-keyword">return</span> result;
+}
+<span class="org-type">uint64_t</span> <span class="org-function-name">metadata_system_bytes</span>() { <span class="org-keyword">return</span> metadata_system_bytes_; }
+</pre>
+</div>
+<p>
+只要所有的元信息都从MetaDataAlloc这里分配即可。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgfdcbc99" class="outline-3">
+<h3 id="orgfdcbc99"><span class="section-number-3">4.3</span> SizeMap</h3>
+<div class="outline-text-3" id="text-4-3">
+<p>
+common.h
+</p>
+
+<p>
+SizeMap定义了slab大小，大小到slab编号的映射，一种slab每次分配的多少个pages，一种slab的话在tc和central cache中每次移动多少个对象。
+具体定义可以阅读common.h.里面的算法个人觉得还是比较复杂的没有仔细研究。slab的一共有
+</p>
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-preprocessor">#if</span> <span class="org-preprocessor">defined</span>(TCMALLOC_LARGE_PAGES)
+<span class="org-keyword">static</span> <span class="org-keyword">const</span> <span class="org-type">size_t</span> <span class="org-variable-name">kPageShift</span>  = 15;
+<span class="org-keyword">static</span> <span class="org-keyword">const</span> <span class="org-type">size_t</span> <span class="org-variable-name">kNumClasses</span> = 78;
+<span class="org-preprocessor">#else</span>
+<span class="org-keyword">static</span> <span class="org-keyword">const</span> <span class="org-type">size_t</span> <span class="org-variable-name">kPageShift</span>  = 13;
+<span class="org-keyword">static</span> <span class="org-keyword">const</span> <span class="org-type">size_t</span> <span class="org-variable-name">kNumClasses</span> = 86;
+<span class="org-preprocessor">#endif</span>
+</pre>
+</div>
+<p>
+对于我们如果使用大页面的话，32K的话那么有77种slab,否则只有85种。注意这里slab的编号从1开始计算。
+</p>
+
+<p>
+tcmalloc提供了一个Dump方法可以查看最终这些数值。我们需要和源代码联合编译才有可能看到
+</p>
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-preprocessor">#include</span> <span class="org-string">&lt;cstdio&gt;</span>
+<span class="org-preprocessor">#include</span> <span class="org-string">&lt;src/internal_logging.h&gt;</span>
+<span class="org-preprocessor">#include</span> <span class="org-string">&lt;src/static_vars.h&gt;</span>
+
+<span class="org-type">char</span> <span class="org-variable-name">buf</span>[1024*1024];
+<span class="org-type">int</span> <span class="org-function-name">main</span>() {
+  <span class="org-comment-delimiter">// </span><span class="org-comment">initialize tcmalloc</span>
+  <span class="org-type">void</span>* <span class="org-variable-name">p</span>=malloc(10);
+  free(p);
+  <span class="org-constant">tcmalloc</span>::<span class="org-type">SizeMap</span>* <span class="org-variable-name">sizemap</span>=<span class="org-constant">tcmalloc</span>::<span class="org-constant">Static</span>::sizemap();
+  <span class="org-comment-delimiter">// </span><span class="org-comment">print aux info</span>
+  <span class="org-keyword">for</span>(<span class="org-type">int</span> <span class="org-variable-name">i</span>=1;i&lt;kNumClasses;i++){
+    printf(<span class="org-string">"SC %d [%d]\n"</span>,i,sizemap-&gt;num_objects_to_move(i));
+  }
+  <span class="org-comment-delimiter">// </span><span class="org-comment">print stats.</span>
+  <span class="org-type">TCMalloc_Printer</span> <span class="org-variable-name">printer</span>(buf,<span class="org-keyword">sizeof</span>(buf));
+  sizemap-&gt;Dump(&amp;printer);
+  printf(<span class="org-string">"%s\n"</span>,buf);
+  <span class="org-keyword">return</span> 0;
+}
+</pre>
+</div>
+
+<p>
+查看结果是
+</p>
+<pre class="example">
+SC 1 [32]
+SC 2 [32]
+SC 3 [32]
+SC 4 [32]
+SC 5 [32]
+SC 6 [32]
+SC 7 [32]
+SC 8 [32]
+SC 9 [32]
+...
+
+SC   1 [        1 ..        8 ] from     8192 ; 88% maxwaste
+SC   2 [        9 ..       16 ] from     8192 ; 44% maxwaste
+SC   3 [       17 ..       32 ] from     8192 ; 47% maxwaste
+SC   4 [       33 ..       48 ] from     8192 ; 32% maxwaste
+SC   5 [       49 ..       64 ] from     8192 ; 23% maxwaste
+SC   6 [       65 ..       80 ] from     8192 ; 19% maxwaste
+SC   7 [       81 ..       96 ] from     8192 ; 16% maxwaste
+....
+</pre>
+<p>
+这个意思就很清楚，对于slab1的对象来说的话，每次会将32个对象在tc(thread cache)和cc(central cache)之间调动。
+如果是1-8字节的话那么按照8字节分配，如果分配pages的话那分配8192字节。最大浪费率是88%(8-1)/8.
+对于81-96字节的话，那么最大浪费率就是(96-81)/96-16%.
+(注意这里打印分配pages的话已经&lt;&lt; kPageShift,如果kPageShift=12的话，8192字节那么相当于2pages)
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgb7040f1" class="outline-3">
+<h3 id="orgb7040f1"><span class="section-number-3">4.4</span> Central Cache</h3>
+<div class="outline-text-3" id="text-4-4">
+<p>
+central_freelist.h
+</p>
+</div>
+
+<div id="outline-container-org4860e10" class="outline-4">
+<h4 id="org4860e10"><span class="section-number-4">4.4.1</span> Data Structure</h4>
+<div class="outline-text-4" id="text-4-4-1">
+<p>
+首先在static里面定义的central_cache是一个数组大小为kNumClasses，相当于和每一个thread cache里面的slab对应。
+数组每个元素是CentralFreeListPadded,在central_freelist.h里面定义的。阅读CentralFreeListPadded这个结构，就会发现，
+实际上这个功能是在CentralFreeList里面的，为了能够进行align进行了padded,还是非常巧妙的
+</p>
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-keyword">template</span>&lt;<span class="org-type">int</span> <span class="org-variable-name">kFreeListSizeMod64</span>&gt;
+<span class="org-keyword">class</span> <span class="org-type">CentralFreeListPaddedTo</span> : <span class="org-keyword">public</span> <span class="org-type">CentralFreeList</span> {
+ <span class="org-keyword">private</span>:
+  <span class="org-type">char</span> <span class="org-variable-name">pad_</span>[64 - kFreeListSizeMod64];
+};
+
+<span class="org-keyword">template</span>&lt;&gt;
+<span class="org-keyword">class</span> <span class="org-type">CentralFreeListPaddedTo</span>&lt;0&gt; : <span class="org-keyword">public</span> <span class="org-type">CentralFreeList</span> {
+};
+
+<span class="org-keyword">class</span> <span class="org-type">CentralFreeListPadded</span> : <span class="org-keyword">public</span> <span class="org-type">CentralFreeListPaddedTo</span>&lt;
+  <span class="org-keyword">sizeof</span>(CentralFreeList) % 64&gt; {
+};
+</pre>
+</div>
+<p>
+所以后续的话我们只需要关注CentralFreeList即可。
+</p>
+
+<p>
+数据结构基本上还是很好理解的:).
+</p>
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-keyword">class</span> <span class="org-type">CentralFreeList</span> {
+ <span class="org-keyword">private</span>:
+  <span class="org-comment-delimiter">// </span><span class="org-comment">TransferCache is used to cache transfers of</span>
+  <span class="org-comment-delimiter">// </span><span class="org-comment">sizemap.num_objects_to_move(size_class) back and forth between</span>
+  <span class="org-comment-delimiter">// </span><span class="org-comment">thread caches and the central cache for a given size class.</span>
+  <span class="org-keyword">struct</span> <span class="org-type">TCEntry</span> {
+    <span class="org-type">void</span> *<span class="org-variable-name">head</span>;  <span class="org-comment-delimiter">// </span><span class="org-comment">Head of chain of objects.</span>
+    <span class="org-type">void</span> *<span class="org-variable-name">tail</span>;  <span class="org-comment-delimiter">// </span><span class="org-comment">Tail of chain of objects.</span>
+  };
+  <span class="org-comment-delimiter">// </span><span class="org-comment">A central cache freelist can have anywhere from 0 to kMaxNumTransferEntries</span>
+  <span class="org-comment-delimiter">// </span><span class="org-comment">slots to put link list chains into.</span>
+<span class="org-preprocessor">#ifdef</span> TCMALLOC_SMALL_BUT_SLOW
+  <span class="org-comment-delimiter">// </span><span class="org-comment">For the small memory model, the transfer cache is not used.</span>
+  <span class="org-keyword">static</span> <span class="org-keyword">const</span> <span class="org-type">int</span> <span class="org-variable-name">kMaxNumTransferEntries</span> = 0;
+<span class="org-preprocessor">#else</span>
+  <span class="org-comment-delimiter">// </span><span class="org-comment">Starting point for the the maximum number of entries in the transfer cache.</span>
+  <span class="org-comment-delimiter">// </span><span class="org-comment">This actual maximum for a given size class may be lower than this</span>
+  <span class="org-comment-delimiter">// </span><span class="org-comment">maximum value.</span>
+  <span class="org-keyword">static</span> <span class="org-keyword">const</span> <span class="org-type">int</span> <span class="org-variable-name">kMaxNumTransferEntries</span> = 64;
+<span class="org-preprocessor">#endif</span>
+  <span class="org-comment-delimiter">// </span><span class="org-comment">This lock protects all the data members.  cached_entries and cache_size_</span>
+  <span class="org-comment-delimiter">// </span><span class="org-comment">may be looked at without holding the lock.</span>
+  <span class="org-type">SpinLock</span> <span class="org-variable-name">lock_</span>;
+
+  <span class="org-comment-delimiter">// </span><span class="org-comment">We keep linked lists of empty and non-empty spans.</span>
+  <span class="org-type">size_t</span>   <span class="org-variable-name">size_class_</span>;     <span class="org-comment-delimiter">// </span><span class="org-comment">My size class</span>
+  <span class="org-type">Span</span>     <span class="org-variable-name">empty_</span>;          <span class="org-comment-delimiter">// </span><span class="org-comment">Dummy header for list of empty spans</span>
+  <span class="org-type">Span</span>     <span class="org-variable-name">nonempty_</span>;       <span class="org-comment-delimiter">// </span><span class="org-comment">Dummy header for list of non-empty spans</span>
+  <span class="org-type">size_t</span>   <span class="org-variable-name">num_spans_</span>;      <span class="org-comment-delimiter">// </span><span class="org-comment">Number of spans in empty_ plus nonempty_</span>
+  <span class="org-type">size_t</span>   <span class="org-variable-name">counter_</span>;        <span class="org-comment-delimiter">// </span><span class="org-comment">Number of free objects in cache entry</span>
+
+  <span class="org-comment-delimiter">// </span><span class="org-comment">Here we reserve space for TCEntry cache slots.  Space is preallocated</span>
+  <span class="org-comment-delimiter">// </span><span class="org-comment">for the largest possible number of entries than any one size class may</span>
+  <span class="org-comment-delimiter">// </span><span class="org-comment">accumulate.  Not all size classes are allowed to accumulate</span>
+  <span class="org-comment-delimiter">// </span><span class="org-comment">kMaxNumTransferEntries, so there is some wasted space for those size</span>
+  <span class="org-comment-delimiter">// </span><span class="org-comment">classes.</span>
+  <span class="org-type">TCEntry</span> <span class="org-variable-name">tc_slots_</span>[kMaxNumTransferEntries];
+
+  <span class="org-comment-delimiter">// </span><span class="org-comment">Number of currently used cached entries in tc_slots_.  This variable is</span>
+  <span class="org-comment-delimiter">// </span><span class="org-comment">updated under a lock but can be read without one.</span>
+  <span class="org-type">int32_t</span> <span class="org-variable-name">used_slots_</span>;  <span class="org-comment-delimiter">// </span><span class="org-comment">&#24403;&#21069;&#20351;&#29992;&#30340;tc entries.</span>
+  <span class="org-comment-delimiter">// </span><span class="org-comment">The current number of slots for this size class.  This is an</span>
+  <span class="org-comment-delimiter">// </span><span class="org-comment">adaptive value that is increased if there is lots of traffic</span>
+  <span class="org-comment-delimiter">// </span><span class="org-comment">on a given size class.</span>
+  <span class="org-type">int32_t</span> <span class="org-variable-name">cache_size_</span>; <span class="org-comment-delimiter">// </span><span class="org-comment">&#24403;&#21069;&#20801;&#35768;&#30340;&#26368;&#22823;&#30340;tc entries.</span>
+  <span class="org-comment-delimiter">// </span><span class="org-comment">Maximum size of the cache for a given size class.</span>
+  <span class="org-type">int32_t</span> <span class="org-variable-name">max_cache_size_</span>; <span class="org-comment-delimiter">// </span><span class="org-comment">&#26368;&#22823;&#20801;&#35768;&#22810;&#23569;&#20010;tc entries.</span>
+}
+</pre>
+</div>
+
+<p>
+CentralFreeList的接口非常少
+</p>
+<ul class="org-ul">
+<li>void Init(size_t cl); // 初始化,cl表示自己是第几个class</li>
+<li>void InsertRange(void *start, void *end, int N); // 回收部分objects.</li>
+<li>int RemoveRange(void **start, void **end, int N); // 分配部分objects.</li>
+<li>length // 在cache里面存在多少个free objects(不包含transfer cache)</li>
+<li>tc_length // transfer cache里面包含多少free objects.</li>
+<li>OverheadBytes // 因为内部碎片造成的额外开销</li>
+</ul>
+<p>
+因为cc是被全局操作的，所以这些接口在实际操作的时候内部都会首先尝试加上自选锁。很明显cc里面使用了free list链表结构管理这些free object.
+之前说过ptmalloc2会有这么一个问题，就是如果局部线程分配过多的话没有机制将内存返回给主区域。而tcmalloc解决了这个问题。
+对于每一个slab的tc返回的对象个数都是固定的，如果cc可以将这个返回的部分特殊处理的话，那么下次tc还需要这个部分的话，
+那么就可以很快地进行分配，否则需要遍历如果freelist不够的话那么还需要从pageheap里面进行切片。而这个部分就叫做transfer cache.:)
+了解了这些之后就可以看各个接口实现了。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgc27f45e" class="outline-4">
+<h4 id="orgc27f45e"><span class="section-number-4">4.4.2</span> Init</h4>
+<div class="outline-text-4" id="text-4-4-2">
+<p>
+init主要是计算了tc(transfer cache)的max_cache_size以及cache_size,然后初始化了字段。
+我们这里暂时不关注empty以及nonempty这两个字段的数据结构
+</p>
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-type">void</span> <span class="org-constant">CentralFreeList</span>::<span class="org-function-name">Init</span>(<span class="org-type">size_t</span> <span class="org-variable-name">cl</span>) {
+  size_class_ = cl;
+  <span class="org-constant">tcmalloc</span>::DLL_Init(&amp;empty_);
+  <span class="org-constant">tcmalloc</span>::DLL_Init(&amp;nonempty_);
+  num_spans_ = 0;
+  counter_ = 0;
+
+  max_cache_size_ = kMaxNumTransferEntries;
+<span class="org-preprocessor">#ifdef</span> TCMALLOC_SMALL_BUT_SLOW
+  <span class="org-comment-delimiter">// </span><span class="org-comment">Disable the transfer cache for the small footprint case.</span>
+  cache_size_ = 0;
+<span class="org-preprocessor">#else</span>
+  cache_size_ = 16;
+<span class="org-preprocessor">#endif</span>
+  <span class="org-keyword">if</span> (cl &gt; 0) {
+    <span class="org-type">int32_t</span> <span class="org-variable-name">bytes</span> = <span class="org-constant">Static</span>::sizemap()-&gt;ByteSizeForClass(cl);
+    <span class="org-type">int32_t</span> <span class="org-variable-name">objs_to_move</span> = <span class="org-constant">Static</span>::sizemap()-&gt;num_objects_to_move(cl);
+    max_cache_size_ = (min)(max_cache_size_,
+                          (max)(1, (1024 * 1024) / (bytes * objs_to_move)));
+    cache_size_ = (min)(cache_size_, max_cache_size_);
+  }
+  used_slots_ = 0;
+  ASSERT(cache_size_ &lt;= max_cache_size_);
+}
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org7f9549d" class="outline-4">
+<h4 id="org7f9549d"><span class="section-number-4">4.4.3</span> InsertRange</h4>
+<div class="outline-text-4" id="text-4-4-3">
+<p>
+这个接口就是为了回收[start,end]并且长度为N objects的内存链。首先注意它加了自选锁确保了线程安全。
+然后有一个逻辑就是判断是否可以进入tc,如果不允许进入tc的话那么挂到链上去。
+</p>
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-type">void</span> <span class="org-constant">CentralFreeList</span>::<span class="org-function-name">InsertRange</span>(<span class="org-type">void</span> *<span class="org-variable-name">start</span>, <span class="org-type">void</span> *<span class="org-variable-name">end</span>, <span class="org-type">int</span> <span class="org-variable-name">N</span>) {
+  SpinLockHolder <span class="org-type">h</span>(&amp;<span class="org-variable-name">lock_</span>);
+  <span class="org-keyword">if</span> (N == <span class="org-constant">Static</span>::sizemap()-&gt;num_objects_to_move(size_class_) &amp;&amp;
+    MakeCacheSpace()) { <span class="org-comment-delimiter">// </span><span class="org-comment">&#36825;&#37324;&#27809;&#26377;&#30475;&#25026;MakeCacheSpace&#37324;&#38754;&#19968;&#20010;&#36923;&#36753;&#65292;&#25105;&#33258;&#24049;&#35273;&#24471;&#26159;&#26080;&#20851;&#32039;&#35201;&#30340;&#12290;</span>
+    <span class="org-comment-delimiter">// </span><span class="org-comment">&#22240;&#20026;&#30475;&#19978;&#21435;&#20687;&#26159;&#25910;&#32553;&#20854;&#20182;&#30340;slab cc(EvictRandomSizeClass).</span>
+    <span class="org-comment-delimiter">// </span><span class="org-comment">&#36825;&#37324;&#25105;&#20204;&#21487;&#20197;&#31616;&#21333;&#22320;&#35748;&#20026;&#65292;&#23427;&#23601;&#26159;&#22312;&#35745;&#31639;tc_slots&#37324;&#38754;&#26159;&#21542;&#26377;slot&#21487;&#20197;&#20998;&#37197;.</span>
+    <span class="org-type">int</span> <span class="org-variable-name">slot</span> = used_slots_++;
+    ASSERT(slot &gt;=0);
+    ASSERT(slot &lt; max_cache_size_);
+    <span class="org-type">TCEntry</span> *<span class="org-variable-name">entry</span> = &amp;tc_slots_[slot]; <span class="org-comment-delimiter">// </span><span class="org-comment">&#22914;&#26524;&#20998;&#37197;&#25104;&#21151;&#30340;&#35805;&#65292;&#37027;&#20040;&#30452;&#25509;&#25346;&#36733;.</span>
+    entry-&gt;head = start;
+    entry-&gt;tail = end;
+    <span class="org-keyword">return</span>;
+  }
+  ReleaseListToSpans(start); <span class="org-comment-delimiter">// </span><span class="org-comment">&#22914;&#26524;&#19981;&#20801;&#35768;&#25346;&#21040;tc&#30340;&#35805;&#65292;&#37027;&#20040;&#23601;&#38656;&#35201;&#21333;&#29420;&#22788;&#29702;.</span>
+}
+</pre>
+</div>
+
+<p>
+回收到tc这个逻辑非常简单，然后看看ReleaseListToSpans这个逻辑。大致逻辑就是遍历start知道end,
+然后对于每一个object调用ReleaseToSpans单独进行处理。
+</p>
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-type">void</span> <span class="org-constant">CentralFreeList</span>::<span class="org-function-name">ReleaseToSpans</span>(<span class="org-type">void</span>* <span class="org-variable-name">object</span>) {
+  <span class="org-type">Span</span>* <span class="org-variable-name">span</span> = MapObjectToSpan(object); <span class="org-comment-delimiter">// </span><span class="org-comment">&#23558;object&#26144;&#23556;&#21040;span</span>
+  ASSERT(span != <span class="org-constant">NULL</span>);
+  ASSERT(span-&gt;refcount &gt; 0);
+
+  <span class="org-comment-delimiter">// </span><span class="org-comment">If span is empty, move it to non-empty list</span>
+  <span class="org-keyword">if</span> (span-&gt;objects == <span class="org-constant">NULL</span>) { <span class="org-comment-delimiter">// </span><span class="org-comment">&#22914;&#26524;span&#19978;&#38754;&#27809;&#26377;&#20219;&#20309;free objects&#30340;&#35805;.</span>
+    <span class="org-constant">tcmalloc</span>::DLL_Remove(span); <span class="org-comment-delimiter">// </span><span class="org-comment">&#37027;&#20040;&#23558;span&#20174;&#21407;&#26469;&#25346;&#36733;&#38142;&#34920;&#21024;&#38500;(empty).</span>
+    <span class="org-constant">tcmalloc</span>::DLL_Prepend(&amp;nonempty_, span); <span class="org-comment-delimiter">// </span><span class="org-comment">&#25346;&#36733;&#21040;&#36825;&#20010;cc&#30340;nonempty&#38142;&#34920;&#19978;.</span>
+    Event(span, <span class="org-string">'N'</span>, 0);
+  }
+
+  counter_++; <span class="org-comment-delimiter">// </span><span class="org-comment">&#24403;&#21069;free objects&#22686;&#21152;&#20102;</span>
+  span-&gt;refcount--; <span class="org-comment-delimiter">// </span><span class="org-comment">&#36825;&#20010;span&#30340;ref count&#20943;&#23569;&#20102;.</span>
+  <span class="org-comment-delimiter">// </span><span class="org-comment">span refcount&#34920;&#31034;&#37324;&#38754;&#26377;&#22810;&#23569;&#20010;objects&#20998;&#37197;&#20986;&#21435;&#20102;.</span>
+  <span class="org-keyword">if</span> (span-&gt;refcount == 0) { <span class="org-comment-delimiter">// </span><span class="org-comment">&#22914;&#26524;==0&#30340;&#35805;&#65292;&#37027;&#20040;&#35828;&#26126;&#36825;&#20010;span&#21487;&#20197;&#22238;&#25910;&#20102;.</span>
+    Event(span, <span class="org-string">'#'</span>, 0);
+    counter_ -= ((span-&gt;length&lt;&lt;kPageShift) /
+                 <span class="org-constant">Static</span>::sizemap()-&gt;ByteSizeForClass(span-&gt;sizeclass));
+    <span class="org-constant">tcmalloc</span>::DLL_Remove(span);
+--num_spans_;
+
+    <span class="org-comment-delimiter">// </span><span class="org-comment">Release central list lock while operating on pageheap</span>
+    lock_.Unlock();
+    {
+      <span class="org-type">SpinLockHolder</span> <span class="org-variable-name">h</span>(<span class="org-constant">Static</span>::pageheap_lock());
+      <span class="org-constant">Static</span>::pageheap()-&gt;Delete(span); <span class="org-comment-delimiter">// </span><span class="org-comment">&#23558;span&#22238;&#25910;pageheap&#37324;&#38754;&#21435;&#65292;&#36825;&#20010;&#22320;&#26041;&#21487;&#33021;&#20250;&#36827;&#34892;&#20869;&#23384;&#21512;&#24182;</span>
+    }
+    lock_.Lock();
+  } <span class="org-keyword">else</span> {
+    <span class="org-comment-delimiter">// </span><span class="org-comment">&#21542;&#21017;&#23601;&#23558;&#36825;&#20010;object&#25346;&#22312;span&#38142;&#19978;.</span>
+    *(<span class="org-keyword">reinterpret_cast</span>&lt;<span class="org-type">void</span>**&gt;(object)) = span-&gt;objects;
+    span-&gt;objects = object;
+  }
+}
+</pre>
+</div>
+<p>
+这里有一个最重要的问题就是MapObjectToSpan,object是如何映射到span的。这里我们首先可以大致说一下，
+就是tcmalloc因为是按照page来分配的，所以如果知道地址的话，那么其实就知道于第几个页。而span可以管理多个页，
+这样的话就可以知道这个页是哪个span来管理的了。具体代码的话会在span管理部分说明。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org4c6bc50" class="outline-4">
+<h4 id="org4c6bc50"><span class="section-number-4">4.4.4</span> RemoveRange</h4>
+<div class="outline-text-4" id="text-4-4-4">
+<p>
+这个接口就是为了尝试分配N个objects对象，然后将首地址尾地址给start和end.同样内部逻辑会判断是否可以从tc
+中直接取出，如果可以取出的话那么分配就非常快。注意函数开始也尝试加锁了。
+</p>
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-type">int</span> <span class="org-constant">CentralFreeList</span>::<span class="org-function-name">RemoveRange</span>(<span class="org-type">void</span> **<span class="org-variable-name">start</span>, <span class="org-type">void</span> **<span class="org-variable-name">end</span>, <span class="org-type">int</span> <span class="org-variable-name">N</span>) {
+  ASSERT(N &gt; 0);
+  lock_.Lock();
+  <span class="org-keyword">if</span> (N == <span class="org-constant">Static</span>::sizemap()-&gt;num_objects_to_move(size_class_) &amp;&amp;
+      used_slots_ &gt; 0) { <span class="org-comment-delimiter">// </span><span class="org-comment">&#22914;&#26524;&#21487;&#20197;&#30452;&#25509;&#20174;tc&#37324;&#38754;&#20998;&#37197;.</span>
+    <span class="org-type">int</span> <span class="org-variable-name">slot</span> = --used_slots_;
+    ASSERT(slot &gt;= 0);
+    <span class="org-type">TCEntry</span> *<span class="org-variable-name">entry</span> = &amp;tc_slots_[slot];
+    *start = entry-&gt;head;
+    *end = entry-&gt;tail;
+    lock_.Unlock();
+    <span class="org-keyword">return</span> N;
+  }
+
+  <span class="org-type">int</span> <span class="org-variable-name">result</span> = 0;
+  <span class="org-type">void</span>* <span class="org-variable-name">head</span> = <span class="org-constant">NULL</span>;
+  <span class="org-type">void</span>* <span class="org-variable-name">tail</span> = <span class="org-constant">NULL</span>;
+  <span class="org-comment-delimiter">// </span><span class="org-comment">TODO: Prefetch multiple TCEntries?</span>
+  tail = FetchFromSpansSafe(); <span class="org-comment-delimiter">// </span><span class="org-comment">&#36923;&#36753;&#26159;&#39318;&#20808;&#25918;&#22312;&#23614;&#37096;,&#28982;&#21518;&#19981;&#26029;&#22320;&#22312;&#22836;&#37096;&#25340;&#25509;.</span>
+  <span class="org-keyword">if</span> (tail != <span class="org-constant">NULL</span>) {
+    SLL_SetNext(tail, <span class="org-constant">NULL</span>);
+    head = tail;
+    result = 1;
+    <span class="org-keyword">while</span> (result &lt; N) {
+      <span class="org-type">void</span> *<span class="org-variable-name">t</span> = FetchFromSpans();
+      <span class="org-keyword">if</span> (<span class="org-negation-char">!</span>t) <span class="org-keyword">break</span>;
+      SLL_Push(&amp;head, t);
+      result++;
+    }
+  }
+  lock_.Unlock();
+  *start = head;
+  *end = tail;
+  <span class="org-keyword">return</span> result;
+}
+</pre>
+</div>
+
+<p>
+其中FetchFromSpanSafe逻辑也比较简单，就是
+</p>
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-type">void</span>* <span class="org-constant">CentralFreeList</span>::<span class="org-function-name">FetchFromSpansSafe</span>() {
+  <span class="org-type">void</span> *<span class="org-variable-name">t</span> = FetchFromSpans();
+  <span class="org-keyword">if</span> (<span class="org-negation-char">!</span>t) {
+    Populate(); <span class="org-comment-delimiter">// </span><span class="org-comment">&#23581;&#35797;&#36801;&#31227;</span>
+    t = FetchFromSpans();
+  }
+  <span class="org-keyword">return</span> t;
+}
+</pre>
+</div>
+
+<p>
+首先我们要看懂FetchFromSpans()逻辑，才能够清楚什么情况下面需要调用Populate
+</p>
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-type">void</span>* <span class="org-constant">CentralFreeList</span>::<span class="org-function-name">FetchFromSpans</span>() {
+  <span class="org-keyword">if</span> (<span class="org-constant">tcmalloc</span>::DLL_IsEmpty(&amp;nonempty_)) <span class="org-keyword">return</span> <span class="org-constant">NULL</span>; <span class="org-comment-delimiter">// </span><span class="org-comment">&#22914;&#26524;span&#37324;&#38754;&#37117;&#31354;&#20102;&#30340;.</span>
+  <span class="org-type">Span</span>* <span class="org-variable-name">span</span> = nonempty_.next;
+
+  ASSERT(span-&gt;objects != <span class="org-constant">NULL</span>);
+  span-&gt;refcount++;
+  <span class="org-type">void</span>* <span class="org-variable-name">result</span> = span-&gt;objects; <span class="org-comment-delimiter">// </span><span class="org-comment">&#21542;&#21017;&#23601;&#20250;&#20174;span&#37324;&#38754;&#20998;&#37197;object.</span>
+  span-&gt;objects = *(<span class="org-keyword">reinterpret_cast</span>&lt;<span class="org-type">void</span>**&gt;(result));
+  <span class="org-keyword">if</span> (span-&gt;objects == <span class="org-constant">NULL</span>) {
+    <span class="org-comment-delimiter">// </span><span class="org-comment">Move to empty list</span>
+    <span class="org-constant">tcmalloc</span>::DLL_Remove(span);
+    <span class="org-constant">tcmalloc</span>::DLL_Prepend(&amp;empty_, span);
+    Event(span, <span class="org-string">'E'</span>, 0);
+  }
+  counter_--;
+  <span class="org-keyword">return</span> result;
+}
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org25b4a87" class="outline-4">
+<h4 id="org25b4a87"><span class="section-number-4">4.4.5</span> Populate</h4>
+<div class="outline-text-4" id="text-4-4-5">
+<p>
+基本上了解了调用Populate的时机，是如果cc里面nonempty里面没有span的话。代码有点长.
+这里为了减少阻塞的部分，首先进行解锁然后让全局进行分配。只是针对局部操作没有任何问题。
+最后加入nonempty的部分的话这个部分需要加锁。非常巧妙。
+</p>
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-type">void</span> <span class="org-constant">CentralFreeList</span>::<span class="org-function-name">Populate</span>() {
+  <span class="org-comment-delimiter">// </span><span class="org-comment">Release central list lock while operating on pageheap</span>
+  lock_.Unlock();  <span class="org-comment-delimiter">// </span><span class="org-comment">&#39318;&#20808;&#38656;&#35201;&#35745;&#31639;&#20986;&#25105;&#20204;&#38656;&#35201;&#22810;&#23569;&#20010;pages</span>
+  <span class="org-keyword">const</span> <span class="org-type">size_t</span> <span class="org-variable-name">npages</span> = <span class="org-constant">Static</span>::sizemap()-&gt;class_to_pages(size_class_);
+
+  <span class="org-type">Span</span>* <span class="org-variable-name">span</span>;
+  {
+    <span class="org-type">SpinLockHolder</span> <span class="org-variable-name">h</span>(<span class="org-constant">Static</span>::pageheap_lock());
+    span = <span class="org-constant">Static</span>::pageheap()-&gt;New(npages); <span class="org-comment-delimiter">// </span><span class="org-comment">&#20998;&#37197;&#21040;pages&#24471;&#21040;span.</span>
+    <span class="org-keyword">if</span> (span) <span class="org-constant">Static</span>::pageheap()-&gt;RegisterSizeClass(span, size_class_);
+  }
+  <span class="org-keyword">if</span> (span == <span class="org-constant">NULL</span>) {
+    MESSAGE(<span class="org-string">"tcmalloc: allocation failed"</span>, npages &lt;&lt; kPageShift);
+    lock_.Lock();
+    <span class="org-keyword">return</span>;
+  }
+  ASSERT(span-&gt;length == npages);
+  <span class="org-keyword">for</span> (<span class="org-type">int</span> <span class="org-variable-name">i</span> = 0; i &lt; npages; i++) { <span class="org-comment-delimiter">// </span><span class="org-comment">&#23558;span&#21644;size_class&#20043;&#38388;&#20851;&#32852;&#36215;&#26469;</span>
+    <span class="org-comment-delimiter">// </span><span class="org-comment">&#24212;&#35813;&#26159;&#20026;&#20102;&#21518;&#38754;&#26597;&#25214;&#26041;&#20415;&#65292;&#20294;&#26159;&#29616;&#22312;&#36824;&#19981;&#30693;&#36947;&#26377;&#20160;&#20040;&#29992;&#36884;&#12290;&#20294;&#26159;&#19981;&#24433;&#21709;&#38405;&#35835;.</span>
+    <span class="org-constant">Static</span>::pageheap()-&gt;CacheSizeClass(span-&gt;start + i, size_class_);
+  }
+
+  <span class="org-comment-delimiter">// </span><span class="org-comment">&#23545;&#36825;&#20010;span&#37324;&#38754;&#30340;&#25152;&#26377;objects&#32452;&#32455;&#25104;&#38142;&#34920;&#24418;&#24335;</span>
+  <span class="org-comment-delimiter">// </span><span class="org-comment">Split the block into pieces and add to the free-list</span>
+  <span class="org-comment-delimiter">// </span><span class="org-comment">TODO: coloring of objects to avoid cache conflicts?</span>
+  <span class="org-type">void</span>** <span class="org-variable-name">tail</span> = &amp;span-&gt;objects;
+  <span class="org-type">char</span>* <span class="org-variable-name">ptr</span> = <span class="org-keyword">reinterpret_cast</span>&lt;<span class="org-type">char</span>*&gt;(span-&gt;start &lt;&lt; kPageShift);
+  <span class="org-type">char</span>* <span class="org-variable-name">limit</span> = ptr + (npages &lt;&lt; kPageShift);
+  <span class="org-keyword">const</span> <span class="org-type">size_t</span> <span class="org-variable-name">size</span> = <span class="org-constant">Static</span>::sizemap()-&gt;ByteSizeForClass(size_class_);
+  <span class="org-type">int</span> <span class="org-variable-name">num</span> = 0;
+  <span class="org-keyword">while</span> (ptr + size &lt;= limit) {
+    *tail = ptr;
+    tail = <span class="org-keyword">reinterpret_cast</span>&lt;<span class="org-type">void</span>**&gt;(ptr);
+    ptr += size;
+    num++;
+  }
+  ASSERT(ptr &lt;= limit);
+  *tail = <span class="org-constant">NULL</span>;
+  span-&gt;refcount = 0; <span class="org-comment-delimiter">// </span><span class="org-comment">No sub-object in use yet</span>
+
+  <span class="org-comment-delimiter">// </span><span class="org-comment">&#23558;&#36825;&#20010;span&#21152;&#20837;nonempty&#38142;&#34920;&#30340;&#35805;&#38656;&#35201;&#21152;&#38145;&#12290;</span>
+  <span class="org-comment-delimiter">// </span><span class="org-comment">Add span to list of non-empty spans</span>
+  lock_.Lock();
+  <span class="org-constant">tcmalloc</span>::DLL_Prepend(&amp;nonempty_, span);
+  ++num_spans_;
+  counter_ += num;
+}
+</pre>
+</div>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org94ced01" class="outline-3">
+<h3 id="org94ced01"><span class="section-number-3">4.5</span> PageHeap</h3>
+<div class="outline-text-3" id="text-4-5">
+<p>
+page_heap.h
+</p>
+</div>
+
+<div id="outline-container-orgb0dcdfb" class="outline-4">
+<h4 id="orgb0dcdfb"><span class="section-number-4">4.5.1</span> Data Structure</h4>
+<div class="outline-text-4" id="text-4-5-1">
+<p>
+PageHeap是在page_heap.h里面定义的，主要是用来分配page的。对于PageHeap结构还是比较复杂的.阅读tcmalloc文档也会发现，
+管理page的方法和cc是一样的，也是按照page大小做成数组。每个数组的结构是这样的
+</p>
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-comment-delimiter">// </span><span class="org-comment">We segregate spans of a given size into two circular linked</span>
+<span class="org-comment-delimiter">// </span><span class="org-comment">lists: one for normal spans, and one for spans whose memory</span>
+<span class="org-comment-delimiter">// </span><span class="org-comment">has been returned to the system.</span>
+<span class="org-keyword">struct</span> <span class="org-type">SpanList</span> {
+  <span class="org-type">Span</span>        <span class="org-variable-name">normal</span>;
+  <span class="org-type">Span</span>        <span class="org-variable-name">returned</span>; <span class="org-comment-delimiter">// </span><span class="org-comment">&#20854;&#23454;&#23545;&#20110;&#36825;&#20010;&#37096;&#20998;&#27809;&#26377;&#24517;&#35201;&#21306;&#20998;&#30340;&#65292;&#22240;&#20026;&#20195;&#30721;&#37324;&#38754;&#22823;&#37096;&#20998;&#37117;&#26159;&#25346;&#22312;normal&#36825;&#20010;&#38142;&#19978;&#30340;&#12290;</span>
+};
+
+<span class="org-comment-delimiter">// </span><span class="org-comment">List of free spans of length &gt;= kMaxPages</span>
+<span class="org-type">SpanList</span> <span class="org-variable-name">large_</span>; <span class="org-comment-delimiter">// </span><span class="org-comment">&#23545;&#20110;&gt;=kMaxPages&#30340;&#39029;&#38754;&#21333;&#29420;&#32500;&#25252;&#19968;&#20010;free list.</span>
+
+<span class="org-comment-delimiter">// </span><span class="org-comment">Array mapping from span length to a doubly linked list of free spans</span>
+<span class="org-type">SpanList</span> <span class="org-variable-name">free_</span>[kMaxPages]; <span class="org-comment-delimiter">// </span><span class="org-comment">&#38024;&#23545;&#27599;&#20010;&#39029;&#38754;&#22823;&#23567;&#20570;&#30340;free list.</span>
+</pre>
+</div>
+<p>
+span的状态只有三种，一种是IN_USE表示正在被使用，一种表示ON_NORMAL_FREELIST表示放在了normal freelist上面。
+另外一种是ON_RETURNED_FREELIST表示放在returned freelist上面。这里简单地说明一下normal freelist与returned freelist差别。
+normal freelist是普通的回收进行缓存起来，而returned freelist表示已经完全unmmap回到系统内存部分了。不过因为实际并没有交回给系统内存，
+所以这两个仅仅是概念上面的差别.
+</p>
+
+
+<p>
+另外在PageHeap里面还定义了如何通过PageID查找到Span这个结构，使用了两种方式，一种是Cache,另外一种是radix tree(32位是另外一个结构). 这个会在下面分析
+</p>
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-comment-delimiter">// </span><span class="org-comment">Selector class -- general selector uses 3-level map</span>
+<span class="org-keyword">template</span> &lt;<span class="org-type">int</span> <span class="org-variable-name">BITS</span>&gt; <span class="org-keyword">class</span> <span class="org-type">MapSelector</span> {
+ <span class="org-keyword">public</span>:
+  <span class="org-keyword">typedef</span> <span class="org-type">TCMalloc_PageMap3</span>&lt;BITS-kPageShift&gt; <span class="org-type">Type</span>;
+  <span class="org-keyword">typedef</span> <span class="org-type">PackedCache</span>&lt;BITS-kPageShift, <span class="org-type">uint64_t</span>&gt; <span class="org-type">CacheType</span>;
+};
+
+  <span class="org-comment-delimiter">// </span><span class="org-comment">Pick the appropriate map and cache types based on pointer size</span>
+  <span class="org-keyword">typedef</span> <span class="org-constant">MapSelector</span>&lt;kAddressBits&gt;::<span class="org-type">Type</span> <span class="org-type">PageMap</span>;
+  <span class="org-keyword">typedef</span> <span class="org-constant">MapSelector</span>&lt;kAddressBits&gt;::<span class="org-type">CacheType</span> <span class="org-type">PageMapCache</span>;
+  <span class="org-type">PageMap</span> <span class="org-variable-name">pagemap_</span>;
+  <span class="org-keyword">mutable</span> <span class="org-type">PageMapCache</span> <span class="org-variable-name">pagemap_cache_</span>;
+</pre>
+</div>
+<p>
+其中kAddressBits的定义在common.h
+</p>
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-preprocessor">#if</span> <span class="org-preprocessor">defined</span> __x86_64__
+<span class="org-comment-delimiter">// </span><span class="org-comment">All current and planned x86_64 processors only look at the lower 48 bits</span>
+<span class="org-comment-delimiter">// </span><span class="org-comment">in virtual to physical address translation.  The top 16 are thus unused.</span>
+<span class="org-comment-delimiter">// </span><span class="org-comment">TODO(rus): Under what operating systems can we increase it safely to 17?</span>
+<span class="org-comment-delimiter">// </span><span class="org-comment">This lets us use smaller page maps.  On first allocation, a 36-bit page map</span>
+<span class="org-comment-delimiter">// </span><span class="org-comment">uses only 96 KB instead of the 4.5 MB used by a 52-bit page map.</span>
+<span class="org-keyword">static</span> <span class="org-keyword">const</span> <span class="org-type">int</span> <span class="org-variable-name">kAddressBits</span> = (<span class="org-keyword">sizeof</span>(<span class="org-type">void</span>*) &lt; 8 ? (8 * <span class="org-keyword">sizeof</span>(<span class="org-type">void</span>*)) : 48); <span class="org-comment-delimiter">// </span><span class="org-comment">__x86_64__&#23601;&#26159;64&#20301;</span>
+<span class="org-preprocessor">#else</span>
+<span class="org-keyword">static</span> <span class="org-keyword">const</span> <span class="org-type">int</span> <span class="org-variable-name">kAddressBits</span> = 8 * <span class="org-keyword">sizeof</span>(<span class="org-type">void</span>*);
+<span class="org-preprocessor">#endif</span>
+</pre>
+</div>
+
+<p>
+对于PageHeap比较重要的接口包括下面这些：
+</p>
+<ul class="org-ul">
+<li>Span* New(Length n); // 分配n个pages并且返回Span对象</li>
+<li>void Delete(Span* span); // 删除Span对象管理的内存</li>
+<li>void RegisterSizeClass(Span* span, size_t sc); // 注册这个span对象管理的slab大小多少(0表示不是用于分配小内存)</li>
+<li>Span* Split(Span* span, Length n); // 将当前的span切分，一个管理n个页面的span,一个是剩余的。</li>
+<li>inline Span* GetDescriptor(PageID p) const //根据PageID得到管理这个Page的Span对象</li>
+<li>void Dump(TCMalloc_Printer* out); // Dump出PageHeap信息</li>
+<li>bool GetNextRange(PageID start, base::MallocRange* r); // 如果page heap管理了&gt;=start的span,那么返回这个信息</li>
+<li>Length ReleaseAtLeastNPages(Length num_pages); // 尝试至少释放num_pages个页面</li>
+<li>size_t GetSizeClassIfCached(PageID p) // 在cache中返回这个page id对应的slab class</li>
+<li>void CacheSizeClass(PageID p, size_t cl) // 在cache中存放page id对应的slab class.</li>
+</ul>
+<p>
+这里有一个点可能有疑问，就是为什么span需要上面标记slab class.原因非常简单，就是如果用户在释放内存的时候，根据ptr查找到对应的span.
+然后肯定想知道这个ptr到底应该如何归还，本身带有多少内存。此外还需要注意的是，对于page来说的话，一共管理了(kMaxPages)种页面大小。
+tcmalloc代码里面kMaxPages==1 &lt;&lt; (20- kPageShift) 相同于有256种页面。但是最后一种页面大小的话可以超过255 pages,这样才可以用于分配大内存。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org07c7702" class="outline-4">
+<h4 id="org07c7702"><span class="section-number-4">4.5.2</span> New</h4>
+<div class="outline-text-4" id="text-4-5-2">
+<p>
+New的逻辑非常简单，首先会尝试在free list里面查找，如果没有的话在lage free list里面查找，不行的话尝试要更多的内存，然后重试。
+需要注意的是，因为这个是一个全局的操作，所以前面都会加上自选锁 SpinLockHolder h(Static::pageheap_lock());
+</p>
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-type">Span</span>* <span class="org-constant">PageHeap</span>::<span class="org-function-name">New</span>(<span class="org-type">Length</span> <span class="org-variable-name">n</span>) {
+  ASSERT(Check());
+  ASSERT(n &gt; 0);
+
+  <span class="org-type">Span</span>* <span class="org-variable-name">result</span> = SearchFreeAndLargeLists(n);  <span class="org-comment-delimiter">// </span><span class="org-comment">free list&#28982;&#21518;&#22312;large&#37324;&#38754;&#26597;&#25214;</span>
+  <span class="org-keyword">if</span> (result != <span class="org-constant">NULL</span>)
+    <span class="org-keyword">return</span> result;
+
+  <span class="org-comment-delimiter">// </span><span class="org-comment">Grow the heap and try again.</span>
+  <span class="org-keyword">if</span> (<span class="org-negation-char">!</span>GrowHeap(n)) { <span class="org-comment-delimiter">// </span><span class="org-comment">&#19981;&#34892;&#30340;&#35805;&#23581;&#35797;&#20998;&#37197;&#26356;&#22810;&#20869;&#23384;</span>
+    ASSERT(Check());
+    <span class="org-keyword">return</span> <span class="org-constant">NULL</span>;
+  }
+  <span class="org-keyword">return</span> SearchFreeAndLargeLists(n); <span class="org-comment-delimiter">// </span><span class="org-comment">&#28982;&#21518;&#37325;&#26032;&#23581;&#35797;&#20998;&#37197;</span>
+}
+</pre>
+</div>
+
+<p>
+SearchFreeAndLargeLists相对来说还是比较简单的，但是里面Carve这个需要单独来看
+</p>
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-type">Span</span>* <span class="org-constant">PageHeap</span>::<span class="org-function-name">SearchFreeAndLargeLists</span>(<span class="org-type">Length</span> <span class="org-variable-name">n</span>) {
+  ASSERT(Check());
+  ASSERT(n &gt; 0);
+
+  <span class="org-comment-delimiter">// </span><span class="org-comment">Find first size &gt;= n that has a non-empty list</span>
+  <span class="org-keyword">for</span> (<span class="org-type">Length</span> <span class="org-variable-name">s</span> = n; s &lt; kMaxPages; s++) { <span class="org-comment-delimiter">// </span><span class="org-comment">&#36941;&#21382;&#25152;&#26377;&#30340;Pages&#30475;&#30475;&#26159;&#21542;&#26377;&#21512;&#36866;&#30340;&#12290;</span>
+    <span class="org-type">Span</span>* <span class="org-variable-name">ll</span> = &amp;free_[s].normal;
+    <span class="org-comment-delimiter">// </span><span class="org-comment">If we're lucky, ll is non-empty, meaning it has a suitable span.</span>
+    <span class="org-keyword">if</span> (<span class="org-negation-char">!</span>DLL_IsEmpty(ll)) {
+      ASSERT(ll-&gt;next-&gt;location == <span class="org-constant">Span</span>::ON_NORMAL_FREELIST);
+      <span class="org-keyword">return</span> Carve(ll-&gt;next, n); <span class="org-comment-delimiter">// </span><span class="org-comment">&#22914;&#26524;&#26377;&#21512;&#36866;&#30340;&#35805;&#65292;&#37027;&#20040;&#21487;&#33021;&#38656;&#35201;&#20999;&#21106;&#19968;&#19979;,&#20174;&#37324;&#38754;&#20999;&#21106;&#20986;n pages&#20986;&#26469;</span>
+    }
+    <span class="org-comment-delimiter">// </span><span class="org-comment">Alternatively, maybe there's a usable returned span.</span>
+    ll = &amp;free_[s].returned;
+    <span class="org-keyword">if</span> (<span class="org-negation-char">!</span>DLL_IsEmpty(ll)) {
+      ASSERT(ll-&gt;next-&gt;location == <span class="org-constant">Span</span>::ON_RETURNED_FREELIST);
+      <span class="org-keyword">return</span> Carve(ll-&gt;next, n);
+    }
+  }
+  <span class="org-comment-delimiter">// </span><span class="org-comment">No luck in free lists, our last chance is in a larger class.</span>
+  <span class="org-keyword">return</span> AllocLarge(n);  <span class="org-comment-delimiter">// </span><span class="org-comment">May be NULL // &#22914;&#26524;&#27809;&#26377;&#20998;&#37197;&#25104;&#21151;&#30340;&#35805;&#37027;&#20040;&#20174;AllocLarge&#37324;&#38754;&#20998;&#37197;</span>
+}
+</pre>
+</div>
+<p>
+对于AllocLarge部分的话非常简单，就是使用最佳匹配算法。完了之后调用Carve同样进行切割。这里就不贴出代码详细分析。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgf21e195" class="outline-4">
+<h4 id="orgf21e195"><span class="section-number-4">4.5.3</span> Carve</h4>
+<div class="outline-text-4" id="text-4-5-3">
+<p>
+我们看看Carve代码，然后在里面的话会稍微粗略地提到pagemap管理span对象的细节
+</p>
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-type">Span</span>* <span class="org-constant">PageHeap</span>::<span class="org-function-name">Carve</span>(<span class="org-type">Span</span>* <span class="org-variable-name">span</span>, <span class="org-type">Length</span> <span class="org-variable-name">n</span>) {
+  ASSERT(n &gt; 0);
+  ASSERT(span-&gt;location != <span class="org-constant">Span</span>::IN_USE);
+  <span class="org-keyword">const</span> <span class="org-type">int</span> <span class="org-variable-name">old_location</span> = span-&gt;location;
+  RemoveFromFreeList(span); <span class="org-comment-delimiter">// </span><span class="org-comment">&#20174;freelist&#37324;&#38754;&#21024;&#38500;&#65292;&#21516;&#26102;&#35760;&#24405;&#20449;&#24687;&#20063;&#20250;&#26356;&#25913;&#12290;</span>
+  span-&gt;location = <span class="org-constant">Span</span>::IN_USE; <span class="org-comment-delimiter">// </span><span class="org-comment">&#20462;&#25913;&#19968;&#19979;location.</span>
+  Event(span, <span class="org-string">'A'</span>, n);
+
+  <span class="org-keyword">const</span> <span class="org-type">int</span> <span class="org-variable-name">extra</span> = span-&gt;length - n;
+  ASSERT(extra &gt;= 0);
+  <span class="org-keyword">if</span> (extra &gt; 0) {
+    <span class="org-type">Span</span>* <span class="org-variable-name">leftover</span> = NewSpan(span-&gt;start + n, extra); <span class="org-comment-delimiter">// </span><span class="org-comment">&#21019;&#24314;&#19968;&#20010;&#26032;&#30340;span&#23545;&#35937;</span>
+    leftover-&gt;location = old_location; <span class="org-comment-delimiter">// </span><span class="org-comment">&#36825;&#20010;&#26032;&#30340;&#23545;&#35937;&#37324;&#38754;&#23384;&#25918;&#21040;&#26159;&#21407;&#26469;location.</span>
+    Event(leftover, <span class="org-string">'S'</span>, extra);
+    RecordSpan(leftover); <span class="org-comment-delimiter">// </span><span class="org-comment">&#23558;&#21097;&#20313;&#30340;span&#35760;&#24405;&#19979;&#26469;&#24182;&#19988;&#25554;&#20837;&#21040;free list&#37324;&#38754;.</span>
+    PrependToFreeList(leftover);  <span class="org-comment-delimiter">// </span><span class="org-comment">Skip coalescing - no candidates possible</span>
+    span-&gt;length = n;
+    pagemap_.set(span-&gt;start + n - 1, span); <span class="org-comment-delimiter">// </span><span class="org-comment">&#21516;&#26102;&#26631;&#35760;span&#31649;&#29702;&#30340;&#33539;&#22260;.</span>
+  }
+  ASSERT(Check());
+  <span class="org-keyword">return</span> span;
+}
+</pre>
+</div>
+
+<p>
+逻辑可以说非常简单，但是如果之前看过文档的话需要知道这里面pagemap为什么需要set.
+非常简单，如果span管理的是[p..q]的范围的话，那么在pagemap里面只需要记录(p,span),(q,span).
+这样如果有一个span回收的话，那么在pagemap里面查找p-1和q+1的span,然后尝试合并。非常精巧。
+所以在RecordSpan里面很明显就是需要设置前后的边界
+</p>
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-type">void</span> <span class="org-function-name">RecordSpan</span>(<span class="org-type">Span</span>* <span class="org-variable-name">span</span>) {
+  pagemap_.set(span-&gt;start, span); <span class="org-comment-delimiter">// </span><span class="org-comment">&#36825;&#26102;span&#24320;&#22987;</span>
+  <span class="org-keyword">if</span> (span-&gt;length &gt; 1) {
+    pagemap_.set(span-&gt;start + span-&gt;length - 1, span); <span class="org-comment-delimiter">// </span><span class="org-comment">&#35774;&#32622;span&#32467;&#26463;</span>
+  }
+}
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org0d08b5a" class="outline-4">
+<h4 id="org0d08b5a"><span class="section-number-4">4.5.4</span> GrowHeap</h4>
+<div class="outline-text-4" id="text-4-5-4">
+<p>
+GrowHeap就是需要尝试从系统中拿出更多的内存出来然后好做切分，满足本次allocate n pages的请求。
+GrowHeap里面有一些策略
+</p>
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-comment-delimiter">// </span><span class="org-comment">&#36825;&#20010;&#23601;&#26159;&#30456;&#24403;&#20110;&#20801;&#35768;&#20998;&#37197;&#30340;&#26368;&#22823;Pages</span>
+<span class="org-keyword">static</span> <span class="org-keyword">const</span> <span class="org-type">Length</span> <span class="org-variable-name">kMaxValidPages</span> = (~<span class="org-keyword">static_cast</span>&lt;<span class="org-type">Length</span>&gt;(0)) &gt;&gt; kPageShift;
+<span class="org-keyword">static</span> <span class="org-keyword">const</span> <span class="org-type">int</span> <span class="org-variable-name">kMinSystemAlloc</span> = kMaxPages; <span class="org-comment-delimiter">// </span><span class="org-comment">&#35843;&#29992;GrowHeap&#26368;&#23567;&#30340;&#39029;&#25968;</span>
+
+<span class="org-type">bool</span> <span class="org-constant">PageHeap</span>::<span class="org-function-name">GrowHeap</span>(<span class="org-type">Length</span> <span class="org-variable-name">n</span>) {
+  ASSERT(kMaxPages &gt;= kMinSystemAlloc);
+  <span class="org-keyword">if</span> (n &gt; kMaxValidPages) <span class="org-keyword">return</span> <span class="org-constant">false</span>;
+  <span class="org-type">Length</span> <span class="org-variable-name">ask</span> = (n&gt;kMinSystemAlloc) ? n : <span class="org-keyword">static_cast</span>&lt;<span class="org-type">Length</span>&gt;(kMinSystemAlloc); <span class="org-comment-delimiter">// </span><span class="org-comment">&#20250;&#21028;&#26029;&#26159;&#21542;&#36229;&#36807;&#65292;&#22914;&#26524;&#27809;&#26377;&#36229;&#36807;&#30340;&#35805;&#65292;</span>
+  <span class="org-comment-delimiter">// </span><span class="org-comment">&#37027;&#20040;&#25353;&#29031;kMinSystemAlloc&#20998;&#37197;</span>
+  <span class="org-type">size_t</span> <span class="org-variable-name">actual_size</span>;
+  <span class="org-type">void</span>* <span class="org-variable-name">ptr</span> = TCMalloc_SystemAlloc(ask &lt;&lt; kPageShift, &amp;actual_size, kPageSize);
+  <span class="org-keyword">if</span> (ptr == <span class="org-constant">NULL</span>) {
+    <span class="org-keyword">if</span> (n &lt; ask) {
+      <span class="org-comment-delimiter">// </span><span class="org-comment">Try growing just "n" pages</span>
+      ask = n;
+      ptr = TCMalloc_SystemAlloc(ask &lt;&lt; kPageShift, &amp;actual_size, kPageSize); <span class="org-comment-delimiter">// </span><span class="org-comment">&#22914;&#26524;ask&#20998;&#37197;&#19981;&#20102;&#65292;&#37027;&#20040;&#23581;&#35797;&#20998;&#37197;n</span>
+    }
+    <span class="org-keyword">if</span> (ptr == <span class="org-constant">NULL</span>) <span class="org-keyword">return</span> <span class="org-constant">false</span>;
+  }
+  ask = actual_size &gt;&gt; kPageShift;
+  RecordGrowth(ask &lt;&lt; kPageShift);
+
+  <span class="org-type">uint64_t</span> <span class="org-variable-name">old_system_bytes</span> = stats_.system_bytes;
+  stats_.system_bytes += (ask &lt;&lt; kPageShift);
+  <span class="org-keyword">const</span> <span class="org-type">PageID</span> <span class="org-variable-name">p</span> = <span class="org-keyword">reinterpret_cast</span>&lt;<span class="org-type">uintptr_t</span>&gt;(ptr) &gt;&gt; kPageShift;
+  ASSERT(p &gt; 0);
+
+  <span class="org-comment-delimiter">// </span><span class="org-comment">If we have already a lot of pages allocated, just pre allocate a bunch of</span>
+  <span class="org-comment-delimiter">// </span><span class="org-comment">memory for the page map. This prevents fragmentation by pagemap metadata</span>
+  <span class="org-comment-delimiter">// </span><span class="org-comment">when a program keeps allocating and freeing large blocks.</span>
+
+  <span class="org-comment-delimiter">//  </span><span class="org-comment">static const size_t kPageMapBigAllocationThreshold = 128 &lt;&lt; 20;(128MB)</span>
+  <span class="org-comment-delimiter">// </span><span class="org-comment">&#36825;&#20010;&#22320;&#26041;&#21028;&#26029;&#65292;&#36825;&#27425;&#20998;&#37197;&#26159;&#19981;&#26159;&#24050;&#32463;&#36234;&#36807;&#20102;&#19968;&#20010;threshold</span>
+  <span class="org-comment-delimiter">// </span><span class="org-comment">&#22914;&#26524;&#36234;&#36807;&#30340;&#35805;&#65292;&#37027;&#20040;&#24847;&#21619;&#30528;pagemap&#37324;&#38754;&#21487;&#33021;&#38656;&#35201;&#20998;&#37197;&#26356;&#22810;&#30340;&#20869;&#23384;</span>
+  <span class="org-comment-delimiter">// </span><span class="org-comment">&#20294;&#26159;&#23545;&#20110;64&#20301;&#26469;&#35828;&#30340;&#35805;&#65292;&#37324;&#38754;&#27809;&#26377;&#20219;&#20309;&#36923;&#36753;.</span>
+  <span class="org-keyword">if</span> (old_system_bytes &lt; kPageMapBigAllocationThreshold
+      &amp;&amp; stats_.system_bytes &gt;= kPageMapBigAllocationThreshold) {
+    pagemap_.PreallocateMoreMemory();
+  }
+
+  <span class="org-comment-delimiter">// </span><span class="org-comment">Make sure pagemap_ has entries for all of the new pages.</span>
+  <span class="org-comment-delimiter">// </span><span class="org-comment">Plus ensure one before and one after so coalescing code</span>
+  <span class="org-comment-delimiter">// </span><span class="org-comment">does not need bounds-checking.</span>
+  <span class="org-keyword">if</span> (pagemap_.Ensure(p-1, ask+2)) {   <span class="org-comment-delimiter">// </span><span class="org-comment">&#22240;&#20026;&#38656;&#35201;&#25554;&#20837;&#26032;&#30340;span,&#25152;&#20197;&#24517;&#39035;&#30830;&#20445;&#36825;&#20010;pagemap&#30830;&#23454;&#23384;&#22312;.</span>
+    <span class="org-comment-delimiter">// </span><span class="org-comment">Pretend the new area is allocated and then Delete() it to cause</span>
+    <span class="org-comment-delimiter">// </span><span class="org-comment">any necessary coalescing to occur.</span>
+    <span class="org-type">Span</span>* <span class="org-variable-name">span</span> = NewSpan(p, ask);
+    RecordSpan(span);
+    Delete(span); <span class="org-comment-delimiter">// </span><span class="org-comment">&#23558;&#36825;&#20010;Span&#36820;&#22238;&#32473;large_&#37324;&#31561;&#24453;&#19979;&#27425;&#20998;&#37197;</span>
+    ASSERT(Check());
+    <span class="org-keyword">return</span> <span class="org-constant">true</span>;
+  } <span class="org-keyword">else</span> {
+    <span class="org-comment-delimiter">// </span><span class="org-comment">We could not allocate memory within "pagemap_"</span>
+    <span class="org-comment-delimiter">// </span><span class="org-comment">TODO: Once we can return memory to the system, return the new span</span>
+    <span class="org-keyword">return</span> <span class="org-constant">false</span>;
+  }
+}
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org64ff2fd" class="outline-4">
+<h4 id="org64ff2fd"><span class="section-number-4">4.5.5</span> Delete</h4>
+<div class="outline-text-4" id="text-4-5-5">
+<p>
+Delete逻辑非常简单
+</p>
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-type">void</span> <span class="org-constant">PageHeap</span>::<span class="org-function-name">Delete</span>(<span class="org-type">Span</span>* <span class="org-variable-name">span</span>) {
+  ASSERT(Check());
+  ASSERT(span-&gt;location == <span class="org-constant">Span</span>::IN_USE);
+  ASSERT(span-&gt;length &gt; 0);
+  ASSERT(GetDescriptor(span-&gt;start) == span);
+  ASSERT(GetDescriptor(span-&gt;start + span-&gt;length - 1) == span);
+  <span class="org-keyword">const</span> <span class="org-type">Length</span> <span class="org-variable-name">n</span> = span-&gt;length;
+  span-&gt;sizeclass = 0;
+  span-&gt;sample = 0;
+  span-&gt;location = <span class="org-constant">Span</span>::ON_NORMAL_FREELIST;
+  Event(span, <span class="org-string">'D'</span>, span-&gt;length);
+  MergeIntoFreeList(span);  <span class="org-comment-delimiter">// </span><span class="org-comment">Coalesces if possible // &#20250;&#23581;&#35797;&#36827;&#34892;&#21512;&#24182;</span>
+  IncrementalScavenge(n); <span class="org-comment-delimiter">// </span><span class="org-comment">&#22686;&#37327;&#25910;&#38598;. &#21518;&#38754;&#20250;&#20180;&#32454;&#30475;&#36825;&#20010;&#20989;&#25968;&#30340;&#23450;&#20041;</span>
+  ASSERT(Check());
+}
+</pre>
+</div>
+
+<p>
+里面有两个函数我们需要仔细关心MergeIntoFreeList以及IncrementalScavenge.首先看看MergeIntoFreeList
+</p>
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-type">void</span> <span class="org-constant">PageHeap</span>::<span class="org-function-name">MergeIntoFreeList</span>(<span class="org-type">Span</span>* <span class="org-variable-name">span</span>) {
+  ASSERT(span-&gt;location != <span class="org-constant">Span</span>::IN_USE);
+  <span class="org-keyword">const</span> <span class="org-type">PageID</span> <span class="org-variable-name">p</span> = span-&gt;start;
+  <span class="org-keyword">const</span> <span class="org-type">Length</span> <span class="org-variable-name">n</span> = span-&gt;length;
+  <span class="org-comment-delimiter">// </span><span class="org-comment">&#39318;&#20808;&#23581;&#35797;&#21512;&#24182;p-1 pages&#36825;&#20010;span</span>
+  <span class="org-type">Span</span>* <span class="org-variable-name">prev</span> = GetDescriptor(p-1);
+  <span class="org-keyword">if</span> (prev != <span class="org-constant">NULL</span> &amp;&amp; prev-&gt;location == span-&gt;location) {
+    <span class="org-comment-delimiter">// </span><span class="org-comment">Merge preceding span into this span</span>
+    ASSERT(prev-&gt;start + prev-&gt;length == p);
+    <span class="org-keyword">const</span> <span class="org-type">Length</span> <span class="org-variable-name">len</span> = prev-&gt;length;
+    RemoveFromFreeList(prev);
+    DeleteSpan(prev);
+    span-&gt;start -= len;
+    span-&gt;length += len;
+    pagemap_.set(span-&gt;start, span);
+    Event(span, <span class="org-string">'L'</span>, len);
+  }
+ <span class="org-comment-delimiter">// </span><span class="org-comment">&#28982;&#21518;&#23581;&#35797;&#21512;&#24182;p+n pages&#36825;&#20010;span.</span>
+  <span class="org-type">Span</span>* <span class="org-variable-name">next</span> = GetDescriptor(p+n);
+  <span class="org-keyword">if</span> (next != <span class="org-constant">NULL</span> &amp;&amp; next-&gt;location == span-&gt;location) {
+    <span class="org-comment-delimiter">// </span><span class="org-comment">Merge next span into this span</span>
+    ASSERT(next-&gt;start == p+n);
+    <span class="org-keyword">const</span> <span class="org-type">Length</span> <span class="org-variable-name">len</span> = next-&gt;length;
+    RemoveFromFreeList(next);
+    DeleteSpan(next);
+    span-&gt;length += len;
+    pagemap_.set(span-&gt;start + span-&gt;length - 1, span);
+    Event(span, <span class="org-string">'R'</span>, len);
+  }
+  <span class="org-comment-delimiter">// </span><span class="org-comment">&#21512;&#24182;&#23436;&#25104;&#20043;&#21518;&#23601;&#20250;&#25918;&#20837;free list&#37324;&#38754;&#21435;</span>
+  PrependToFreeList(span);
+}
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org0ce5ccb" class="outline-4">
+<h4 id="org0ce5ccb"><span class="section-number-4">4.5.6</span> IncrementalScavenge</h4>
+<div class="outline-text-4" id="text-4-5-6">
+<p>
+IncrementalScavenge这个意思就是增量回收，大致内容就是说将一部分的页面交回给系统内存。虽然在tcmalloc里面实现并没有完全交回给系统内存，
+而只是简单地挂在了_returned_free_list上面，但是里面的策略还是值得看看的。这里所谓的scavenge_counter_意思就是如果归还了多少内存之后，
+那么我们就会尝试进行一次完全交回给系统内存.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-type">void</span> <span class="org-constant">PageHeap</span>::<span class="org-function-name">IncrementalScavenge</span>(<span class="org-type">Length</span> <span class="org-variable-name">n</span>) {
+  <span class="org-comment-delimiter">// </span><span class="org-comment">Fast path; not yet time to release memory</span>
+  scavenge_counter_ -= n;
+  <span class="org-keyword">if</span> (scavenge_counter_ &gt;= 0) <span class="org-keyword">return</span>;  <span class="org-comment-delimiter">// </span><span class="org-comment">Not yet time to scavenge</span>
+
+  <span class="org-comment-delimiter">// </span><span class="org-comment">&#40664;&#35748;&#20540;&#30340;&#35805;&#26159;1.0,&#36825;&#20010;&#21487;&#20197;&#26377;&#29615;&#22659;&#21464;&#37327;&#35774;&#32622;.</span>
+  <span class="org-comment-delimiter">// </span><span class="org-comment">&#22914;&#26524;&#22238;&#25910;&#29575;&#24456;&#20302;&#30340;&#21704;&#65292;&#37027;&#20040;&#30456;&#24403;&#20110;&#19981;&#20250;&#24402;&#36824;&#32473;&#31995;&#32479;&#20869;&#23384;</span>
+  <span class="org-keyword">const</span> <span class="org-type">double</span> <span class="org-variable-name">rate</span> = FLAGS_tcmalloc_release_rate;
+  <span class="org-keyword">if</span> (rate &lt;= 1e-6) {
+    <span class="org-comment-delimiter">// </span><span class="org-comment">Tiny release rate means that releasing is disabled.</span>
+    <span class="org-comment-delimiter">//   </span><span class="org-comment">static const int kDefaultReleaseDelay = 1 &lt;&lt; 18;</span>
+    scavenge_counter_ = kDefaultReleaseDelay;
+    <span class="org-keyword">return</span>;
+  }
+
+  <span class="org-comment-delimiter">// </span><span class="org-comment">&#23581;&#35797;&#33267;&#24402;&#36824;&#19968;&#20010;&#39029;&#38754;.</span>
+  <span class="org-comment-delimiter">// </span><span class="org-comment">&#20855;&#20307;&#36825;&#20010;&#20989;&#25968;&#23454;&#29616;&#22312;&#21518;&#38754;&#20250;&#25552;&#21040;.</span>
+  <span class="org-type">Length</span> <span class="org-variable-name">released_pages</span> = ReleaseAtLeastNPages(1);
+
+  <span class="org-comment-delimiter">// </span><span class="org-comment">&#22914;&#26524;&#23454;&#38469;&#19978;&#27809;&#26377;&#24402;&#36824;&#30340;&#35805;&#65292;&#37027;&#20040;&#19979;&#27425;&#38656;&#35201;&#31561;&#24453;&#36825;&#20040;&#22810;&#27425;&#20043;&#21518;&#23581;&#35797;&#24402;&#36824;.</span>
+  <span class="org-keyword">if</span> (released_pages == 0) {
+    <span class="org-comment-delimiter">// </span><span class="org-comment">Nothing to scavenge, delay for a while.</span>
+    scavenge_counter_ = kDefaultReleaseDelay;
+  } <span class="org-keyword">else</span> { <span class="org-comment-delimiter">// </span><span class="org-comment">&#21542;&#21017;&#20250;&#25353;&#29031;&#19968;&#23450;&#30340;&#31574;&#30053;&#35774;&#23450;&#27425;&#25968;&#28982;&#21518;&#23581;&#35797;&#24402;&#36824;</span>
+    <span class="org-comment-delimiter">// </span><span class="org-comment">Compute how long to wait until we return memory.</span>
+    <span class="org-comment-delimiter">// </span><span class="org-comment">FLAGS_tcmalloc_release_rate==1 means wait for 1000 pages</span>
+    <span class="org-comment-delimiter">// </span><span class="org-comment">after releasing one page.</span>
+    <span class="org-keyword">const</span> <span class="org-type">double</span> <span class="org-variable-name">mult</span> = 1000.0 / rate;
+    <span class="org-type">double</span> <span class="org-variable-name">wait</span> = mult * <span class="org-keyword">static_cast</span>&lt;<span class="org-type">double</span>&gt;(released_pages);
+    <span class="org-keyword">if</span> (wait &gt; kMaxReleaseDelay) {
+      <span class="org-comment-delimiter">// </span><span class="org-comment">Avoid overflow and bound to reasonable range.</span>
+       <span class="org-comment-delimiter">// </span><span class="org-comment">static const int kMaxReleaseDelay = 1 &lt;&lt; 20;</span>
+      wait = kMaxReleaseDelay;
+    }
+    scavenge_counter_ = <span class="org-keyword">static_cast</span>&lt;<span class="org-type">int64_t</span>&gt;(wait);
+  }
+}
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgf2a13f6" class="outline-4">
+<h4 id="orgf2a13f6"><span class="section-number-4">4.5.7</span> ReleaseAtLeastNPages</h4>
+<div class="outline-text-4" id="text-4-5-7">
+<p>
+这个函数的语义就是至少尝试释放n pages.实现方式非常简单，每次都从一种pages里面取出一个东西并且进行释放，直到全部释放为止。
+算是一种round-robin的方式吧，我猜想这样释放的方式对于后面分配的性能影响比较小，每一种大小都释放一些。
+</p>
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-type">Length</span> <span class="org-constant">PageHeap</span>::<span class="org-function-name">ReleaseAtLeastNPages</span>(<span class="org-type">Length</span> <span class="org-variable-name">num_pages</span>) {
+  <span class="org-type">Length</span> <span class="org-variable-name">released_pages</span> = 0;
+  <span class="org-type">Length</span> <span class="org-variable-name">prev_released_pages</span> = -1;
+
+  <span class="org-comment-delimiter">// </span><span class="org-comment">Round robin through the lists of free spans, releasing the last</span>
+  <span class="org-comment-delimiter">// </span><span class="org-comment">span in each list.  Stop after releasing at least num_pages.</span>
+  <span class="org-keyword">while</span> (released_pages &lt; num_pages) {
+    <span class="org-keyword">if</span> (released_pages == prev_released_pages) { <span class="org-comment-delimiter">// </span><span class="org-comment">&#22914;&#26524;&#33258;&#19978;&#27425;&#20381;&#36182;&#27809;&#26377;&#22810;&#20313;&#37322;&#25918;&#30340;&#35805;</span>
+      <span class="org-comment-delimiter">// </span><span class="org-comment">Last iteration of while loop made no progress.</span>
+      <span class="org-keyword">break</span>;
+    }
+    prev_released_pages = released_pages;
+
+    <span class="org-keyword">for</span> (<span class="org-type">int</span> <span class="org-variable-name">i</span> = 0; i &lt; kMaxPages+1 &amp;&amp; released_pages &lt; num_pages;
+         i++, release_index_++) { <span class="org-comment-delimiter">// </span><span class="org-comment">&#27599;&#20010;&#22823;&#23567;&#31867;&#22411;&#37117;&#20250;&#23581;&#35797;&#37322;&#25918;&#19968;&#20010;.</span>
+      <span class="org-keyword">if</span> (release_index_ &gt; kMaxPages) release_index_ = 0;
+      <span class="org-type">SpanList</span>* <span class="org-variable-name">slist</span> = (release_index_ == kMaxPages) ?
+          &amp;large_ : &amp;free_[release_index_];
+      <span class="org-keyword">if</span> (<span class="org-negation-char">!</span>DLL_IsEmpty(&amp;slist-&gt;normal)) {
+        <span class="org-type">Length</span> <span class="org-variable-name">released_len</span> = ReleaseLastNormalSpan(slist);
+        released_pages += released_len;
+      }
+    }
+  }
+  <span class="org-keyword">return</span> released_pages;
+}
+</pre>
+</div>
+
+<p>
+然后我们看看ReleaseLastNormalSpan这个过程，非常简单
+</p>
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-type">Length</span> <span class="org-constant">PageHeap</span>::<span class="org-function-name">ReleaseLastNormalSpan</span>(<span class="org-type">SpanList</span>* <span class="org-variable-name">slist</span>) {
+  <span class="org-type">Span</span>* <span class="org-variable-name">s</span> = slist-&gt;normal.prev;
+  ASSERT(s-&gt;location == <span class="org-constant">Span</span>::ON_NORMAL_FREELIST);
+  RemoveFromFreeList(s); <span class="org-comment-delimiter">// </span><span class="org-comment">&#20174;&#24403;&#21069;&#38142;&#20013;&#37322;&#25918;&#25481;.</span>
+  <span class="org-keyword">const</span> <span class="org-type">Length</span> <span class="org-variable-name">n</span> = s-&gt;length;
+  <span class="org-comment-delimiter">// </span><span class="org-comment">&#23454;&#38469;&#19978;&#36825;&#20010;&#37096;&#20998;&#24182;&#27809;&#26377;&#37322;&#25918;&#21734;.</span>
+  TCMalloc_SystemRelease(<span class="org-keyword">reinterpret_cast</span>&lt;<span class="org-type">void</span>*&gt;(s-&gt;start &lt;&lt; kPageShift),
+                         <span class="org-keyword">static_cast</span>&lt;<span class="org-type">size_t</span>&gt;(s-&gt;length &lt;&lt; kPageShift));
+  s-&gt;location = <span class="org-constant">Span</span>::ON_RETURNED_FREELIST; <span class="org-comment-delimiter">// </span><span class="org-comment">&#26631;&#35760;&#20026;returned&#29366;&#24577;</span>
+   <span class="org-comment-delimiter">// </span><span class="org-comment">&#20002;&#22238;return free list&#26102;&#20505;&#20250;&#23581;&#35797;&#21512;&#24182;.</span>
+  MergeIntoFreeList(s);  <span class="org-comment-delimiter">// </span><span class="org-comment">Coalesces if possible.</span>
+  <span class="org-keyword">return</span> n;
+}
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgb3b9bb3" class="outline-4">
+<h4 id="orgb3b9bb3"><span class="section-number-4">4.5.8</span> Split</h4>
+<div class="outline-text-4" id="text-4-5-8">
+<p>
+Split过程和Carve过程是非常相似的，只不过Split针对的是IN_USE状态的这种span.
+代码阅读到这里暂时还不知道这个Split什么时候调用:(.what a shame.
+</p>
+</div>
+</div>
+
+<div id="outline-container-org44632a2" class="outline-4">
+<h4 id="org44632a2"><span class="section-number-4">4.5.9</span> GetNextRange</h4>
+<div class="outline-text-4" id="text-4-5-9">
+<p>
+得到page id &gt;=start的span的具体内容。首先看看MallocRange的内容
+</p>
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-keyword">struct</span> <span class="org-type">MallocRange</span> {
+  <span class="org-comment-delimiter">// </span><span class="org-comment">&#36825;&#20010;malloc&#33539;&#22260;&#26159;&#20160;&#20040;&#31867;&#22411;</span>
+  <span class="org-keyword">enum</span> <span class="org-type">Type</span> {
+    <span class="org-variable-name">INUSE</span>,                <span class="org-comment-delimiter">// </span><span class="org-comment">Application is using this range</span>
+    <span class="org-variable-name">FREE</span>,                 <span class="org-comment-delimiter">// </span><span class="org-comment">Range is currently free</span>
+    <span class="org-variable-name">UNMAPPED</span>,             <span class="org-comment-delimiter">// </span><span class="org-comment">Backing physical memory has been returned to the OS</span>
+    <span class="org-variable-name">UNKNOWN</span>,
+    <span class="org-comment-delimiter">// </span><span class="org-comment">More enum values may be added in the future</span>
+  };
+  <span class="org-comment-delimiter">// </span><span class="org-comment">&#22320;&#22336;&#65292;&#38271;&#24230;&#65292;&#31867;&#22411;</span>
+  <span class="org-type">uintptr_t</span> <span class="org-variable-name">address</span>;    <span class="org-comment-delimiter">// </span><span class="org-comment">Address of range</span>
+  <span class="org-type">size_t</span> <span class="org-variable-name">length</span>;        <span class="org-comment-delimiter">// </span><span class="org-comment">Byte length of range</span>
+  <span class="org-type">Type</span> <span class="org-variable-name">type</span>;            <span class="org-comment-delimiter">// </span><span class="org-comment">Type of this range</span>
+  <span class="org-comment-delimiter">// </span><span class="org-comment">=0 !INUSE,&#22914;&#26524;=1&#34920;&#31034;&#36825;&#20010;&#34987;&#24403;&#20570;page&#20351;&#29992;</span>
+  <span class="org-comment-delimiter">// </span><span class="org-comment">&#22914;&#26524;[0,1]&#20043;&#38388;&#30340;&#35805;&#65292;&#34920;&#26126;&#34987;&#20570;&#25104;&#20102;&#23567;&#23545;&#35937;&#20998;&#37197;</span>
+  <span class="org-type">double</span> <span class="org-variable-name">fraction</span>;      <span class="org-comment-delimiter">// </span><span class="org-comment">Fraction of range that is being used (0 if !INUSE)</span>
+};
+</pre>
+</div>
+<p>
+然后来看看这个过程
+</p>
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-type">bool</span> <span class="org-constant">PageHeap</span>::<span class="org-function-name">GetNextRange</span>(<span class="org-type">PageID</span> <span class="org-variable-name">start</span>, <span class="org-constant">base</span>::<span class="org-type">MallocRange</span>* <span class="org-variable-name">r</span>) {
+  <span class="org-type">Span</span>* <span class="org-variable-name">span</span> = <span class="org-keyword">reinterpret_cast</span>&lt;<span class="org-type">Span</span>*&gt;(pagemap_.Next(start));
+  <span class="org-keyword">if</span> (span == <span class="org-constant">NULL</span>) {
+    <span class="org-keyword">return</span> <span class="org-constant">false</span>;
+  }
+  r-&gt;address = span-&gt;start &lt;&lt; kPageShift;
+  r-&gt;length = span-&gt;length &lt;&lt; kPageShift;
+  r-&gt;fraction = 0;
+  <span class="org-keyword">switch</span> (span-&gt;location) {
+    <span class="org-keyword">case</span> <span class="org-constant">Span</span>::IN_USE:
+      r-&gt;type = <span class="org-constant">base</span>::<span class="org-constant">MallocRange</span>::INUSE;
+      r-&gt;fraction = 1;
+      <span class="org-keyword">if</span> (span-&gt;sizeclass &gt; 0) {
+        <span class="org-comment-delimiter">// </span><span class="org-comment">Only some of the objects in this span may be in use.</span>
+        <span class="org-keyword">const</span> <span class="org-type">size_t</span> <span class="org-variable-name">osize</span> = <span class="org-constant">Static</span>::sizemap()-&gt;class_to_size(span-&gt;sizeclass); <span class="org-comment-delimiter">// </span><span class="org-comment">&#39318;&#20808;&#30693;&#36947;&#36825;&#20010;class&#27599;&#20010;object size&#22810;&#23569;</span>
+       <span class="org-comment-delimiter">// </span><span class="org-comment">refcount&#34920;&#31034;&#24050;&#32463;&#20351;&#29992;&#20102;&#22810;&#23569;&#20010;objects.,&#36825;&#26679;&#23601;&#21487;&#20197;&#24471;&#21040;&#20351;&#29992;&#29575;</span>
+        r-&gt;fraction = (1.0 * osize * span-&gt;refcount) / r-&gt;length;
+      }
+      <span class="org-keyword">break</span>;
+    <span class="org-keyword">case</span> <span class="org-constant">Span</span>::ON_NORMAL_FREELIST:
+      r-&gt;type = <span class="org-constant">base</span>::<span class="org-constant">MallocRange</span>::FREE;
+      <span class="org-keyword">break</span>;
+    <span class="org-keyword">case</span> <span class="org-constant">Span</span>::ON_RETURNED_FREELIST:
+      r-&gt;type = <span class="org-constant">base</span>::<span class="org-constant">MallocRange</span>::UNMAPPED;
+      <span class="org-keyword">break</span>;
+    <span class="org-keyword">default</span>:
+      r-&gt;type = <span class="org-constant">base</span>::<span class="org-constant">MallocRange</span>::UNKNOWN;
+      <span class="org-keyword">break</span>;
+  }
+  <span class="org-keyword">return</span> <span class="org-constant">true</span>;
+}
+</pre>
+</div>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org0b863e7" class="outline-3">
+<h3 id="org0b863e7"><span class="section-number-3">4.6</span> TCMalloc_PageMap3</h3>
+<div class="outline-text-3" id="text-4-6">
+<p>
+page_map.h
+</p>
+
+<p>
+之前pageheap里面可以看到有这么一个要求，就是从一个page ID映射到span这么一个过程。在64位下面的话逻辑地址空间有1 &lt;&lt; 64，
+如果按照4K per page计算的话，那么最多会存在1&lt;&lt;52个page.如果使用数组存储的话那么是会存在问题的。所以这里使用了radix tree来进行映射。
+对于64位的话使用了3-level radix tree.每段分别是(18,18,16)
+</p>
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-comment-delimiter">// </span><span class="org-comment">How many bits should we consume at each interior level</span>
+<span class="org-keyword">static</span> <span class="org-keyword">const</span> <span class="org-type">int</span> <span class="org-variable-name">INTERIOR_BITS</span> = (BITS + 2) / 3; <span class="org-comment-delimiter">// </span><span class="org-comment">Round-up</span>
+<span class="org-keyword">static</span> <span class="org-keyword">const</span> <span class="org-type">int</span> <span class="org-variable-name">INTERIOR_LENGTH</span> = 1 &lt;&lt; INTERIOR_BITS;
+
+<span class="org-comment-delimiter">// </span><span class="org-comment">How many bits should we consume at leaf level</span>
+<span class="org-keyword">static</span> <span class="org-keyword">const</span> <span class="org-type">int</span> <span class="org-variable-name">LEAF_BITS</span> = BITS - 2*INTERIOR_BITS;
+<span class="org-keyword">static</span> <span class="org-keyword">const</span> <span class="org-type">int</span> <span class="org-variable-name">LEAF_LENGTH</span> = 1 &lt;&lt; LEAF_BITS;
+</pre>
+</div>
+<p>
+对于一个地址映射称为每一个level的number index的函数可以参看get这个方法
+</p>
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-type">void</span>* <span class="org-function-name">get</span>(<span class="org-type">Number</span> <span class="org-variable-name">k</span>) <span class="org-keyword">const</span> {
+  <span class="org-keyword">const</span> <span class="org-type">Number</span> <span class="org-variable-name">i1</span> = k &gt;&gt; (LEAF_BITS + INTERIOR_BITS);
+  <span class="org-keyword">const</span> <span class="org-type">Number</span> <span class="org-variable-name">i2</span> = (k &gt;&gt; LEAF_BITS) &amp; (INTERIOR_LENGTH-1);
+  <span class="org-keyword">const</span> <span class="org-type">Number</span> <span class="org-variable-name">i3</span> = k &amp; (LEAF_LENGTH-1);
+  <span class="org-keyword">if</span> ((k &gt;&gt; BITS) &gt; 0 ||
+      root_-&gt;ptrs[i1] == <span class="org-constant">NULL</span> || root_-&gt;ptrs[i1]-&gt;ptrs[i2] == <span class="org-constant">NULL</span>) {
+    <span class="org-keyword">return</span> <span class="org-constant">NULL</span>;
+  }
+  <span class="org-keyword">return</span> <span class="org-keyword">reinterpret_cast</span>&lt;<span class="org-type">Leaf</span>*&gt;(root_-&gt;ptrs[i1]-&gt;ptrs[i2])-&gt;values[i3];
+}
+</pre>
+</div>
+<p>
+初次之外，这个pagemap还有两个比较重要的接口
+</p>
+<ul class="org-ul">
+<li>bool Ensure(Number start, size_t n)</li>
+</ul>
+<p>
+因为get,set接口的话都是假设每一层对应的array都是存在的，所以基本上在调用之前的话都必须确保这个array存在。
+而Ensure就是做这件事情的，确保[start,start+n-1]这些PageId对应的每一层array都存在。
+</p>
+
+<ul class="org-ul">
+<li>void* Next(Number k) const</li>
+</ul>
+<p>
+Next接口就纯粹想知道&gt;=k的这些PageId首先映射到的span对象是什么，实现起来非常巧妙可以仔细阅读一下
+</p>
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-type">void</span>* <span class="org-function-name">Next</span>(<span class="org-type">Number</span> <span class="org-variable-name">k</span>) <span class="org-keyword">const</span> {
+  <span class="org-keyword">while</span> (k &lt; (Number(1) &lt;&lt; BITS)) {
+    <span class="org-keyword">const</span> <span class="org-type">Number</span> <span class="org-variable-name">i1</span> = k &gt;&gt; (LEAF_BITS + INTERIOR_BITS);
+    <span class="org-keyword">const</span> <span class="org-type">Number</span> <span class="org-variable-name">i2</span> = (k &gt;&gt; LEAF_BITS) &amp; (INTERIOR_LENGTH-1);
+    <span class="org-keyword">if</span> (root_-&gt;ptrs[i1] == <span class="org-constant">NULL</span>) { <span class="org-comment-delimiter">// </span><span class="org-comment">&#22914;&#26524;&#36825;&#23618;&#20026;&#31354;&#30340;&#35805;&#65292;&#37027;&#20040;&#30452;&#25509;&#36339;&#21040;&#19979;&#19968;&#23618;</span>
+      <span class="org-comment-delimiter">// </span><span class="org-comment">Advance to next top-level entry</span>
+      k = (i1 + 1) &lt;&lt; (LEAF_BITS + INTERIOR_BITS);
+    } <span class="org-keyword">else</span> {
+      <span class="org-type">Leaf</span>* <span class="org-variable-name">leaf</span> = <span class="org-keyword">reinterpret_cast</span>&lt;<span class="org-type">Leaf</span>*&gt;(root_-&gt;ptrs[i1]-&gt;ptrs[i2]);
+      <span class="org-keyword">if</span> (leaf != <span class="org-constant">NULL</span>) {
+        <span class="org-keyword">for</span> (<span class="org-type">Number</span> <span class="org-variable-name">i3</span> = (k &amp; (LEAF_LENGTH-1)); i3 &lt; LEAF_LENGTH; i3++) { <span class="org-comment-delimiter">// </span><span class="org-comment">&#36941;&#21382;&#36825;&#19968;&#23618;(&#31532;&#19977;&#23618;)&#30475;&#30475;&#26159;&#21542;&#23384;&#22312;.</span>
+          <span class="org-keyword">if</span> (leaf-&gt;values[i3] != <span class="org-constant">NULL</span>) {
+            <span class="org-keyword">return</span> leaf-&gt;values[i3];
+          }
+        }
+      }
+      <span class="org-comment-delimiter">// </span><span class="org-comment">Advance to next interior entry</span>
+      k = ((k &gt;&gt; LEAF_BITS) + 1) &lt;&lt; LEAF_BITS; <span class="org-comment-delimiter">// </span><span class="org-comment">&#22914;&#26524;&#31532;&#20108;&#23618;&#20026;&#31354;&#30340;&#35805;&#65292;&#37027;&#20040;&#21516;&#26679;&#36827;&#20837;&#19979;&#19968;&#23618;.</span>
+    }
+  }
+  <span class="org-keyword">return</span> <span class="org-constant">NULL</span>;
+}
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org1b59cb4" class="outline-3">
+<h3 id="org1b59cb4"><span class="section-number-3">4.7</span> PackedCache</h3>
+<div class="outline-text-3" id="text-4-7">
+<p>
+packed-cache-inl.h
+</p>
+
+<p>
+PackedCache是一种非常精巧的数据结构。它的作用主要是想知道对于一个pageId所管理的span而言的话，对应的sizeclass是什么。
+在pageheap里面是这样定义的   typedef PackedCache&lt;BITS-kPageShift, uint64_t&gt; CacheType;  我们还是看看这个结构是什么样的
+</p>
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-keyword">template</span> &lt;<span class="org-type">int</span> <span class="org-variable-name">kKeybits</span>, <span class="org-keyword">typename</span> <span class="org-type">T</span>&gt;
+<span class="org-keyword">class</span> <span class="org-type">PackedCache</span> {
+ <span class="org-keyword">public</span>:
+  <span class="org-keyword">typedef</span> <span class="org-type">uintptr_t</span> <span class="org-type">K</span>;
+  <span class="org-keyword">typedef</span> <span class="org-type">size_t</span> <span class="org-type">V</span>;
+<span class="org-preprocessor">#ifdef</span> TCMALLOC_SMALL_BUT_SLOW
+  <span class="org-comment-delimiter">// </span><span class="org-comment">Decrease the size map cache if running in the small memory mode.</span>
+  <span class="org-keyword">static</span> <span class="org-keyword">const</span> <span class="org-type">int</span> <span class="org-variable-name">kHashbits</span> = 12;
+<span class="org-preprocessor">#else</span>
+  <span class="org-keyword">static</span> <span class="org-keyword">const</span> <span class="org-type">int</span> <span class="org-variable-name">kHashbits</span> = 16;
+<span class="org-preprocessor">#endif</span>
+  <span class="org-comment-delimiter">// </span><span class="org-comment">array_ is the cache.  Its elements are volatile because any</span>
+  <span class="org-comment-delimiter">// </span><span class="org-comment">thread can write any array element at any time.</span>
+  <span class="org-keyword">volatile</span> <span class="org-type">T</span> <span class="org-variable-name">array_</span>[1 &lt;&lt; kHashbits];
+};
+</pre>
+</div>
+<p>
+首先它还是一个KV结构，只不过K+V大小可以放在sizeof(T)字节里面。回顾一下对于64位而言，PageId 52位，而sizeclass只有85中，完全可以存放在sizeof(uint64_t)里面。
+将K放在高字节，而V放在低字节，组成一个&lt;sizeof(uint64_t)大小的值存放在array_里面。此外还需要注意一个问题就是，这个有可能被多线程访问，
+但是如果我们将这个内容设置称为volatile的话，那么是不需要加锁就可以完成的。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgab13f69" class="outline-3">
+<h3 id="orgab13f69"><span class="section-number-3">4.8</span> Thread Cache</h3>
+<div class="outline-text-3" id="text-4-8">
+<p>
+thread_cache.h
+</p>
+</div>
+
+<div id="outline-container-org53b1c4e" class="outline-4">
+<h4 id="org53b1c4e"><span class="section-number-4">4.8.1</span> Data Structure</h4>
+<div class="outline-text-4" id="text-4-8-1">
+<p>
+Thread Cache就是每一个线程里面管理小对象分配的cache.tcmalloc应该是假设局部线程里面通常分配的都是小对象，这样可以减少锁竞争。
+而如果是分配大对象的话，那么会直接从page heap里面进行分配。如果本地小对象不够的话，那么会尝试从central cache里面要。
+Thread Cache比较重要的接口有下面这些：
+</p>
+<ul class="org-ul">
+<li>void Init(pthread_t tid); // 初始化</li>
+<li>void Cleanup();</li>
+<li>void* Allocate(size_t size, size_t cl); // 从class里面分配size大小</li>
+<li>void Deallocate(void* ptr, size_t size_class); // 将ptr放回class对应slab里面</li>
+<li>void Scavenge(); // 回收内存到central cache.就是文档里面说的GC</li>
+<li>bool SampleAllocation(size_t k); // 是否认为这次分配的k字节需要进行采样.</li>
+</ul>
+<p>
+还有一些静态方法也非常值得关注
+</p>
+<ul class="org-ul">
+<li>InitModule // 初始化模块</li>
+<li>InitTSD // 初始化thread storage data.</li>
+<li>GetThreadHeap // thread cache.</li>
+<li>GetCache // tc</li>
+<li>GetCacheIfPresent // tc</li>
+<li>CreateCacheIfNecessary // 如果tc不存在就创建</li>
+<li>BecomeIdle // 标记这个thread已经idle，所以可以释放这个tc了</li>
+</ul>
+
+<p>
+涉及到的静态变量有下面这些
+</p>
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-keyword">namespace</span> <span class="org-constant">tcmalloc</span> {
+
+<span class="org-keyword">static</span> <span class="org-type">bool</span> <span class="org-variable-name">phinited</span> = <span class="org-constant">false</span>;
+
+<span class="org-keyword">volatile</span> <span class="org-type">size_t</span> <span class="org-constant">ThreadCache</span>::<span class="org-variable-name">per_thread_cache_size_</span> = kMaxThreadCacheSize; <span class="org-comment-delimiter">// </span><span class="org-comment">&#27599;&#20010;tc&#30340;&#22823;&#23567; (4 &lt;&lt; 20,4MB)</span>
+<span class="org-type">size_t</span> <span class="org-constant">ThreadCache</span>::<span class="org-variable-name">overall_thread_cache_size_</span> = kDefaultOverallThreadCacheSize;<span class="org-comment-delimiter">// </span><span class="org-comment">&#25152;&#26377;tc&#22823;&#23567; (8 * kMaxThreadCacheSize = 32MB)</span>
+<span class="org-type">ssize_t</span> <span class="org-constant">ThreadCache</span>::<span class="org-variable-name">unclaimed_cache_space_</span> = kDefaultOverallThreadCacheSize;  <span class="org-comment-delimiter">// </span><span class="org-comment">&#31649;&#29702;&#23545;&#35937;&#25152;&#25345;&#26377;&#30340;tc&#22823;&#23567;(&#30456;&#24403;&#20110;&#24635;tc&#37324;&#38754;&#36824;&#26377;&#22810;&#23569;&#21487;&#29992;).</span>
+<span class="org-comment-delimiter">// </span><span class="org-comment">(= overall_thread_cache_size_ - sum(tc.max_size))</span>
+<span class="org-type">PageHeapAllocator</span>&lt;ThreadCache&gt; <span class="org-variable-name">threadcache_allocator</span>; <span class="org-comment-delimiter">// </span><span class="org-comment">tc sample alloc.</span>
+<span class="org-type">ThreadCache</span>* <span class="org-constant">ThreadCache</span>::<span class="org-variable-name">thread_heaps_</span> = <span class="org-constant">NULL</span>; <span class="org-comment-delimiter">// </span><span class="org-comment">tc&#38142;.</span>
+<span class="org-type">int</span> <span class="org-constant">ThreadCache</span>::<span class="org-variable-name">thread_heap_count_</span> = 0; <span class="org-comment-delimiter">// </span><span class="org-comment">&#22810;&#23569;&#20010;tc</span>
+<span class="org-type">ThreadCache</span>* <span class="org-constant">ThreadCache</span>::<span class="org-variable-name">next_memory_steal_</span> = <span class="org-constant">NULL</span>; <span class="org-comment-delimiter">// </span><span class="org-comment">&#19979;&#19968;&#27425;steal&#30340;tc.</span>
+<span class="org-type">bool</span> <span class="org-constant">ThreadCache</span>::<span class="org-variable-name">tsd_inited_</span> = <span class="org-constant">false</span>; <span class="org-comment-delimiter">// </span><span class="org-comment">&#26159;&#21542;&#24050;&#32463;&#21021;&#22987;&#21270;&#20102;&#32447;&#31243;&#23616;&#37096;&#25968;&#25454;</span>
+<span class="org-type">pthread_key_t</span> <span class="org-constant">ThreadCache</span>::<span class="org-variable-name">heap_key_</span>; <span class="org-comment-delimiter">// </span><span class="org-comment">&#22914;&#26524;&#20351;&#29992;pthread&#32447;&#31243;&#23616;&#37096;&#25968;&#25454;&#35299;&#20915;&#21150;&#27861;</span>
+
+}
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org0cb48db" class="outline-4">
+<h4 id="org0cb48db"><span class="section-number-4">4.8.2</span> InitModule</h4>
+<div class="outline-text-4" id="text-4-8-2">
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-type">void</span> <span class="org-constant">ThreadCache</span>::<span class="org-function-name">InitModule</span>() {
+  <span class="org-type">SpinLockHolder</span> <span class="org-variable-name">h</span>(<span class="org-constant">Static</span>::pageheap_lock());  <span class="org-comment-delimiter">// </span><span class="org-comment">&#20840;&#23616;&#33258;&#36873;&#38145;</span>
+  <span class="org-keyword">if</span> (<span class="org-negation-char">!</span>phinited) {
+    <span class="org-constant">Static</span>::InitStaticVars(); <span class="org-comment-delimiter">// </span><span class="org-comment">&#21021;&#22987;&#21270;&#19968;&#20123;&#38745;&#24577;&#25968;&#25454;</span>
+    threadcache_allocator.Init(); <span class="org-comment-delimiter">// </span><span class="org-comment">PageHeapAllocator&lt;ThreadCache&gt;,sample_alloc&#21021;&#22987;&#21270;</span>
+    phinited = 1;
+  }
+}
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgd8819e6" class="outline-4">
+<h4 id="orgd8819e6"><span class="section-number-4">4.8.3</span> InitTSD</h4>
+<div class="outline-text-4" id="text-4-8-3">
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-type">void</span> <span class="org-constant">ThreadCache</span>::<span class="org-function-name">InitTSD</span>() {
+  ASSERT(<span class="org-negation-char">!</span>tsd_inited_); <span class="org-comment-delimiter">// </span><span class="org-comment">&#36825;&#20010;&#21464;&#37327;&#26631;&#35760;&#26159;&#21542;&#24050;&#32463;&#21021;&#22987;&#21270;&#20102;&#32447;&#31243;&#23616;&#37096;&#21464;&#37327;&#65292;&#22914;&#26524;&#27809;&#26377;&#30340;&#35805;&#37027;&#20040;&#26159;&#27809;&#26377;&#20219;&#20309;tc&#30340;.</span>
+  perftools_pthread_key_create(&amp;heap_key_, DestroyThreadCache); <span class="org-comment-delimiter">// </span><span class="org-comment">&#36825;&#20010;&#23601;&#26159;&#35774;&#32622;&#22909;&#32447;&#31243;&#23616;&#37096;&#21464;&#37327;</span>
+  <span class="org-comment-delimiter">// </span><span class="org-comment">&#22240;&#20026;&#27599;&#19968;&#20010;&#32447;&#31243;&#37117;&#20250;&#26377;&#19968;&#20010;&#32447;&#31243;&#23616;&#37096;&#21464;&#37327;thread cache.</span>
+  tsd_inited_ = <span class="org-constant">true</span>;
+}
+</pre>
+</div>
+<p>
+然后我们看看DestroyThreadCache.很容易想到其实这个方法就是销毁掉线程的tc
+</p>
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-type">void</span> <span class="org-constant">ThreadCache</span>::<span class="org-function-name">DestroyThreadCache</span>(<span class="org-type">void</span>* <span class="org-variable-name">ptr</span>) {
+  <span class="org-comment-delimiter">// </span><span class="org-comment">Note that "ptr" cannot be NULL since pthread promises not</span>
+  <span class="org-comment-delimiter">// </span><span class="org-comment">to invoke the destructor on NULL values, but for safety,</span>
+  <span class="org-comment-delimiter">// </span><span class="org-comment">we check anyway.</span>
+  <span class="org-keyword">if</span> (ptr == <span class="org-constant">NULL</span>) <span class="org-keyword">return</span>;
+  DeleteCache(<span class="org-keyword">reinterpret_cast</span>&lt;<span class="org-type">ThreadCache</span>*&gt;(ptr));
+}
+</pre>
+</div>
+<p>
+我们可能会很想看看这个调用InitTSD的时机是什么？这个是放在一个全局静态变量里面一起调用的。之前已经提到了TCMallocGuard
+</p>
+</div>
+</div>
+
+<div id="outline-container-org79dbd7e" class="outline-4">
+<h4 id="org79dbd7e"><span class="section-number-4">4.8.4</span> GetCache</h4>
+<div class="outline-text-4" id="text-4-8-4">
+<p>
+关于GetCache我们也可以一起看看GetThreadHeap,GetCacheIfPresent,CreateCacheIfNecessary
+</p>
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-keyword">inline</span> <span class="org-type">ThreadCache</span>* <span class="org-constant">ThreadCache</span>::<span class="org-function-name">GetCache</span>() {
+  <span class="org-type">ThreadCache</span>* <span class="org-variable-name">ptr</span> = <span class="org-constant">NULL</span>;
+  <span class="org-keyword">if</span> (<span class="org-negation-char">!</span>tsd_inited_) {
+    InitModule(); <span class="org-comment-delimiter">// </span><span class="org-comment">&#21021;&#22987;&#21270;&#27169;&#22359;</span>
+  } <span class="org-keyword">else</span> {
+    ptr = GetThreadHeap(); <span class="org-comment-delimiter">// </span><span class="org-comment">&#30452;&#25509;&#26597;&#30475;&#26159;&#21542;&#23384;&#22312;</span>
+  }
+  <span class="org-keyword">if</span> (ptr == <span class="org-constant">NULL</span>) ptr = CreateCacheIfNecessary(); <span class="org-comment-delimiter">// </span><span class="org-comment">&#22914;&#26524;&#19981;&#23384;&#22312;&#30340;&#35805;&#37027;&#20040;&#23601;&#21019;&#24314;</span>
+  <span class="org-keyword">return</span> ptr;
+}
+</pre>
+</div>
+
+<p>
+GetThreadHeap非常简单直接从线程局部变量里面取出即可
+</p>
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-keyword">inline</span> <span class="org-type">ThreadCache</span>* <span class="org-constant">ThreadCache</span>::<span class="org-function-name">GetThreadHeap</span>() {
+  <span class="org-keyword">return</span> <span class="org-keyword">reinterpret_cast</span>&lt;<span class="org-type">ThreadCache</span> *&gt;(
+      perftools_pthread_getspecific(heap_key_));
+}
+<span class="org-keyword">inline</span> <span class="org-type">ThreadCache</span>* <span class="org-constant">ThreadCache</span>::<span class="org-function-name">GetCacheIfPresent</span>() {
+  <span class="org-keyword">if</span> (<span class="org-negation-char">!</span>tsd_inited_) <span class="org-keyword">return</span> <span class="org-constant">NULL</span>;
+  <span class="org-keyword">return</span> GetThreadHeap();
+}
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org0c4c983" class="outline-4">
+<h4 id="org0c4c983"><span class="section-number-4">4.8.5</span> CreateCacheIfNecessary</h4>
+<div class="outline-text-4" id="text-4-8-5">
+<p>
+然后看看CreateCacheIfNecessary这个实现,看看是如何创建tc的
+</p>
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-type">ThreadCache</span>* <span class="org-constant">ThreadCache</span>::<span class="org-function-name">CreateCacheIfNecessary</span>() {
+  <span class="org-comment-delimiter">// </span><span class="org-comment">Initialize per-thread data if necessary</span>
+  <span class="org-type">ThreadCache</span>* <span class="org-variable-name">heap</span> = <span class="org-constant">NULL</span>;
+  {
+    <span class="org-type">SpinLockHolder</span> <span class="org-variable-name">h</span>(<span class="org-constant">Static</span>::pageheap_lock());
+    <span class="org-keyword">const</span> <span class="org-type">pthread_t</span> <span class="org-variable-name">me</span> = pthread_self();
+    <span class="org-comment-delimiter">// </span><span class="org-comment">&#26597;&#25214;&#37324;&#38754;&#26159;&#21542;&#24050;&#32463;&#23384;&#22312;,&#27599;&#20010;&#32447;&#31243;&#37117;&#21019;&#24314;&#19968;&#20010;ThreadCache.</span>
+    <span class="org-comment-delimiter">// </span><span class="org-comment">&#24182;&#19988;&#36825;&#20010;&#26159;&#25353;&#29031;&#38142;&#32452;&#32455;&#36215;&#26469;&#30340;&#12290;</span>
+    <span class="org-keyword">for</span> (<span class="org-type">ThreadCache</span>* <span class="org-variable-name">h</span> = thread_heaps_; h != <span class="org-constant">NULL</span>; h = h-&gt;next_) {
+      <span class="org-keyword">if</span> (h-&gt;tid_ == me) {
+        heap = h;
+        <span class="org-keyword">break</span>;
+      }
+    }
+    <span class="org-keyword">if</span> (heap == <span class="org-constant">NULL</span>) heap = NewHeap(me);
+  }
+  <span class="org-keyword">if</span> (<span class="org-negation-char">!</span>heap-&gt;in_setspecific_ &amp;&amp; tsd_inited_) {
+    heap-&gt;in_setspecific_ = <span class="org-constant">true</span>; <span class="org-comment-delimiter">// </span><span class="org-comment">&#36991;&#20813;setspecific&#37324;&#38754;&#36824;&#35843;&#29992;</span>
+    perftools_pthread_setspecific(heap_key_, heap);
+    heap-&gt;in_setspecific_ = <span class="org-constant">false</span>;
+  }
+  <span class="org-keyword">return</span> heap;
+}
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgbb2c532" class="outline-4">
+<h4 id="orgbb2c532"><span class="section-number-4">4.8.6</span> NewHeap</h4>
+<div class="outline-text-4" id="text-4-8-6">
+<p>
+NewHeap是产生一个新的tc调用Init.将这个tc插入到队列里面.注意这里NewHeap已经加了锁了。
+</p>
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-type">ThreadCache</span>* <span class="org-constant">ThreadCache</span>::<span class="org-function-name">NewHeap</span>(<span class="org-type">pthread_t</span> <span class="org-variable-name">tid</span>) {
+  <span class="org-comment-delimiter">// </span><span class="org-comment">Create the heap and add it to the linked list</span>
+  <span class="org-type">ThreadCache</span> *<span class="org-variable-name">heap</span> = threadcache_allocator.New();
+  heap-&gt;Init(tid); <span class="org-comment-delimiter">// </span><span class="org-comment">&#35843;&#29992;Init</span>
+  heap-&gt;next_ = thread_heaps_; <span class="org-comment-delimiter">// </span><span class="org-comment">&#32452;&#32455;&#25104;&#20026;&#19968;&#20010;&#21452;&#21521;&#38142;&#34920;</span>
+  heap-&gt;prev_ = <span class="org-constant">NULL</span>;
+  <span class="org-keyword">if</span> (thread_heaps_ != <span class="org-constant">NULL</span>) {
+    thread_heaps_-&gt;prev_ = heap;
+  } <span class="org-keyword">else</span> {
+    <span class="org-comment-delimiter">// </span><span class="org-comment">This is the only thread heap at the momment.</span>
+    ASSERT(next_memory_steal_ == <span class="org-constant">NULL</span>);
+    next_memory_steal_ = heap; <span class="org-comment-delimiter">// </span><span class="org-comment">&#22914;&#26524;&#36825;&#20010;&#26159;&#31532;&#19968;&#20010;&#20803;&#32032;&#30340;&#35805;&#65292;&#37027;&#20040;&#35774;&#32622;next_memory_steal.</span>
+  }
+  thread_heaps_ = heap;
+  thread_heap_count_++; <span class="org-comment-delimiter">// </span><span class="org-comment">tc&#25968;&#37327;.</span>
+  <span class="org-keyword">return</span> heap;
+}
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org7afd0b7" class="outline-4">
+<h4 id="org7afd0b7"><span class="section-number-4">4.8.7</span> BecomeIdle</h4>
+<div class="outline-text-4" id="text-4-8-7">
+<p>
+BecomeIdle触发条件现在还不是很清楚，但是作用是认为这个tc没有必要了可以删除。不过在大部分使用应该不会有这个调用吧。
+</p>
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-type">void</span> <span class="org-constant">ThreadCache</span>::<span class="org-function-name">BecomeIdle</span>() {
+  <span class="org-keyword">if</span> (<span class="org-negation-char">!</span>tsd_inited_) <span class="org-keyword">return</span>;              <span class="org-comment-delimiter">// </span><span class="org-comment">No caches yet</span>
+  <span class="org-type">ThreadCache</span>* <span class="org-variable-name">heap</span> = GetThreadHeap();
+  <span class="org-keyword">if</span> (heap == <span class="org-constant">NULL</span>) <span class="org-keyword">return</span>;             <span class="org-comment-delimiter">// </span><span class="org-comment">No thread cache to remove</span>
+  <span class="org-keyword">if</span> (heap-&gt;in_setspecific_) <span class="org-keyword">return</span>;    <span class="org-comment-delimiter">// </span><span class="org-comment">Do not disturb the active caller</span>
+
+  heap-&gt;in_setspecific_ = <span class="org-constant">true</span>; <span class="org-comment-delimiter">// </span><span class="org-comment">&#38450;&#27490;&#36882;&#24402;&#35843;&#29992;</span>
+  perftools_pthread_setspecific(heap_key_, <span class="org-constant">NULL</span>);
+  heap-&gt;in_setspecific_ = <span class="org-constant">false</span>;
+  <span class="org-keyword">if</span> (GetThreadHeap() == heap) { <span class="org-comment-delimiter">// </span><span class="org-comment">&#24212;&#35813;&#26159;&#19981;&#20250;&#35843;&#29992;&#36825;&#20010;&#37096;&#20998;&#36923;&#36753;&#30340;.</span>
+    <span class="org-comment-delimiter">// </span><span class="org-comment">Somehow heap got reinstated by a recursive call to malloc</span>
+    <span class="org-comment-delimiter">// </span><span class="org-comment">from pthread_setspecific.  We give up in this case.</span>
+    <span class="org-keyword">return</span>;
+  }
+  <span class="org-comment-delimiter">// </span><span class="org-comment">&#28982;&#21518;&#23558;&#36825;&#20010;heap&#37322;&#25918;&#25481;</span>
+  <span class="org-comment-delimiter">// </span><span class="org-comment">We can now get rid of the heap</span>
+  DeleteCache(heap);
+}
+</pre>
+</div>
+
+<p>
+这里我想到一个问题，就是如果不断地启动线程然后关闭线程，如果tid是不允许复用的话那么会导致thread_cache不断地开辟。
+如果使用gettid的话那么可能会有这个情况，而如果用pthread_self的话可能就不会有了(至少从程序上看可以复用)
+</p>
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-preprocessor">#include</span> <span class="org-string">&lt;cstdio&gt;</span>
+<span class="org-preprocessor">#include</span> <span class="org-string">&lt;pthread.h&gt;</span>
+
+<span class="org-type">char</span> <span class="org-variable-name">buf</span>[1024*1024];
+<span class="org-type">void</span>* <span class="org-function-name">foo</span>(<span class="org-type">void</span>* <span class="org-variable-name">arg</span>){
+  <span class="org-keyword">return</span> <span class="org-constant">NULL</span>;
+}
+<span class="org-type">int</span> <span class="org-function-name">main</span>() {
+  <span class="org-type">pthread_t</span> <span class="org-variable-name">tid</span>;
+  <span class="org-keyword">for</span>(<span class="org-type">int</span> <span class="org-variable-name">i</span>=0;i&lt;10;i++){
+    pthread_create(&amp;tid,<span class="org-constant">NULL</span>,foo,<span class="org-constant">NULL</span>);
+    pthread_join(tid,<span class="org-constant">NULL</span>);
+    printf(<span class="org-string">"%zu\n"</span>,<span class="org-keyword">static_cast</span>&lt;<span class="org-type">size_t</span>&gt;(tid));
+    pthread_create(&amp;tid,<span class="org-constant">NULL</span>,foo,<span class="org-constant">NULL</span>);
+    pthread_join(tid,<span class="org-constant">NULL</span>);
+    printf(<span class="org-string">"%zu\n"</span>,<span class="org-keyword">static_cast</span>&lt;<span class="org-type">size_t</span>&gt;(tid));
+  }
+  <span class="org-keyword">return</span> 0;
+}
+</pre>
+</div>
+<p>
+从程序运行结果来看的话都是一样的tid.
+</p>
+</div>
+</div>
+
+<div id="outline-container-orga11aec2" class="outline-4">
+<h4 id="orga11aec2"><span class="section-number-4">4.8.8</span> Init</h4>
+<div class="outline-text-4" id="text-4-8-8">
+<p>
+注意这里Init已经在外围的NewHeap加锁了。这个地方进行初始化。设置一下最大分配多少空间以及初始化每一个slab
+</p>
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-type">void</span> <span class="org-constant">ThreadCache</span>::<span class="org-function-name">Init</span>(<span class="org-type">pthread_t</span> <span class="org-variable-name">tid</span>) {
+  size_ = 0;
+
+  max_size_ = 0;
+  IncreaseCacheLimitLocked(); <span class="org-comment-delimiter">// </span><span class="org-comment">&#36825;&#20010;&#22320;&#26041;&#22312;&#35745;&#31639;&#21040;&#24213;&#21487;&#20197;&#20998;&#37197;&#22810;&#23569;max size.</span>
+  <span class="org-keyword">if</span> (max_size_ == 0) {
+    <span class="org-comment-delimiter">// </span><span class="org-comment">There isn't enough memory to go around.  Just give the minimum to</span>
+    <span class="org-comment-delimiter">// </span><span class="org-comment">this thread.</span>
+    <span class="org-comment-delimiter">// </span><span class="org-comment">static const size_t kMaxSize    = 256 * 1024;(256K)</span>
+    <span class="org-comment-delimiter">// </span><span class="org-comment">static const size_t kMinThreadCacheSize = kMaxSize * 2;(512K)</span>
+    max_size_ = kMinThreadCacheSize; <span class="org-comment-delimiter">// </span><span class="org-comment">512K.</span>
+
+    <span class="org-comment-delimiter">// </span><span class="org-comment">Take unclaimed_cache_space_ negative.</span>
+    unclaimed_cache_space_ -= kMinThreadCacheSize; <span class="org-comment-delimiter">// </span><span class="org-comment">&#37027;&#20040;&#30456;&#24403;&#20110;tc&#25345;&#26377;&#31354;&#38386;&#31354;&#38388;&#20063;&#23545;&#24212;&#20943;&#23569;</span>
+    ASSERT(unclaimed_cache_space_ &lt; 0);
+  }
+
+  next_ = <span class="org-constant">NULL</span>;
+  prev_ = <span class="org-constant">NULL</span>;
+  tid_  = tid;
+  in_setspecific_ = <span class="org-constant">false</span>;
+  <span class="org-keyword">for</span> (<span class="org-type">size_t</span> <span class="org-variable-name">cl</span> = 0; cl &lt; kNumClasses; ++cl) {
+    list_[cl].Init(); <span class="org-comment-delimiter">// </span><span class="org-comment">&#21021;&#22987;&#21270;&#27599;&#20010;slab</span>
+  }
+
+  <span class="org-type">uint32_t</span> <span class="org-variable-name">sampler_seed</span>;
+  memcpy(&amp;sampler_seed, &amp;tid, <span class="org-keyword">sizeof</span>(sampler_seed));
+  sampler_.Init(sampler_seed); <span class="org-comment-delimiter">// </span><span class="org-comment">&#21021;&#22987;&#21270;sampler</span>
+}
+</pre>
+</div>
+<p>
+这里我们有两个问题没有搞懂，一个是slab到底结构是怎么样的，一个就是IncreaseCacheLimitLocked里面是如何计算max_size_的。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgb9c5a4f" class="outline-4">
+<h4 id="orgb9c5a4f"><span class="section-number-4">4.8.9</span> ThreadCache::FreeList</h4>
+<div class="outline-text-4" id="text-4-8-9">
+<p>
+freelist就是对应的slab.本质上数据结构就是一个单向链表，毕竟这个分配对于顺序没有任何要求。
+</p>
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-keyword">class</span> <span class="org-type">FreeList</span> {
+ <span class="org-keyword">private</span>:
+  <span class="org-type">void</span>*    <span class="org-variable-name">list_</span>;       <span class="org-comment-delimiter">// </span><span class="org-comment">Linked list of nodes</span>
+
+  <span class="org-comment-delimiter">// </span><span class="org-comment">On 64-bit hardware, manipulating 16-bit values may be slightly slow.</span>
+  <span class="org-type">uint32_t</span> <span class="org-variable-name">length_</span>;      <span class="org-comment-delimiter">// </span><span class="org-comment">Current length. // &#24403;&#21069;&#38271;&#24230;&#22810;&#23569;</span>
+  <span class="org-type">uint32_t</span> <span class="org-variable-name">lowater_</span>;     <span class="org-comment-delimiter">// </span><span class="org-comment">Low water mark for list length. // &#38271;&#24230;&#26368;&#23569;&#26102;&#20505;&#36798;&#21040;&#20102;&#22810;&#23569;</span>
+  <span class="org-type">uint32_t</span> <span class="org-variable-name">max_length_</span>;  <span class="org-comment-delimiter">// </span><span class="org-comment">Dynamic max list length based on usage. // &#35748;&#20026;&#30340;&#26368;&#22823;&#38271;&#24230;&#22810;&#23569;</span>
+  <span class="org-comment-delimiter">// </span><span class="org-comment">Tracks the number of times a deallocation has caused</span>
+  <span class="org-comment-delimiter">// </span><span class="org-comment">length_ &gt; max_length_.  After the kMaxOverages'th time, max_length_</span>
+  <span class="org-comment-delimiter">// </span><span class="org-comment">shrinks and length_overages_ is reset to zero.</span>
+  <span class="org-type">uint32_t</span> <span class="org-variable-name">length_overages_</span>; <span class="org-comment-delimiter">// </span><span class="org-comment">&#36229;&#36807;&#26368;&#22823;&#38271;&#24230;&#30340;&#27425;&#25968;</span>
+};
+</pre>
+</div>
+<p>
+所有的这些参数其实都是为了进行方便做一些策略。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org0b11ac6" class="outline-4">
+<h4 id="org0b11ac6"><span class="section-number-4">4.8.10</span> IncreaseCacheLimitLocked</h4>
+<div class="outline-text-4" id="text-4-8-10">
+<p>
+之前说到这个函数是在计算这个tc里面最多可以分配多少内存，那么看看这个函数的实现.调用这个函数的时候必然都是已经加了自旋锁的。
+</p>
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-type">void</span> <span class="org-constant">ThreadCache</span>::<span class="org-function-name">IncreaseCacheLimitLocked</span>() {
+  <span class="org-keyword">if</span> (unclaimed_cache_space_ &gt; 0) { <span class="org-comment-delimiter">// </span><span class="org-comment">&#22914;&#26524;tc&#37324;&#38754;&#36824;&#26377;&#31354;&#38386;&#30340;&#20869;&#23481;&#30340;&#35805;&#65292;&#37027;&#20040;&#33719;&#21462;64KB&#36807;&#26469;</span>
+    <span class="org-comment-delimiter">// </span><span class="org-comment">static const size_t kStealAmount = 1 &lt;&lt; 16;(64KB)</span>
+    <span class="org-comment-delimiter">// </span><span class="org-comment">Possibly make unclaimed_cache_space_ negative.</span>
+    unclaimed_cache_space_ -= kStealAmount;
+    max_size_ += kStealAmount;
+    <span class="org-keyword">return</span>;
+  }
+  <span class="org-comment-delimiter">// </span><span class="org-comment">&#22914;&#26524;&#21457;&#29616;&#20381;&#28982;&#19981;&#22815;&#30340;&#35805;&#65292;&#37027;&#20040;&#20250;&#20174;&#27599;&#19968;&#20010;&#20197;&#21518;&#30340;tc&#37324;&#38754;&#33719;&#21462;&#20599;&#21462;&#37096;&#20998;&#20986;&#26469;.</span>
+  <span class="org-comment-delimiter">// </span><span class="org-comment">&#36825;&#20010;&#38142;&#26159;&#25353;&#29031;next_memory_steal_&#21462;&#20986;&#26469;&#30340;&#65292;&#22914;&#26524;==NULL&#37027;&#20040;&#20174;&#22836;&#24320;&#22987;&#12290;</span>
+  <span class="org-comment-delimiter">// </span><span class="org-comment">&#20294;&#26159;&#24456;&#24555;&#20250;&#21457;&#29616;&#36825;&#20010;max_size&#20854;&#23454;&#24182;&#19981;&#26159;&#19968;&#25104;&#19981;&#21464;&#30340;.</span>
+  <span class="org-comment-delimiter">// </span><span class="org-comment">Don't hold pageheap_lock too long.  Try to steal from 10 other</span>
+  <span class="org-comment-delimiter">// </span><span class="org-comment">threads before giving up.  The i &lt; 10 condition also prevents an</span>
+  <span class="org-comment-delimiter">// </span><span class="org-comment">infinite loop in case none of the existing thread heaps are</span>
+  <span class="org-comment-delimiter">// </span><span class="org-comment">suitable places to steal from.</span>
+  <span class="org-keyword">for</span> (<span class="org-type">int</span> <span class="org-variable-name">i</span> = 0; i &lt; 10;
+       ++i, next_memory_steal_ = next_memory_steal_-&gt;next_) {
+    <span class="org-comment-delimiter">// </span><span class="org-comment">Reached the end of the linked list.  Start at the beginning.</span>
+    <span class="org-keyword">if</span> (next_memory_steal_ == <span class="org-constant">NULL</span>) {
+      ASSERT(thread_heaps_ != <span class="org-constant">NULL</span>);
+      next_memory_steal_ = thread_heaps_;
+    }
+    <span class="org-keyword">if</span> (next_memory_steal_ == <span class="org-keyword">this</span> ||
+        next_memory_steal_-&gt;max_size_ &lt;= kMinThreadCacheSize) {
+      <span class="org-keyword">continue</span>;
+    }
+    next_memory_steal_-&gt;max_size_ -= kStealAmount;
+    max_size_ += kStealAmount;
+
+    next_memory_steal_ = next_memory_steal_-&gt;next_;
+    <span class="org-keyword">return</span>;
+  }
+}
+</pre>
+</div>
+<p>
+总之tc的max_size分配策略的话就是根据当前所有tc剩余的空间，如果没有空间的话那么尝试从其他的tc里面获取。应该是想限制一开始每个tc的最大大小。
+但是需要注意的是，这个tc最大大小并不是一成不变的，可能会随着时间变化而增加。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgdc10650" class="outline-4">
+<h4 id="orgdc10650"><span class="section-number-4">4.8.11</span> DeleteCache</h4>
+<div class="outline-text-4" id="text-4-8-11">
+<p>
+DeleteCache作用就是删除一个tc.大致逻辑非常简单，首先将自己持有的内存归还给central cache,然后将自己从tc的链中删除即可。
+</p>
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-type">void</span> <span class="org-constant">ThreadCache</span>::<span class="org-function-name">DeleteCache</span>(<span class="org-type">ThreadCache</span>* <span class="org-variable-name">heap</span>) {
+  <span class="org-comment-delimiter">// </span><span class="org-comment">Remove all memory from heap</span>
+  heap-&gt;Cleanup(); <span class="org-comment-delimiter">// </span><span class="org-comment">&#31245;&#21518;&#25105;&#20204;&#26597;&#30475;Cleanup&#23454;&#29616;&#12290;</span>
+
+  <span class="org-comment-delimiter">// </span><span class="org-comment">Remove from linked list</span>
+  <span class="org-type">SpinLockHolder</span> <span class="org-variable-name">h</span>(<span class="org-constant">Static</span>::pageheap_lock());
+  <span class="org-keyword">if</span> (heap-&gt;next_ != <span class="org-constant">NULL</span>) heap-&gt;next_-&gt;prev_ = heap-&gt;prev_;
+  <span class="org-keyword">if</span> (heap-&gt;prev_ != <span class="org-constant">NULL</span>) heap-&gt;prev_-&gt;next_ = heap-&gt;next_;
+  <span class="org-keyword">if</span> (thread_heaps_ == heap) thread_heaps_ = heap-&gt;next_;
+  thread_heap_count_--;
+
+  <span class="org-keyword">if</span> (next_memory_steal_ == heap) next_memory_steal_ = heap-&gt;next_;
+  <span class="org-keyword">if</span> (next_memory_steal_ == <span class="org-constant">NULL</span>) next_memory_steal_ = thread_heaps_;
+  unclaimed_cache_space_ += heap-&gt;max_size_;
+
+  threadcache_allocator.Delete(heap);
+}
+</pre>
+</div>
+<p>
+将自己删除之后需要重新计算thread_heaps以及next_memory_steal这两个变量。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org21e1080" class="outline-4">
+<h4 id="org21e1080"><span class="section-number-4">4.8.12</span> Cleanup</h4>
+<div class="outline-text-4" id="text-4-8-12">
+<p>
+Cleanup是在DeleteCache，会在BecomeIdle里面可以调用，也会在销毁线程局部变量里面调用。作用就是将自己持有的内存归还给系统
+</p>
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-type">void</span> <span class="org-constant">ThreadCache</span>::<span class="org-function-name">Cleanup</span>() {
+  <span class="org-comment-delimiter">// </span><span class="org-comment">Put unused memory back into central cache</span>
+  <span class="org-keyword">for</span> (<span class="org-type">int</span> <span class="org-variable-name">cl</span> = 0; cl &lt; kNumClasses; ++cl) {
+    <span class="org-keyword">if</span> (list_[cl].length() &gt; 0) {
+      ReleaseToCentralCache(&amp;list_[cl], cl, list_[cl].length());
+    }
+  }
+}
+</pre>
+</div>
+<p>
+遍历所有的slab并且将上面挂在的free list归还给central cache.这个在ReleaseToCentralCache里面调用
+</p>
+</div>
+</div>
+
+<div id="outline-container-org6a1ad55" class="outline-4">
+<h4 id="org6a1ad55"><span class="section-number-4">4.8.13</span> ReleaseToCentralCache</h4>
+<div class="outline-text-4" id="text-4-8-13">
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-type">void</span> <span class="org-constant">ThreadCache</span>::<span class="org-function-name">ReleaseToCentralCache</span>(<span class="org-type">FreeList</span>* <span class="org-variable-name">src</span>, <span class="org-type">size_t</span> <span class="org-variable-name">cl</span>, <span class="org-type">int</span> <span class="org-variable-name">N</span>) {
+  ASSERT(src == &amp;list_[cl]);
+  <span class="org-keyword">if</span> (N &gt; src-&gt;length()) N = src-&gt;length(); <span class="org-comment-delimiter">// </span><span class="org-comment">&#36825;&#20010;&#22320;&#26041;&#24863;&#35273;&#19981;&#26159;&#24456;&#26377;&#24517;&#35201;.&#19981;&#36807;&#20854;&#20182;&#22320;&#26041;&#30340;&#35805;&#21487;&#33021;&#36825;&#20004;&#20010;&#21442;&#25968;&#19981;&#21516;</span>
+  <span class="org-type">size_t</span> <span class="org-variable-name">delta_bytes</span> = N * <span class="org-constant">Static</span>::sizemap()-&gt;ByteSizeForClass(cl); <span class="org-comment-delimiter">// </span><span class="org-comment">&#20102;&#35299;&#26377;&#22810;&#23569;&#20010;&#23545;&#35937;&#21344;&#29992;&#20869;&#23384;&#22823;&#23567;&#37322;&#25918;.</span>
+
+  <span class="org-comment-delimiter">// </span><span class="org-comment">We return prepackaged chains of the correct size to the central cache.</span>
+  <span class="org-comment-delimiter">// </span><span class="org-comment">TODO: Use the same format internally in the thread caches?</span>
+  <span class="org-type">int</span> <span class="org-variable-name">batch_size</span> = <span class="org-constant">Static</span>::sizemap()-&gt;num_objects_to_move(cl);
+  <span class="org-keyword">while</span> (N &gt; batch_size) { <span class="org-comment-delimiter">// </span><span class="org-comment">&#27599;&#27425;&#24402;&#36824;batch_size&#20010;&#20869;&#23481;&#65292;&#36825;&#26679;central cache&#21487;&#20197;&#25918;&#22312;transfer cache&#37324;&#38754;</span>
+    <span class="org-type">void</span> *<span class="org-variable-name">tail</span>, *<span class="org-variable-name">head</span>;
+    src-&gt;PopRange(batch_size, &amp;head, &amp;tail);
+    <span class="org-constant">Static</span>::central_cache()[cl].InsertRange(head, tail, batch_size);
+    N -= batch_size;
+  }
+  <span class="org-type">void</span> *<span class="org-variable-name">tail</span>, *<span class="org-variable-name">head</span>;
+  src-&gt;PopRange(N, &amp;head, &amp;tail);
+  <span class="org-constant">Static</span>::central_cache()[cl].InsertRange(head, tail, N);
+  size_ -= delta_bytes;
+}
+</pre>
+</div>
+<p>
+PopRange这个语义非常简单，但是我们稍微看看这个的实现，
+</p>
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-type">void</span> <span class="org-function-name">PopRange</span>(<span class="org-type">int</span> <span class="org-variable-name">N</span>, <span class="org-type">void</span> **<span class="org-variable-name">start</span>, <span class="org-type">void</span> **<span class="org-variable-name">end</span>) {
+  SLL_PopRange(&amp;list_, N, start, end);
+  ASSERT(length_ &gt;= N);
+  length_ -= N;
+  <span class="org-keyword">if</span> (length_ &lt; lowater_) lowater_ = length_;
+}
+</pre>
+</div>
+<p>
+问题就在于，这里设置了lowater mark.如果当前的长度小于最低水位的话，那么需要更新最低水位。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgf4f5f83" class="outline-4">
+<h4 id="orgf4f5f83"><span class="section-number-4">4.8.14</span> Allocate</h4>
+<div class="outline-text-4" id="text-4-8-14">
+<p>
+Allocate就是从对应的slab里面分配出一个object.注意在Init时候的话每个tc里面是没有任何内容的，size_=0.FreeList也是空的。
+</p>
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-keyword">inline</span> <span class="org-type">void</span>* <span class="org-constant">ThreadCache</span>::<span class="org-function-name">Allocate</span>(<span class="org-type">size_t</span> <span class="org-variable-name">size</span>, <span class="org-type">size_t</span> <span class="org-variable-name">cl</span>) {
+  ASSERT(size &lt;= kMaxSize);
+  ASSERT(size == <span class="org-constant">Static</span>::sizemap()-&gt;ByteSizeForClass(cl));
+
+  <span class="org-type">FreeList</span>* <span class="org-variable-name">list</span> = &amp;list_[cl];
+  <span class="org-keyword">if</span> (list-&gt;empty()) {
+    <span class="org-keyword">return</span> FetchFromCentralCache(cl, size); <span class="org-comment-delimiter">// </span><span class="org-comment">&#22914;&#26524;list&#37324;&#38754;&#20026;&#31354;&#30340;&#35805;&#65292;&#37027;&#20040;&#23581;&#35797;&#20174;cc&#30340;cl&#37324;&#38754;&#20998;&#37197;size&#20986;&#26469;.</span>
+  }
+  size_ -= size; <span class="org-comment-delimiter">// </span><span class="org-comment">&#22914;&#26524;&#23384;&#22312;&#30340;&#35805;&#37027;&#20040;&#23601;&#30452;&#25509;-size&#24182;&#19988;&#24377;&#20986;&#19968;&#20010;&#20803;&#32032;</span>
+  <span class="org-keyword">return</span> list-&gt;Pop();
+}
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org48bfed3" class="outline-4">
+<h4 id="org48bfed3"><span class="section-number-4">4.8.15</span> FetchFromCentralCache</h4>
+<div class="outline-text-4" id="text-4-8-15">
+<p>
+这个部分的逻辑是从cc里面取出一系列的slab对象出来。里面有很多策略，非常精巧
+</p>
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-type">void</span>* <span class="org-constant">ThreadCache</span>::<span class="org-function-name">FetchFromCentralCache</span>(<span class="org-type">size_t</span> <span class="org-variable-name">cl</span>, <span class="org-type">size_t</span> <span class="org-variable-name">byte_size</span>) {
+  <span class="org-type">FreeList</span>* <span class="org-variable-name">list</span> = &amp;list_[cl];
+  ASSERT(list-&gt;empty());
+  <span class="org-keyword">const</span> <span class="org-type">int</span> <span class="org-variable-name">batch_size</span> = <span class="org-constant">Static</span>::sizemap()-&gt;num_objects_to_move(cl);
+
+  <span class="org-comment-delimiter">// </span><span class="org-comment">&#30475;&#30475;&#27599;&#27425;&#20801;&#35768;&#30340;&#20998;&#37197;&#30340;&#20010;&#25968;&#26159;&#22810;&#23569;</span>
+  <span class="org-keyword">const</span> <span class="org-type">int</span> <span class="org-variable-name">num_to_move</span> = min&lt;<span class="org-type">int</span>&gt;(list-&gt;max_length(), batch_size);
+  <span class="org-type">void</span> *<span class="org-variable-name">start</span>, *<span class="org-variable-name">end</span>;
+  <span class="org-type">int</span> <span class="org-variable-name">fetch_count</span> = <span class="org-constant">Static</span>::central_cache()[cl].RemoveRange(
+      &amp;start, &amp;end, num_to_move);
+
+  ASSERT((start == <span class="org-constant">NULL</span>) == (fetch_count == 0));
+  <span class="org-comment-delimiter">// </span><span class="org-comment">&#21462;&#20986;&#26469;&#24182;&#19988;&#35774;&#32622;&#19968;&#19979;&#24403;&#21069;&#32500;&#25252;&#30340;&#31354;&#38386;&#22823;&#23567;&#26159;&#22810;&#23569;</span>
+  <span class="org-keyword">if</span> (--fetch_count &gt;= 0) {
+    size_ += byte_size * fetch_count;
+    list-&gt;PushRange(fetch_count, SLL_Next(start), end);
+  }
+  <span class="org-comment-delimiter">// </span><span class="org-comment">&#36825;&#37324;&#38656;&#35201;&#22686;&#38271;max_length.&#22914;&#26524;&lt;batch_size&#30340;&#35805;&#37027;&#20040;+1</span>
+  <span class="org-comment-delimiter">// </span><span class="org-comment">&#22914;&#26524;&gt;=batch_size&#30340;&#35805;&#65292;&#37027;&#20040;&#20250;&#35774;&#32622;&#25104;&#20026;&#26576;&#20010;&#19978;&#32447;</span>
+  <span class="org-comment-delimiter">// </span><span class="org-comment">static const int kMaxDynamicFreeListLength = 8192;</span>
+  <span class="org-keyword">if</span> (list-&gt;max_length() &lt; batch_size) {
+    list-&gt;set_max_length(list-&gt;max_length() + 1);
+  } <span class="org-keyword">else</span> {
+    <span class="org-type">int</span> <span class="org-variable-name">new_length</span> = min&lt;<span class="org-type">int</span>&gt;(list-&gt;max_length() + batch_size,
+                              kMaxDynamicFreeListLength);
+    <span class="org-comment-delimiter">// </span><span class="org-comment">&#36825;&#37324;&#20063;&#38750;&#24120;&#22909;&#29702;&#35299;&#65292;&#25353;&#29031;batch_size&#26469;&#20998;&#37197;&#30340;&#35805;&#65292;&#21487;&#20197;&#30452;&#25509;&#20174;tc&#37324;&#38754;&#24471;&#21040;</span>
+    <span class="org-comment-delimiter">// </span><span class="org-comment">&#20351;&#29992;&#36825;&#20010;&#20316;&#20026;max_kength&#30340;&#35805;&#36890;&#24120;&#24847;&#21619;&#30528;&#20998;&#37197;&#36895;&#24230;&#20250;&#26356;&#24555;.</span>
+    new_length -= new_length % batch_size;
+    ASSERT(new_length % batch_size == 0);
+    list-&gt;set_max_length(new_length);
+  }
+  <span class="org-keyword">return</span> start;
+}
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgf2fbb24" class="outline-4">
+<h4 id="orgf2fbb24"><span class="section-number-4">4.8.16</span> Deallocate</h4>
+<div class="outline-text-4" id="text-4-8-16">
+<p>
+释放内存部分非常简单，但是同样里面有很多策略。并且里面涉及到了tc的GC问题
+</p>
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-keyword">inline</span> <span class="org-type">void</span> <span class="org-constant">ThreadCache</span>::<span class="org-function-name">Deallocate</span>(<span class="org-type">void</span>* <span class="org-variable-name">ptr</span>, <span class="org-type">size_t</span> <span class="org-variable-name">cl</span>) {
+  <span class="org-type">FreeList</span>* <span class="org-variable-name">list</span> = &amp;list_[cl];
+  size_ += <span class="org-constant">Static</span>::sizemap()-&gt;ByteSizeForClass(cl); <span class="org-comment-delimiter">// </span><span class="org-comment">&#37322;&#25918;&#20102;&#36825;&#20010;&#20869;&#23384;&#25152;&#20197;&#31354;&#38386;&#22823;&#23567;&#22686;&#22823;</span>
+  <span class="org-type">ssize_t</span> <span class="org-variable-name">size_headroom</span> = max_size_ - size_ - 1;  <span class="org-comment-delimiter">// </span><span class="org-comment">&#22312;size&#19978;&#38754;&#30340;&#35805;&#36824;&#26377;&#22810;&#23569;&#31354;&#38386;.</span>
+
+  list-&gt;Push(ptr); <span class="org-comment-delimiter">// </span><span class="org-comment">&#24402;&#36824;</span>
+  <span class="org-type">ssize_t</span> <span class="org-variable-name">list_headroom</span> =
+      <span class="org-keyword">static_cast</span>&lt;<span class="org-type">ssize_t</span>&gt;(list-&gt;max_length()) - list-&gt;length(); <span class="org-comment-delimiter">// </span><span class="org-comment">&#22312;&#38271;&#24230;&#19978;&#36824;&#26377;&#22810;&#23569;&#31354;&#38386;</span>
+
+  <span class="org-comment-delimiter">// </span><span class="org-comment">There are two relatively uncommon things that require further work.</span>
+  <span class="org-comment-delimiter">// </span><span class="org-comment">In the common case we're done, and in that case we need a single branch</span>
+  <span class="org-comment-delimiter">// </span><span class="org-comment">because of the bitwise-or trick that follows.</span>
+  <span class="org-keyword">if</span> ((list_headroom | size_headroom) &lt; 0) { <span class="org-comment-delimiter">// </span><span class="org-comment">&#36825;&#20010;&#37096;&#20998;&#24212;&#35813;&#26159;&#26377;&#20219;&#24847;&#19968;&#20010;&lt;0&#30340;&#35805;&#65292;&#37027;&#20040;&#23601;&#24212;&#35813;&#36827;&#20837;&#12290;&#20248;&#21270;&#25163;&#27573;&#21543;.</span>
+    <span class="org-keyword">if</span> (list_headroom &lt; 0) { <span class="org-comment-delimiter">// </span><span class="org-comment">&#22914;&#26524;&#24403;&#21069;&#38271;&#24230;&gt;max_length&#30340;&#35805;&#65292;&#37027;&#20040;&#38656;&#35201;&#37325;&#26032;&#35774;&#32622;max_length.</span>
+      ListTooLong(list, cl);
+    }
+    <span class="org-comment-delimiter">// </span><span class="org-comment">&#26465;&#20214;&#30456;&#24403; if(size_headroom &lt; 0)</span>
+    <span class="org-comment-delimiter">// </span><span class="org-comment">&#22240;&#20026;ListTooLog&#20250;&#23581;&#35797;&#20462;&#25913;size_&#25152;&#20197;&#36825;&#37324;&#37325;&#26032;&#21028;&#26029;..:(tricky:(.</span>
+    <span class="org-keyword">if</span> (size_ &gt;= max_size_) Scavenge(); <span class="org-comment-delimiter">// </span><span class="org-comment">&#22914;&#26524;&#24403;&#21069;size&gt;max_size&#30340;&#35805;&#65292;&#37027;&#20040;&#38656;&#35201;&#36827;&#34892;GC.</span>
+  }
+}
+</pre>
+</div>
+<p>
+然后我们这里看看这两个触发动作时如何执行的。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgfba4734" class="outline-4">
+<h4 id="orgfba4734"><span class="section-number-4">4.8.17</span> ListTooLong</h4>
+<div class="outline-text-4" id="text-4-8-17">
+<p>
+到这个地方必须思考一个问题，就是什么时候max_length会发生变化以及如何变化的(触发这些变化的意义是什么).
+我们可以看到Allocate里面如果从cc里面取在不断地增加max_length(存在上限).问题是我们不能够让这个部分缓存太多的内容，
+所以我们必须在一段时间内缩小max_length，一旦length&gt;max_length的话就会触发ListTooLong.
+而ListTooLong里面的操作就是将max_length尝试缩小并且将一部分object归还给cc.
+</p>
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-type">void</span> <span class="org-constant">ThreadCache</span>::<span class="org-function-name">ListTooLong</span>(<span class="org-type">FreeList</span>* <span class="org-variable-name">list</span>, <span class="org-type">size_t</span> <span class="org-variable-name">cl</span>) {
+  <span class="org-keyword">const</span> <span class="org-type">int</span> <span class="org-variable-name">batch_size</span> = <span class="org-constant">Static</span>::sizemap()-&gt;num_objects_to_move(cl);
+  ReleaseToCentralCache(list, cl, batch_size); <span class="org-comment-delimiter">// </span><span class="org-comment">&#39318;&#20808;&#23581;&#35797;&#23558;batch_size&#30340;&#20869;&#23481;&#24402;&#36824;&#21040;tc&#37324;&#38754;&#21462;</span>
+
+  <span class="org-comment-delimiter">// </span><span class="org-comment">If the list is too long, we need to transfer some number of</span>
+  <span class="org-comment-delimiter">// </span><span class="org-comment">objects to the central cache.  Ideally, we would transfer</span>
+  <span class="org-comment-delimiter">// </span><span class="org-comment">num_objects_to_move, so the code below tries to make max_length</span>
+  <span class="org-comment-delimiter">// </span><span class="org-comment">converge on num_objects_to_move.</span>
+
+  <span class="org-keyword">if</span> (list-&gt;max_length() &lt; batch_size) {
+    <span class="org-comment-delimiter">// </span><span class="org-comment">Slow start the max_length so we don't overreserve.</span>
+    list-&gt;set_max_length(list-&gt;max_length() + 1);
+  } <span class="org-keyword">else</span> <span class="org-keyword">if</span> (list-&gt;max_length() &gt; batch_size) {
+    <span class="org-comment-delimiter">// </span><span class="org-comment">If we consistently go over max_length, shrink max_length.  If we don't</span>
+    <span class="org-comment-delimiter">// </span><span class="org-comment">shrink it, some amount of memory will always stay in this freelist.</span>
+    list-&gt;set_length_overages(list-&gt;length_overages() + 1); <span class="org-comment-delimiter">// </span><span class="org-comment">&#35760;&#24405;&#19979;overage&#30340;&#27425;&#25968;</span>
+    <span class="org-keyword">if</span> (list-&gt;length_overages() &gt; kMaxOverages) { <span class="org-comment-delimiter">// </span><span class="org-comment">&gt; kMaxOverages&#30340;&#35805;&#37027;&#20040;&#38656;&#35201;&#23545;max_length&#36827;&#34892;&#32553;&#20943;.</span>
+      ASSERT(list-&gt;max_length() &gt; batch_size);
+      list-&gt;set_max_length(list-&gt;max_length() - batch_size); <span class="org-comment-delimiter">// </span><span class="org-comment">&#32553;&#20943;batch_size.</span>
+      list-&gt;set_length_overages(0);
+    }
+  }
+}
+</pre>
+</div>
+<p>
+ListTooLong是第一个确保在tc里面不会持有太多内存的机制.虽然对这里的整个过程算是比较了解，但是没有从大体上想清楚这个是如何设计的:(
+</p>
+</div>
+</div>
+
+<div id="outline-container-org40c3d78" class="outline-4">
+<h4 id="org40c3d78"><span class="section-number-4">4.8.18</span> Scavenge</h4>
+<div class="outline-text-4" id="text-4-8-18">
+<p>
+同样Scavenge是第二个确保在tc里不会持有太多内存的机制。同样虽然对这个过程比较了解但是也没有从大体生了解这个策略是如何设计出来的。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-comment-delimiter">// </span><span class="org-comment">Release idle memory to the central cache</span>
+<span class="org-type">void</span> <span class="org-constant">ThreadCache</span>::<span class="org-function-name">Scavenge</span>() {
+  <span class="org-comment-delimiter">// </span><span class="org-comment">If the low-water mark for the free list is L, it means we would</span>
+  <span class="org-comment-delimiter">// </span><span class="org-comment">not have had to allocate anything from the central cache even if</span>
+  <span class="org-comment-delimiter">// </span><span class="org-comment">we had reduced the free list size by L.  We aim to get closer to</span>
+  <span class="org-comment-delimiter">// </span><span class="org-comment">that situation by dropping L/2 nodes from the free list.  This</span>
+  <span class="org-comment-delimiter">// </span><span class="org-comment">may not release much memory, but if so we will call scavenge again</span>
+  <span class="org-comment-delimiter">// </span><span class="org-comment">pretty soon and the low-water marks will be high on that call.</span>
+  <span class="org-comment-delimiter">//</span><span class="org-comment">int64 start = CycleClock::Now();</span>
+  <span class="org-keyword">for</span> (<span class="org-type">int</span> <span class="org-variable-name">cl</span> = 0; cl &lt; kNumClasses; cl++) {
+    <span class="org-type">FreeList</span>* <span class="org-variable-name">list</span> = &amp;list_[cl];
+    <span class="org-keyword">const</span> <span class="org-type">int</span> <span class="org-variable-name">lowmark</span> = list-&gt;lowwatermark(); <span class="org-comment-delimiter">// </span><span class="org-comment">&#19978;&#19968;&#27425;&#26368;&#30701;&#30340;free list length&#26159;&#22810;&#23569;.&#22914;&#26524;free list length&#36234;&#38271;</span>
+    <span class="org-comment-delimiter">// </span><span class="org-comment">&#24847;&#21619;&#30528;&#22312;&#22823;&#22810;&#25968;&#26102;&#20505;&#26377;&#24456;&#22810;&#31354;&#38386;&#20869;&#23384;&#26159;&#27809;&#26377;&#20351;&#29992;&#65292;&#25152;&#20197;&#21487;&#20197;&#23558;&#20854;&#24402;&#36824;.</span>
+    <span class="org-keyword">if</span> (lowmark &gt; 0) {
+      <span class="org-keyword">const</span> <span class="org-type">int</span> <span class="org-variable-name">drop</span> = (lowmark &gt; 1) ? lowmark/2 : 1; <span class="org-comment-delimiter">// </span><span class="org-comment">&#23558;&#26368;&#26368;&#30701;&#30340;&#37096;&#20998;&#30340;1/2&#24402;&#36824;&#32473;cc.</span>
+      ReleaseToCentralCache(list, cl, drop);
+
+      <span class="org-comment-delimiter">// </span><span class="org-comment">Shrink the max length if it isn't used.  Only shrink down to</span>
+      <span class="org-comment-delimiter">// </span><span class="org-comment">batch_size -- if the thread was active enough to get the max_length</span>
+      <span class="org-comment-delimiter">// </span><span class="org-comment">above batch_size, it will likely be that active again.  If</span>
+      <span class="org-comment-delimiter">// </span><span class="org-comment">max_length shinks below batch_size, the thread will have to</span>
+      <span class="org-comment-delimiter">// </span><span class="org-comment">go through the slow-start behavior again.  The slow-start is useful</span>
+      <span class="org-comment-delimiter">// </span><span class="org-comment">mainly for threads that stay relatively idle for their entire</span>
+      <span class="org-comment-delimiter">// </span><span class="org-comment">lifetime.</span>
+      <span class="org-keyword">const</span> <span class="org-type">int</span> <span class="org-variable-name">batch_size</span> = <span class="org-constant">Static</span>::sizemap()-&gt;num_objects_to_move(cl);
+      <span class="org-keyword">if</span> (list-&gt;max_length() &gt; batch_size) { <span class="org-comment-delimiter">// </span><span class="org-comment">&#35843;&#25972;max_length.</span>
+        list-&gt;set_max_length(
+            max&lt;<span class="org-type">int</span>&gt;(list-&gt;max_length() - batch_size, batch_size));
+      }
+    }
+    list-&gt;clear_lowwatermark();
+  }
+
+  IncreaseCacheLimit(); <span class="org-comment-delimiter">// </span><span class="org-comment">&#35302;&#21457;&#36825;&#20010;Scavenge&#26412;&#36523;&#30340;&#21407;&#22240;&#23601;&#26159;&#22240;&#20026;size_&gt;max_size_&#25152;&#20197;&#26377;&#24517;&#35201;&#25552;&#39640;max_size_.</span>
+}
+</pre>
+</div>
+</div>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgec3ed57" class="outline-2">
+<h2 id="orgec3ed57"><span class="section-number-2">5</span> 用户对象</h2>
+<div class="outline-text-2" id="text-5">
+<p>
+tcmalloc.h
+</p>
+</div>
+
+<div id="outline-container-org8ebae35" class="outline-3">
+<h3 id="org8ebae35"><span class="section-number-3">5.1</span> 函数入口</h3>
+<div class="outline-text-3" id="text-5-1">
+<p>
+我们还是以最初的函数入门进行分析，我们只是关注tc_malloc与tc_free.
+</p>
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-keyword">extern</span> <span class="org-string">"C"</span> PERFTOOLS_DLL_DECL <span class="org-type">void</span>* <span class="org-function-name">tc_malloc</span>(<span class="org-type">size_t</span> <span class="org-variable-name">size</span>) __THROW {
+  <span class="org-type">void</span>* <span class="org-variable-name">result</span> = do_malloc_or_cpp_alloc(size);
+  <span class="org-constant">MallocHook</span>::InvokeNewHook(result, size);
+  <span class="org-keyword">return</span> result;
+}
+
+<span class="org-keyword">extern</span> <span class="org-string">"C"</span> PERFTOOLS_DLL_DECL <span class="org-type">void</span> <span class="org-function-name">tc_free</span>(<span class="org-type">void</span>* <span class="org-variable-name">ptr</span>) __THROW {
+  <span class="org-constant">MallocHook</span>::InvokeDeleteHook(ptr);
+  do_free(ptr);
+}
+</pre>
+</div>
+<p>
+可以看到两个函数调用之前都有hook存在。hook是在malloc_hook_inl.h以及malloc_hook.cc里面定义的，通过一个HookList来进行管理。
+调用Invoke时候就是遍历里面的内容，这个后续可以仔细分析。do_malloc_or_cpp_alloc里面可以看到，因为tc_new_mode==0所以实际调用的就是do_malloc这个函数。
+我们首先关注malloc的过程，对于malloc过程了解清楚之后，那么free过程就非常直接了。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orge2cfa58" class="outline-3">
+<h3 id="orge2cfa58"><span class="section-number-3">5.2</span> 分配逻辑</h3>
+<div class="outline-text-3" id="text-5-2">
+<p>
+我们先看看do_malloc这个过程
+</p>
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-keyword">inline</span> <span class="org-type">void</span>* <span class="org-function-name">do_malloc</span>(<span class="org-type">size_t</span> <span class="org-variable-name">size</span>) {
+  <span class="org-type">void</span>* <span class="org-variable-name">ret</span> = <span class="org-constant">NULL</span>;
+
+  <span class="org-comment-delimiter">// </span><span class="org-comment">The following call forces module initialization</span>
+  <span class="org-type">ThreadCache</span>* <span class="org-variable-name">heap</span> = <span class="org-constant">ThreadCache</span>::GetCache(); <span class="org-comment-delimiter">// </span><span class="org-comment">&#39318;&#20808;&#24471;&#21040;thread_cache</span>
+  <span class="org-keyword">if</span> (size &lt;= kMaxSize) { <span class="org-comment-delimiter">// </span><span class="org-comment">kMaxSize = 256K</span>
+    <span class="org-type">size_t</span> <span class="org-variable-name">cl</span> = <span class="org-constant">Static</span>::sizemap()-&gt;SizeClass(size);
+    size = <span class="org-constant">Static</span>::sizemap()-&gt;class_to_size(cl);
+     <span class="org-comment-delimiter">// </span><span class="org-comment">&#23581;&#35797;&#36827;&#34892;&#37319;&#26679;&#20998;&#37197;.</span>
+     <span class="org-comment-delimiter">// </span><span class="org-comment">&#36825;&#37324;&#25105;&#20204;&#26242;&#26102;&#24573;&#30053;&#37319;&#26679;&#37096;&#20998;&#30340;&#36923;&#36753;</span>
+    <span class="org-keyword">if</span> ((FLAGS_tcmalloc_sample_parameter &gt; 0) &amp;&amp; heap-&gt;SampleAllocation(size)) {
+      ret = DoSampledAllocation(size);
+    } <span class="org-keyword">else</span> {
+      <span class="org-comment-delimiter">// </span><span class="org-comment">The common case, and also the simplest.  This just pops the</span>
+      <span class="org-comment-delimiter">// </span><span class="org-comment">size-appropriate freelist, after replenishing it if it's empty.</span>
+      ret = CheckedMallocResult(heap-&gt;Allocate(size, cl)); <span class="org-comment-delimiter">// </span><span class="org-comment">&#36825;&#20010;&#37096;&#20998;&#30340;&#23601;&#26159;&#30452;&#25509;&#22312;tc&#19978;&#38754;&#35843;&#29992;Allocate&#36827;&#34892;&#20998;&#37197;</span>
+    }
+  } <span class="org-keyword">else</span> {
+    ret = do_malloc_pages(heap, size); <span class="org-comment-delimiter">// </span><span class="org-comment">&#22914;&#26524;&#20998;&#37197;&#23545;&#35937;&#36807;&#22823;&#30340;&#35805;</span>
+  }
+  <span class="org-keyword">if</span> (ret == <span class="org-constant">NULL</span>) errno = ENOMEM;
+  <span class="org-keyword">return</span> ret;
+}
+</pre>
+</div>
+
+<p>
+对于小对象分配逻辑已经清楚了，接着看看大对象分配调用do_malloc_pages这个部分
+</p>
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-keyword">inline</span> <span class="org-type">void</span>* <span class="org-function-name">do_malloc_pages</span>(<span class="org-type">ThreadCache</span>* <span class="org-variable-name">heap</span>, <span class="org-type">size_t</span> <span class="org-variable-name">size</span>) {
+  <span class="org-type">void</span>* <span class="org-variable-name">result</span>;
+  <span class="org-type">bool</span> <span class="org-variable-name">report_large</span>;
+
+  <span class="org-type">Length</span> <span class="org-variable-name">num_pages</span> = <span class="org-constant">tcmalloc</span>::pages(size); <span class="org-comment-delimiter">// </span><span class="org-comment">&#36716;&#25442;&#38656;&#35201;&#20998;&#37197;&#22810;&#23569;&#20010;pages.</span>
+  size = num_pages &lt;&lt; kPageShift;
+
+  <span class="org-keyword">if</span> ((FLAGS_tcmalloc_sample_parameter &gt; 0) &amp;&amp; heap-&gt;SampleAllocation(size)) { <span class="org-comment-delimiter">// </span><span class="org-comment">&#21516;&#26679;&#25105;&#20204;&#26242;&#26102;&#24573;&#30053;&#37319;&#26679;&#37096;&#20998;</span>
+    result = DoSampledAllocation(size);
+
+    <span class="org-type">SpinLockHolder</span> <span class="org-variable-name">h</span>(<span class="org-constant">Static</span>::pageheap_lock());
+    report_large = should_report_large(num_pages);
+  } <span class="org-keyword">else</span> {
+    <span class="org-type">SpinLockHolder</span> <span class="org-variable-name">h</span>(<span class="org-constant">Static</span>::pageheap_lock());
+    <span class="org-type">Span</span>* <span class="org-variable-name">span</span> = <span class="org-constant">Static</span>::pageheap()-&gt;New(num_pages);
+    result = (span == <span class="org-constant">NULL</span> ? <span class="org-constant">NULL</span> : SpanToMallocResult(span)); <span class="org-comment-delimiter">// </span><span class="org-comment">&#36825;&#20010;&#37096;&#20998;&#23601;&#26159;&#26816;&#26597;&#19968;&#19979;span&#26159;&#21542;OK,&#24050;&#32463;&#23558;span&#30340;slab(0)cache&#20303;.</span>
+    report_large = should_report_large(num_pages);  <span class="org-comment-delimiter">// </span><span class="org-comment">&#21028;&#26029;&#36825;&#20010;pages&#26159;&#21542;&#24320;&#36767;&#36807;&#22823;</span>
+  }
+
+  <span class="org-keyword">if</span> (report_large) {
+    ReportLargeAlloc(num_pages, result); <span class="org-comment-delimiter">// </span><span class="org-comment">&#22914;&#26524;&#24320;&#36767;&#36807;&#22823;&#30340;&#35805;&#37027;&#20040;&#21487;&#20197;&#36873;&#25321;&#36827;&#34892;report.</span>
+  }
+  <span class="org-keyword">return</span> result;
+}
+</pre>
+</div>
+
+<p>
+然后稍微看看should_report_large是如何判断的以及如何report
+</p>
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-comment-delimiter">// </span><span class="org-comment">&#36890;&#36807;&#33719;&#21462;&#29615;&#22659;&#21464;&#37327;&#21363;&#21487;&#24471;&#21040;</span>
+<span class="org-keyword">const</span> <span class="org-type">int64</span> <span class="org-variable-name">kDefaultLargeAllocReportThreshold</span> = <span class="org-keyword">static_cast</span>&lt;<span class="org-type">int64</span>&gt;(1) &lt;&lt; 30; <span class="org-comment-delimiter">// </span><span class="org-comment">&#40664;&#35748;&#26159;1GB</span>
+DEFINE_int64(tcmalloc_large_alloc_report_threshold,
+             EnvToInt64(<span class="org-string">"TCMALLOC_LARGE_ALLOC_REPORT_THRESHOLD"</span>,
+                        kDefaultLargeAllocReportThreshold),
+             <span class="org-string">"Allocations larger than this value cause a stack "</span>
+             <span class="org-string">"trace to be dumped to stderr.  The threshold for "</span>
+             <span class="org-string">"dumping stack traces is increased by a factor of 1.125 "</span>
+             <span class="org-string">"every time we print a message so that the threshold "</span>
+             <span class="org-string">"automatically goes up by a factor of ~1000 every 60 "</span>
+             <span class="org-string">"messages.  This bounds the amount of extra logging "</span>
+             <span class="org-string">"generated by this flag.  Default value of this flag "</span>
+             <span class="org-string">"is very large and therefore you should see no extra "</span>
+             <span class="org-string">"logging unless the flag is overridden.  Set to 0 to "</span>
+             <span class="org-string">"disable reporting entirely."</span>);
+
+<span class="org-comment-delimiter">// </span><span class="org-comment">&#36825;&#20010;large_alloc_threshold&#32943;&#23450;&#35201;&#27604;kPageSize&#35201;&#25171;</span>
+<span class="org-keyword">static</span> <span class="org-type">int64_t</span> <span class="org-variable-name">large_alloc_threshold</span> =
+  (kPageSize &gt; FLAGS_tcmalloc_large_alloc_report_threshold
+   ? kPageSize : FLAGS_tcmalloc_large_alloc_report_threshold);
+
+<span class="org-keyword">inline</span> <span class="org-type">bool</span> <span class="org-function-name">should_report_large</span>(<span class="org-type">Length</span> <span class="org-variable-name">num_pages</span>) {
+  <span class="org-keyword">const</span> <span class="org-type">int64</span> <span class="org-variable-name">threshold</span> = large_alloc_threshold;
+  <span class="org-keyword">if</span> (threshold &gt; 0 &amp;&amp; num_pages &gt;= (threshold &gt;&gt; kPageShift)) { <span class="org-comment-delimiter">// </span><span class="org-comment">&#22914;&#26524;&#36229;&#36807;large_alloc_threshold&#30340;&#35805;</span>
+    <span class="org-comment-delimiter">// </span><span class="org-comment">Increase the threshold by 1/8 every time we generate a report.</span>
+    <span class="org-comment-delimiter">// </span><span class="org-comment">We cap the threshold at 8GiB to avoid overflow problems.</span>
+    <span class="org-comment-delimiter">// </span><span class="org-comment">&#37027;&#20040;&#36825;&#27425;&#30340;threshold&#21487;&#33021;&#38656;&#35201;&#36827;&#34892;&#35843;&#25972;</span>
+    large_alloc_threshold = (threshold + threshold/8 &lt; 8ll&lt;&lt;30 <span class="org-comment-delimiter">// </span><span class="org-comment">8GB</span>
+                             ? threshold + threshold/8 : 8ll&lt;&lt;30);
+    <span class="org-keyword">return</span> <span class="org-constant">true</span>;
+  }
+  <span class="org-keyword">return</span> <span class="org-constant">false</span>;
+}
+</pre>
+</div>
+<p>
+然后看看如果进行report的.代码上看基本上就是打印出这个函数调用堆栈到stderr上面，使用的buffer空间1000B.
+</p>
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-keyword">static</span> <span class="org-type">void</span> <span class="org-function-name">ReportLargeAlloc</span>(<span class="org-type">Length</span> <span class="org-variable-name">num_pages</span>, <span class="org-type">void</span>* <span class="org-variable-name">result</span>) {
+  <span class="org-type">StackTrace</span> <span class="org-variable-name">stack</span>;
+  stack.depth = GetStackTrace(stack.stack, <span class="org-constant">tcmalloc</span>::kMaxStackDepth, 1);
+
+  <span class="org-keyword">static</span> <span class="org-keyword">const</span> <span class="org-type">int</span> <span class="org-variable-name">N</span> = 1000;
+  <span class="org-type">char</span> <span class="org-variable-name">buffer</span>[N];
+  <span class="org-type">TCMalloc_Printer</span> <span class="org-variable-name">printer</span>(buffer, N);
+  printer.printf(<span class="org-string">"tcmalloc: large alloc %"</span>PRIu64<span class="org-string">" bytes == %p @ "</span>,
+                 <span class="org-keyword">static_cast</span>&lt;uint64&gt;(num_pages) &lt;&lt; kPageShift,
+                 result);
+  <span class="org-keyword">for</span> (<span class="org-type">int</span> <span class="org-variable-name">i</span> = 0; i &lt; stack.depth; i++) {
+    printer.printf(<span class="org-string">" %p"</span>, stack.stack[i]);
+  }
+  printer.printf(<span class="org-string">"\n"</span>);
+  write(STDERR_FILENO, buffer, strlen(buffer));
+}
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org0fd4930" class="outline-3">
+<h3 id="org0fd4930"><span class="section-number-3">5.3</span> 释放逻辑</h3>
+<div class="outline-text-3" id="text-5-3">
+<p>
+相对分配来说，释放逻辑要稍微简单一些.
+</p>
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-keyword">inline</span> <span class="org-type">void</span> <span class="org-function-name">do_free_with_callback</span>(<span class="org-type">void</span>* <span class="org-variable-name">ptr</span>, <span class="org-type">void</span> (*<span class="org-function-name">invalid_free_fn</span>)(<span class="org-type">void</span>*)) {
+  <span class="org-keyword">if</span> (ptr == <span class="org-constant">NULL</span>) <span class="org-keyword">return</span>;
+  ASSERT(<span class="org-constant">Static</span>::pageheap() != <span class="org-constant">NULL</span>);  <span class="org-comment-delimiter">// </span><span class="org-comment">Should not call free() before malloc()</span>
+  <span class="org-keyword">const</span> <span class="org-type">PageID</span> <span class="org-variable-name">p</span> = <span class="org-keyword">reinterpret_cast</span>&lt;<span class="org-type">uintptr_t</span>&gt;(ptr) &gt;&gt; kPageShift;
+  <span class="org-type">Span</span>* <span class="org-variable-name">span</span> = <span class="org-constant">NULL</span>;
+  <span class="org-type">size_t</span> <span class="org-variable-name">cl</span> = <span class="org-constant">Static</span>::pageheap()-&gt;GetSizeClassIfCached(p); <span class="org-comment-delimiter">// </span><span class="org-comment">&#39318;&#20808;&#26597;&#30475;cache&#37324;&#38754;&#26159;&#21542;&#26377;class&#30340;&#20449;&#24687;</span>
+
+  <span class="org-keyword">if</span> (cl == 0) { <span class="org-comment-delimiter">// </span><span class="org-comment">&#22914;&#26524;&#27809;&#26377;class&#30340;&#20449;&#24687;&#30340;&#35805;&#65292;&#37027;&#20040;&#38656;&#35201;&#21435;pagemap&#37324;&#38754;&#26597;&#35810;&#21040;span.</span>
+    span = <span class="org-constant">Static</span>::pageheap()-&gt;GetDescriptor(p);
+    <span class="org-keyword">if</span> (<span class="org-negation-char">!</span>span) { <span class="org-comment-delimiter">// </span><span class="org-comment">&#22914;&#26524;&#26597;&#35810;&#19981;&#21040;span&#30340;&#35805;&#37027;&#20040;&#35748;&#20026;&#36825;&#20010;&#25351;&#38024;&#24335;&#38169;&#35823;&#30340;</span>
+      <span class="org-comment-delimiter">// </span><span class="org-comment">span can be NULL because the pointer passed in is invalid</span>
+      <span class="org-comment-delimiter">// </span><span class="org-comment">(not something returned by malloc or friends), or because the</span>
+      <span class="org-comment-delimiter">// </span><span class="org-comment">pointer was allocated with some other allocator besides</span>
+      <span class="org-comment-delimiter">// </span><span class="org-comment">tcmalloc.  The latter can happen if tcmalloc is linked in via</span>
+      <span class="org-comment-delimiter">// </span><span class="org-comment">a dynamic library, but is not listed last on the link line.</span>
+      <span class="org-comment-delimiter">// </span><span class="org-comment">In that case, libraries after it on the link line will</span>
+      <span class="org-comment-delimiter">// </span><span class="org-comment">allocate with libc malloc, but free with tcmalloc's free.</span>
+      (*invalid_free_fn)(ptr);  <span class="org-comment-delimiter">// </span><span class="org-comment">Decide how to handle the bad free request</span>
+      <span class="org-keyword">return</span>;
+    }
+    <span class="org-comment-delimiter">// </span><span class="org-comment">&#28982;&#21518;&#21462;&#20986;slab class&#24182;&#19988;cache&#20303;.</span>
+    cl = span-&gt;sizeclass;
+    <span class="org-constant">Static</span>::pageheap()-&gt;CacheSizeClass(p, cl);
+  }
+  <span class="org-keyword">if</span> (cl != 0) { <span class="org-comment-delimiter">// </span><span class="org-comment">&#22914;&#26524;&#26159;&#23567;&#23545;&#35937;&#37322;&#25918;&#30340;&#35805;</span>
+    ASSERT(<span class="org-negation-char">!</span><span class="org-constant">Static</span>::pageheap()-&gt;GetDescriptor(p)-&gt;sample);
+    <span class="org-type">ThreadCache</span>* <span class="org-variable-name">heap</span> = GetCacheIfPresent(); <span class="org-comment-delimiter">// </span><span class="org-comment">&#37027;&#20040;&#33719;&#24471;&#21040;&#24403;&#21069;&#32447;&#31243;&#30340;tc</span>
+    <span class="org-keyword">if</span> (heap != <span class="org-constant">NULL</span>) {
+      heap-&gt;Deallocate(ptr, cl); <span class="org-comment-delimiter">// </span><span class="org-comment">&#28982;&#21518;&#22238;&#25910;&#21040;&#36825;&#20010;tc&#37324;&#38754;</span>
+    } <span class="org-keyword">else</span> { <span class="org-comment-delimiter">// </span><span class="org-comment">&#19981;&#30693;&#36947;&#36825;&#20010;&#24773;&#20917;&#20160;&#20040;&#26102;&#20505;&#20986;&#29616;&#65292;&#22914;&#26524;&#20986;&#29616;&#30340;&#35805;&#65292;&#37027;&#20040;&#23601;&#25918;&#21040;cc&#37324;&#38754;,&#38750;&#24120;&#30452;&#25509;.</span>
+      <span class="org-comment-delimiter">// </span><span class="org-comment">Delete directly into central cache</span>
+      <span class="org-constant">tcmalloc</span>::SLL_SetNext(ptr, <span class="org-constant">NULL</span>);
+      <span class="org-constant">Static</span>::central_cache()[cl].InsertRange(ptr, ptr, 1);
+    }
+  } <span class="org-keyword">else</span> {
+    <span class="org-type">SpinLockHolder</span> <span class="org-variable-name">h</span>(<span class="org-constant">Static</span>::pageheap_lock());
+    ASSERT(<span class="org-keyword">reinterpret_cast</span>&lt;<span class="org-type">uintptr_t</span>&gt;(ptr) % kPageSize == 0);
+    ASSERT(span != <span class="org-constant">NULL</span> &amp;&amp; span-&gt;start == p);
+    <span class="org-keyword">if</span> (span-&gt;sample) { <span class="org-comment-delimiter">// </span><span class="org-comment">&#26242;&#26102;&#19981;&#29702;&#20250;&#36825;&#20010;sample&#36923;&#36753;</span>
+      <span class="org-type">StackTrace</span>* <span class="org-variable-name">st</span> = <span class="org-keyword">reinterpret_cast</span>&lt;<span class="org-type">StackTrace</span>*&gt;(span-&gt;objects);
+      <span class="org-constant">tcmalloc</span>::DLL_Remove(span);
+      <span class="org-constant">Static</span>::stacktrace_allocator()-&gt;Delete(st);
+      span-&gt;objects = <span class="org-constant">NULL</span>;
+    }
+    <span class="org-comment-delimiter">// </span><span class="org-comment">&#22914;&#26524;&#26159;&#22823;&#23545;&#35937;&#30340;&#35805;&#37027;&#20040;&#30452;&#25509;&#30001;pageheap&#37322;&#25918;.</span>
+    <span class="org-constant">Static</span>::pageheap()-&gt;Delete(span);
+  }
+}
+
+<span class="org-comment-delimiter">// </span><span class="org-comment">The default "do_free" that uses the default callback.</span>
+<span class="org-keyword">inline</span> <span class="org-type">void</span> <span class="org-function-name">do_free</span>(<span class="org-type">void</span>* <span class="org-variable-name">ptr</span>) {
+  <span class="org-keyword">return</span> do_free_with_callback(ptr, &amp;InvalidFree); <span class="org-comment-delimiter">// </span><span class="org-comment">&#40664;&#35748;&#24773;&#20917;&#23601;&#26159;&#25171;&#21360;&#19968;&#20010;log&#24182;&#19988;&#30452;&#25509;crash&#25481;.</span>
+}
+</pre>
+</div>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgeb606b7" class="outline-2">
+<h2 id="orgeb606b7"><span class="section-number-2">6</span> 扩展组件</h2>
+<div class="outline-text-2" id="text-6">
+</div>
+<div id="outline-container-orge780305" class="outline-3">
+<h3 id="orge780305"><span class="section-number-3">6.1</span> Sampler</h3>
+<div class="outline-text-3" id="text-6-1">
+<p>
+#todo:
+</p>
+</div>
+</div>
+
+<div id="outline-container-org5994f73" class="outline-3">
+<h3 id="org5994f73"><span class="section-number-3">6.2</span> MallocExtension</h3>
+<div class="outline-text-3" id="text-6-2">
+<p>
+#todo:
+</p>
+</div>
+</div>
+
+<div id="outline-container-org4f1be04" class="outline-3">
+<h3 id="org4f1be04"><span class="section-number-3">6.3</span> MallocHook</h3>
+<div class="outline-text-3" id="text-6-3">
+<p>
+#todo:
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgd982505" class="outline-3">
+<h3 id="orgd982505"><span class="section-number-3">6.4</span> HeapChecker</h3>
+<div class="outline-text-3" id="text-6-4">
+<p>
+#todo:
+</p>
+</div>
+</div>
+
+<div id="outline-container-org7a84b73" class="outline-3">
+<h3 id="org7a84b73"><span class="section-number-3">6.5</span> HeapProfiler</h3>
+<div class="outline-text-3" id="text-6-5">
+<p>
+#todo:
+</p>
+</div>
+</div>
+
+<div id="outline-container-org8d93607" class="outline-3">
+<h3 id="org8d93607"><span class="section-number-3">6.6</span> CPUProfiler</h3>
+<div class="outline-text-3" id="text-6-6">
+<p>
+#todo:
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org379d733" class="outline-2">
+<h2 id="org379d733"><span class="section-number-2">7</span> Discussion</h2>
+<div class="outline-text-2" id="text-7">
+</div>
+<div id="outline-container-orgde1eed6" class="outline-3">
+<h3 id="orgde1eed6"><span class="section-number-3">7.1</span> tcmalloc中的 MmapSysAllocator::Alloc 疑问(nwlzee)</h3>
+<div class="outline-text-3" id="text-7-1">
+<p>
+<b>Question</b>
+</p>
+
+<pre class="example">
+您好，我看到这函数有点不了解。
+在MmapSysAllocator::Alloc 中：
+
+// 。。。
+  if ((ptr &amp; (alignment - 1)) != 0) {
+    adjust = alignment - (ptr &amp; (alignment - 1));
+  }
+
+  // Return the unused memory to the system
+  if (adjust &gt; 0) {
+    munmap(reinterpret_cast&lt;void*&gt;(ptr), adjust);
+  }
+  if (adjust &lt; extra) {
+    munmap(reinterpret_cast&lt;void*&gt;(ptr + adjust + size), extra - adjust);
+  }
+
+  ptr += adjust;
+  return reinterpret_cast&lt;void*&gt;(ptr);
+
+我从man 手册知道munmap 是以page 单位大小释放的内存的，
+当 munmap(reinterpret_cast&lt;void*&gt;(ptr), adjust); 释放adjust所
+包含的页了，则返回 ptr += adjust (可能指向刚才释放的页中某一地址)，这地址ptr不是无效了？
+</pre>
+
+<hr />
+
+<p>
+<b>Answer</b>
+</p>
+
+<p>
+看看MmapSysAllocator::Alloc这个函数吧，假设这里的alignment==page_size的情况的话，
+</p>
+<ol class="org-ol">
+<li>extra = alignment - pagesize; 所以extra==0</li>
+<li>ptr肯定和page_size对齐，因此adjust==0</li>
+</ol>
+<p>
+所以你可以看到其实两个分支都没有走到的。
+</p>
+
+<p>
+其实在实际使用的时候alignment通常也是page_size的倍数。如果alignment==k*page_size的话，你会发现
+</p>
+<ol class="org-ol">
+<li>extra也是page_size倍数</li>
+<li>adjust也是page_size倍数</li>
+</ol>
+<p>
+因此在munmap的时候不会存在跨越page_size边界这样的问题的。
+</p>
+
+<p>
+最后你看看tcmalloc是怎么使用MmapSysAllocator对象的。相信你也看得非常仔细，tcmalloc是 DefaultSysAllocator创建两个对象
+</p>
+<ol class="org-ol">
+<li>SbrkSysAllocator</li>
+<li>MmapSysAllocator</li>
+</ol>
+<p>
+你看看DefaultSysAllocator调用情况，
+</p>
+<pre class="example">
+[dirlt@umeng-ubuntu-pc] &gt; grep "TCMalloc_SystemAlloc" *
+common.cc:  void* result = TCMalloc_SystemAlloc(bytes, NULL);
+page_heap.cc:#include "system-alloc.h"      // for TCMalloc_SystemAlloc, etc
+page_heap.cc:  void* ptr = TCMalloc_SystemAlloc(ask &lt;&lt; kPageShift, &amp;actual_size, kPageSize);
+page_heap.cc:      ptr = TCMalloc_SystemAlloc(ask &lt;&lt; kPageShift, &amp;actual_size, kPageSize);
+system-alloc.cc:  // This doesn't overflow because TCMalloc_SystemAlloc has already
+system-alloc.cc:    // NOTE: not a devmem_failure - we'd like TCMalloc_SystemAlloc to
+system-alloc.cc:void* TCMalloc_SystemAlloc(size_t size, size_t *actual_size,
+system-alloc.h:extern void* TCMalloc_SystemAlloc(size_t bytes, size_t *actual_bytes,
+</pre>
+
+<p>
+你会看到实际上调用TCMalloc_SystemAlloc时候，alignment都是==kPageSize的。因此实际tcmalloc 使用时候不会出现这个问题。
+</p>
+</div>
+</div>
+</div>
+</div>
+</body>
+</html>

@@ -1,0 +1,22 @@
+#+title: socket的端口范围和链接数量限制
+
+系统对TCP链接的标识是通过4元组确定的(src ip, src port, dst ip, dst port), 一个4元组确定一条TCP链接。系统内部也是通过规则这个决定，端口是否可以被分配。
+
+对于服务器来说，dst ip和dst port虽然都是固定的，但是因为客户端链接src ip, src port千差万别，所以理论上链接数量是没有上限的，或者说上限仅仅取决于系统的可用文件句柄数量。
+
+同理对于客户端来说，假设src ip是固定的（单网卡），所以连接一个服务器的话，最多允许60k个连接（假设端口允许使用的范围是5536 - 65535）。如果链接N个服务器的话，每个服务器允许60k个连接，所以最多允许60k * N个连接。这个连接数量的上限是和服务器的数量成正比的。
+
+什么时候收到端口数量60k的限制呢？这个出现在bind阶段[1]。如果调用系统调用 `bind(ip, port = 0)`的话，让系统绑定到某个网卡和自动分配的端口，此时系统没有办法确定接下来这个socket是要去connect还是listen. 如果是listen的话，那么肯定是不能出现端口冲突的，如果是connect的话，只要满足4元组唯一即可。在这种情况下，系统只能尽可能满足更强的要求，就是先要求端口不能冲突，即使之后去connect的时候4元组是唯一的。
+
+所以这是什么场景呢？就是客户端需要绑定某个网口，然后再去connect, 但是最大连接数收到了端口60k的限制。为了解决这个问题，Linux引入了IP_BIND_ADDRESS_NO_PORT[2]这个标志位。这个标志位其实就是告诉系统: "socket需要绑定某个网卡并且接下来要去connect, 你不要给我绑定端口, 端口到连接的时候再分配".
+
+参考资料：
+- [1] https://blog.csdn.net/popvip44/article/details/82855879
+- [2] https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/commit/?id=90c337da1524863838658078ec34241f45d8394d
+
+关于端口重用，孙晓主任给我发了几个linux相关函数
+
+- inet_sk_port_offset()：根据源IP、目的IP、目的端口，采用MD5计算出一个随机数，作为端口的初始偏移值。
+- __inet_check_established()：判断正在使用中的端口是否允许重用。
+
+file:images/socket-port-reuse.png

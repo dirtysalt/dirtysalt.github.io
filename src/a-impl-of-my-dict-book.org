@@ -1,0 +1,74 @@
+#+title: 一个生词本的实现
+
+我有一个习惯是在本地搭建一个HTTP服务器，然后建立一个index.html文件里面存储一些常用链接。然后在hosts里面添加一个`127.0.0.1 gw`映射。这样我只要输入gw:8080就可以跳到index.html页面（chrome还会存储历史记录，所以时间长了，只要键入gw就可以看到），非常方便。
+
+file:images/dict-query-history-desktop.png
+
+然后为了方便查找单词，我通常会将chrome settings里面的默认搜索引擎设置成为“金山词霸”。这样如果有不懂单词的话，只要选中右键即可查询。
+
+昨天突发奇想，为什么不将这些查询单词记录下来。以后可以定期复习这些单词，也算是学习单词的一种好办法。结合上面两个做法，一个idea很快就形成了。首先将默认搜索引擎切换到`gw:8080`上，我可以修改服务器代码，将查询单词记录下来，然后再交给金山词霸。看上去效果像是这样的。
+
+首先修改默认搜索引擎到`gw:8080`上，分配一个固定的path.
+
+file:images/dict-query-history-chrome.png
+
+然后选中右键点击就就是这样了
+
+file:images/dict-query-history-selection.png
+
+修改后的服务器代码如下，启动命令为`python local_server.py 8080`. 代码是仿照SimpleHTTPServer.py写的，继承了它的Handler然后改写send_head方法。
+
+#+BEGIN_SRC Python
+#!/usr/bin/env python
+#coding:utf-8
+#Copyright (C) dirlt
+
+import BaseHTTPServer
+from SimpleHTTPServer import SimpleHTTPRequestHandler
+import os
+try:
+    from cStringIO import StringIO
+except ImportError:
+    from StringIO import StringIO
+import datetime
+
+dict_prefix = '/dict?q='
+redirect_page = """<meta http-equiv="refresh" content="0; url=http://www.iciba.com/%s/" />"""
+home_path = os.environ['HOME']
+dict_query_history = home_path + '/.dict_query_history.txt'
+
+def hook_getcwd():
+    return home_path
+os.getcwd = hook_getcwd
+
+class CustomSimpleHTTPRequestHandler(SimpleHTTPRequestHandler):
+    def ack(self, page):
+        self.send_response(200)
+        self.send_header("Content-type", "text/html; charset=%s" % "UTF-8")
+        self.send_header("Content-Length", str(len(page)))
+        self.end_headers()
+
+    def send_head(self):
+        if self.path.startswith('/dict?q='):
+            query = self.path[len(dict_prefix):]
+            now = datetime.datetime.now()
+            date = now.strftime('%Y-%m-%d %H:%M:%S')
+            with open(dict_query_history, 'a') as fh:
+                fh.write(date + ' ' + query + '\n')
+            page = redirect_page % query
+            self.ack(page)
+            f = StringIO()
+            f.write(page)
+            f.seek(0)
+            return f
+        return SimpleHTTPRequestHandler.send_head(self)
+
+def test(HandlerClass = CustomSimpleHTTPRequestHandler,
+         ServerClass = BaseHTTPServer.HTTPServer):
+    BaseHTTPServer.test(HandlerClass, ServerClass)
+
+if __name__ == '__main__':
+    test()
+#+END_SRC
+
+最后会在~/.dict_query_history.txt里面存下查询单词记录. 除了查询单词之外，还会记录查询时间。

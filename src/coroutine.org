@@ -1,0 +1,41 @@
+#+title: coroutine
+
+- [[http://en.wikipedia.org/wiki/Coroutine][Wikipedia Coroutine]]
+- [[http://en.wikipedia.org/wiki/Green_threads][Wikipedia Green Threads]]
+- [[http://www.csl.mtu.edu/cs4411.ck/www/NOTES/non-local-goto/coroutine.html][coroutine过程演示]]
+- [[http://blog.rethinkdb.com/improving-a-large-c-project-with-coroutines][Improving a large C++ project with coroutines]]
+- [[http://www.csl.mtu.edu/cs4411.ck/www/NOTES/non-local-goto/coroutine.html][Building Coroutines]]
+
+implementation
+- [[http://www.gnu.org/software/pth/][GNU portable thread]]
+- [[http://www.xmailserver.org/libpcl.html][portable coroutine library]]
+- [[http://software.schmorp.de/pkg/libcoro.html][libcoro]]
+- [[http://www.goron.de/~froese/coro/][coro]]
+- [[http://code.google.com/p/libconcurrency/][libconcurrency]]
+- [[http://swtch.com/libtask/][libtask]]
+- [[http://www.dekorte.com/projects/opensource/libcoroutine/][libcoroutine]]
+- [[https://github.com/hnes/libaco][libaco]] A blazing fast and lightweight C asymmetric coroutine library
+
+-----
+libpcl里面的co_exit/co_exit_to/co_resume里面存放了caller和restarget这两个变量，表示调用者和应该恢复到的coroutine.但是一旦使用这种实现的话，那么调用者只能够按照stack的方式来调用coroutine,不然函数调用完成返回之后是会存在问题的，但是这样也就失去了coroutine意义了。而co_call还使用了co_exit这个函数，导致整个libpcl可以说不是很可用。不过里面设计上考虑了多线程环境使用了specific,并且使用了co_runner来做trampoline,这个在实现上面是非常巧妙的。此外文档也说了在处理线程的时候需要调用sigaltstack不然信号处理部分可能会和和你的coroutine的stack重合。其实只需要pth里面这些接口即可，create/delete/switch/exit(这个语义通知另外一个coroutine选择另外一个coroutine执行).pth可以看看但是比较大但是仅仅是覆盖thread部分内容(第三推荐)，而libtask涵盖了线程IO网络各个部分也可以看看(第二推荐)。
+
+-----
+
+coroutine，windows编程里面的纤程（fiber）,绿色线程（green thread），Erlang里面的轻量进程(lightweight process)，其实实现上就是从栈空间跳转到另外一个栈空间进行执行，并且这个触发动作是由用户发起的。当然线程也是这样实现的，只不过linux NTPL是内核态线程实现(coroutine也可以认为是用户态线程，所以GNU portable thread就是这个理念），之间切换是由内核来触发的。内核态触发通常是由于线程时间片到，发现阻塞。内核态的切换都是强制切换。但是内核态切换太耗了，如果可以在用户态做就好了。
+1. 检测到阻塞，这个用户态可以完成。比如发起网络磁盘IO的话，如果会阻塞，我们就可以切换到其他coroutine直到发现不会阻塞再切换回来（当然实现上需要有一个调度coroutine).
+2. 检测时间片进行强制切换，这点在用户态是做不到的。所以试图在C/C++引入coroutine的话，如果一个coroutine CPU时间很长的话，那么可能会影响到其他coroutine的时间，因为在用户态做不到公平。但是如果引入虚拟机的话，这个问题就可以解决了，虚拟机代替我们的操作系统来进行时间分片。
+
+-----
+
+coroutine框架必须在每个线程可以启动一个调度coroutine.然后create_fiber之后将coroutine丢到随机的一个线程coroutine的等待Q里面。调度coroutine的动作非常简单，检查哪些coroutine ready了然后switch到对应的coroutine上面去。这些工作的coroutine触发出来的时机可能有下面几个：
+- read/write阻塞.对于fd需要判断如果为net的话那么丢入epoll,disk的话丢入nativeio或者是自己的线程池。
+- futex_wait锁的等待. // 这个可以让系统禁用或者什么的
+- 定时器 // sleep或者是futex_wait使用的定时器。
+还有相当多的系统调用会阻塞住，枚举出来也是非常麻烦的。关于coroutine可以参考GNU portable thread实现. (GNU portable thread似乎没有没有维护了，然后今天看到一个比较振奋的消息，就是GNU出了一个[[http://opensource.solidot.org/article.pl?sid%3D12/05/09/0723228][new portable thread/nPth]]. 有时间的话可以尝试使用一下并且分析一下代码)
+
+coroutine这种user thread只是做到的了cooperative thread, 而preemptive thread还是需要OS或虚拟机的帮助。
+
+-----
+[[https://github.com/hnes/libaco][libaco]] 项目里面给出一个模型图，stack可以分为standalone stack和share stack. 其中share stack是可以和其他coroutine共享的， 而standalone stack则是private。我的粗浅理解可能是, share stack这样的可以直接在stack上开辟，而private stack则需要在heap上分配。
+
+file:images/libaco_model.png

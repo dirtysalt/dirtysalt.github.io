@@ -1,0 +1,503 @@
+#+title: Java核心技术卷1-基础知识
+
+** 基本语法(Basic Concepts)
+*** 标签跳转
+label break/continue似乎非常必要，这种情况尤其见于多重循环，如果想直接调到最外层循环(break),或者是从外层循环继续执行(continue).缺少这种机制的话，外层循环只能够使用蹩脚的标记，一层层地逐层跳出。
+#+BEGIN_SRC Java
+class X{
+  public static void main(String[] args){
+    int i=0;
+    int j=0;
+ out:
+    for(i=0;i<10;i++){
+      for(j=0;j<10;j++){
+        if((i+j)==15){
+          break out;
+        }
+      }
+    }
+    System.out.println(i+","+j);
+  }
+}
+#+END_SRC
+
+*** final关键字
+final关键字应该是有下面几个用途：
+1. 如果放在class之前的话，那么这个class则不允许被继承。
+2. 如果放在method之前的话，那么这个method则不允许被override.
+3. 如果放在field之前的话，那么这个field则不允许被修改。(但是因为Java出了基本类型之外，其他类型都是对象类似于C++指针。这里不允许被修改，是指指针本身不允许修改，而对于指针所指对象是允许被修改的)
+
+*** assert断言
+Java关键字assert可以用来进行断言，和C++一样。但是天煞的Java虚拟机必须指定标记才会开启assert特性。 =java -ea= 断言才会生效， =java -ea:package_name...= 可以指定名字空间下所有类断言打开， =java -ea:classname= 可以指定某个类断言打开。如果不带任何参数的话那么是将所有断言打开。同样使用-da可以禁用某个特定类或者是包的断言。
+
+其实想想觉得这个还是很不错的，在运行时控制而不是在编译时控制，会让更多的人喜欢使用assertion.但是我觉得默认的话，应该是开启的除非显示关闭。
+
+Java断言可以指定检查表达式以及出错表达式 =assert 条件：表达式=
+#+BEGIN_SRC Java
+class X{
+  public static void main(String[] args) {
+    assert 0==1 : "omg";
+  }
+}
+#+END_SRC
+
+有些类不是由类加载器加载，而是直接由虚拟机加载。使用-ea/-da不能够应用到这些类上面。对于系统类来说，需要使用-esa/-dsa来控制断言。
+
+*** 位移操作
+
+Java提供了三种位移操作符：
+1. 逻辑右移 >> (保持高位)
+2. 逻辑左移 <<
+3. 算术右移 >>> (丢弃高位用0填充)
+注意Java只提供了有符号整数
+#+BEGIN_SRC Java
+class X{
+  public static void main(String[] args){
+    int x=(1 << 31);
+    assert((x >>> 1) == (1 << 30));
+    assert((x >> 1) == ((1 << 31) | (1 << 30)));
+    assert((x << 1) == 0);
+  }
+}
+#+END_SRC
+
+*** 构造和析构
+
+Java相对于C++来说，在对象构造上面，需要多考虑初始化块这个概念（包括静态初始化块）。所谓初始化块，可以在对象执行构造函数之前执行的一块代码。而静态初始化块，当引用到这个类的时候第一次就会执行。有了这个特性之后，我们就可以创建不需要使用main就可以运行的例子
+#+BEGIN_SRC Java
+class App {
+  static {
+    System.out.println("hello,world");
+    System.exit(0);
+  }
+}
+#+END_SRC
+另外相对于C++来说，Java的字段都可以通过简单的赋值就完成初始化，而不需要像C++在构造函数后面接上一推init variable list.
+
+整个Java对象构造过程大致如下：
+1. 对象加载时，按照声明顺序，初始化静态字段，以及执行静态初始化块。
+2. 对象创建时，按照声明顺序，初始化字段，以及执行初始化块。
+3. 执行对象的构造函数。
+对于构造函数来说，如果需要调用父类构造函数可以使用super(…),如果需要调用同类内部其他重载版本可以使用this(…)
+
+Java提供了一个finalize方法，但是这个方法并不是在析构时候执行，而是在被GC之前执行，但是你很难知道这个对象什么时候会被GC.因此最好不要复写这个方法。如果想在GC之前做一些事情的话，可以通过Runtime.addShutdownHook添加钩子来在GC之前触发。
+
+*** 访问修饰符
+Java有下面4个访问修饰符可以用来控制可见性：
+1. private:仅对本类可见。
+2. public:对所有类可见。
+3. protected:对本包和所有子类可见。
+4. 默认：对本包可见。
+访问修饰符可以作用在类，方法以及字段上面，控制可见性效果是相同的。
+
+*** 静态导入
+所谓静态导入，就是可以导入某个类下面的静态方法以及静态域，通常来说这样可以使得代码更容易阅读，比如
+#+BEGIN_EXAMPLE
+import static java.lang.Math.*;
+class App {
+  public static void main(String[] args){
+    // System.out.println(Math.sqrt(Math.pow(3,2)+Math.pow(4,2)));
+    System.out.println(sqrt(pow(3,2)+pow(4,2)));
+  }
+}
+#+END_EXAMPLE
+
+*** equals编写
+
+equqls编写建议：
+1. 对于参数必须是Object arg.  =boolean equals(Object arg)=
+2. 检测两个对象是否相同，可以节省判断开销。 =if(this == arg) return true;=
+3. 判断arg是否为null. =if(arg == null) return false;=
+4. 如果要求判断两者类型必须相同，那么通过getClass判断Class对象是否相同。 =if(getClass()!=arg.getClass()) return false;=
+5. 如果仅仅是想在语义上判断相同的话,那么使用instanceof判断。
+  - 通常情况是，好比A,B都是容器实现，B extends A.只不过B是A另外一种实现。
+  - 对于AB来说他们hold数据都是相同的。这种情况下面就是语义的判断相同。可以通过 =arg instanceof A.class= 来判断是否为A子类。
+6. 转换成为相同类型之后逐个比较字段。
+
+** 内部类(Inner Class)
+引入内部类(inner class)主要有下面三个原因：
+1. 内部类可以访问该类定义所在的作用域中数据，包括私有数据。
+2. 内部类可以对同一个包中的其他类隐藏起来。
+3. 当想要定义一个回调函数且不想编写大量代码时，使用匿名类（anonymous）比较便捷。
+
+关于Java的内部类大概有这么几种：
+1. 普通内部类。（可以访问到外围类实例）
+2. 静态内部类。(C++嵌套类和静态内部类更相似）
+3. 局部类。（通常在方法内使用，可以访问到外围类实例以及方法中final参数）
+4. 匿名内部类。（局部类一种特例，方便做一个接口简单扩展）
+
+*** 普通内部类
+#+BEGIN_SRC Java
+class X{
+  private int x=1;
+  class Y{
+    void foo(){
+      System.out.println(x);
+    }
+  }
+  public static void main(String[] args){
+    X x=new X();
+    Y y=x.new Y();
+    y.foo();
+  }
+}
+#+END_SRC
+
+内部类生成class使用$分隔，所以可以看到X$Y.class文件。可以看到在Y里面访问x字段。原理非常简单，在Y内部生成了X的一个实例指针，同时在X里面为x字段提供了一个静态访问方法。
+
+#+BEGIN_SRC Java
+class X extends java.lang.Object{
+    X();
+    public static void main(java.lang.String[]);
+    static int access$000(X); // 在X中静态访问方法
+}
+
+class X$Y extends java.lang.Object{
+    final X this$0; // 在Y里面提供了外围实例指针
+    X$Y(X);
+    void foo();
+}
+#+END_SRC
+
+了解了这些之后对于x.new Y()这样的语法就好理解了。我们首先需要一个外围实例，才能够构造Y对象出来。
+
+*** 静态内部类
+但是并不是所有内部类都需要访问外围实例的。如果没有这样需求的话，我们就可以使用静态内部类static class Y.可以使用X.Y进行引用。
+
+#+BEGIN_SRC Java
+public class InnerClassTest {
+    @AllArgsConstructor
+    static class X {
+        int x;
+    }
+    public static void main(String[] args) {
+        InnerClassTest.X x = new InnerClassTest.X(100);
+        System.out.println(x.x); // 100
+    }
+}
+#+END_SRC
+
+*** 局部内部类
+局部内部类是在方法中定义的内部类，生成类的规则就是X$1Y.class.1使用数字来标记区分不同的方法。
+
+#+BEGIN_SRC Java
+class X{
+  private int x=1;
+  void foo(final int y){
+    class Y{
+      void foo(int z){
+        System.out.println(x+","+y+","+z);
+      }
+    }
+    Y iy=new Y();
+    iy.foo(20);
+  }
+  public static void main(String[] args){
+    X x=new X();
+    x.foo(10);
+  }
+}
+#+END_SRC
+
+这里要求参数为final原因很简单。因为局部类需要将这个参数在构造的时候就拿过来放在自己类中。final的话语义上会比较好理解。可以看看生成class内容
+
+#+BEGIN_SRC Java
+class X$1Y extends java.lang.Object{
+    final int val$y; // 这里将外部y捕获。
+    final X this$0;
+    X$1Y(X, int); // 构造函数传入y
+    void foo(int);
+}
+#+END_SRC
+
+*** 匿名内部类
+匿名类编写回调或者是特定的接口扩展非常方便，当然也可以容易地扩展一个类。(或许可以使用Java8 Lambda语法代替了？）
+
+#+BEGIN_SRC Java
+class X{
+  public static void main(String[] args) throws InterruptedException {
+    Thread y=new Thread() { // 这个地方需要传入基类的构造参数。
+        public void run() {
+          for(int i=0;i<10;i++){
+            System.out.println("run...");
+          }
+        }
+      };
+    y.start();
+    y.join();
+  }
+}
+#+END_SRC
+
+生成的类名称为X$1.class.其中1是数字用来区别匿名类。注意匿名类都是final的。
+
+#+BEGIN_SRC Java
+final class X$1 extends java.lang.Thread{
+    X$1();
+    public void run();
+}
+#+END_SRC
+
+** 浮点运算(Floating Point)
+float类型数值常量后面加上F比如3.042F,而double类型数值常量后面加上D比如3.402D.所有浮点数值计算都遵循IEEE 752规范。Java提供了三种表示溢出或者计算错误的三种特殊浮点数值：
+1. 正无穷大 Double.POSITIVE_INFINITY
+2. 负无穷大 Double.NEGATIVE_INFINITY
+3. NaN(不是数字) Double.NaN. 浮点数/0的话就会得到NaN.判断是否为NaN不应该使用==因为和一个NaN比较始终都是false,而应该使用Double.isNaN(x)
+
+对于较大浮点数应该使用BigDecimal来进行计算。
+
+Java虚拟机规范强调可移植性，对于在任何机器上来说相同的程序得到的结果应该是相同的。但是对于浮点计算的话，比如Intel CPU针对于浮点数计算所有中间结果都使用bit 80表示，而最后截取bit 64,造成和其他CPU计算结果不同。为了达到可移植性，Java规范所有中间结果必须使用bit 64截断，但是遭反对，因此Java提供了strictfp关键字标记某个方法，对于这个方法里面所有浮点数计算，所有中间结果使用64 bit截断，否则使用适合native方式计算。另外一些浮点数计算比如pow2,pow3,sqrt的话，一方面依赖于CPU浮点计算方式，另外一方面依赖于本身算法（如果CPU本身提供这种指令的话就可以使用CPU指令），也会造成不可移植性，比如Math.sqrt.如果希望在这方面也达到同样效果的话，可以使用StrictMath类，底层使用fdlibm，以确保所有平台上得到相同的结果。
+
+** 异常和堆栈(Exception & StackTrace)
+Java里面异常都是派生于Throwable，但是分解成为两个分支：
+- Error.描述Java运行时系统的内部错误和资源耗尽。应用程序不应该抛出该类型对象。
+- Exception.分解为RuntimeException（运行时异常）和其他（编译时异常）。
+- RuntimeException包括下面几种情况：
+  - 错误类型转换
+  - 数组访问越界
+  - 访问空指针
+
+Java语言规范将派生于Error或者是RuntimeException的所有异常称为未检查异常(unchecked exception),而将所有其他异常（也就是编译时异常）称为已检查异常(checked).
+称为已检查异常原因是因为，Java的异常规格也是作为函数声明的一部分的。因此如果方法foo抛出异常X,那么调用foo的方法要么检查异常X, 要么就在自己的规则里面写上throws X传给上层处理。
+无论如何你都是需要面对这个异常的，所以称为已检查。
+
+几种常见的异常操作：
+- 抛出异常非常简单，使用new Exception()即可
+- 创建异常的话继承Throwable即可，构造参数可以传入message表示这个异常的详细信息。
+- 如果重新抛出异常的话会将异常链断开，可以通过调用initCause将原始的cause保存起来，getCause可以取出。这样可以保持异常链完整信息。
+
+几种常见的处理堆栈操作：
+- 使用Thread.getStackTrace获得某个线程的堆栈信息
+- 使用Thread.getAllStackTrace可以获得所有线程的堆栈信息
+- 异常对象可以使用e.printStackTrace打印堆栈信息
+
+** 对象代理(Object Proxy)
+使用代理可以动态地生成一些类或者是接口（但是不是动态生成代码）。创建一个代理对象，使用Proxy类的newProxyInstance方法，有下面三个参数：
+1. 类加载器(class loader), null表示使用默认加载器。
+2. class对象数组，表示想实现的接口。
+3. 调用处理器(invocation handler), 可以截获方法调用然后做代理。
+
+调用处理器接口为Object invoke(Object proxy, Method method, Object... args).其中proxy表示代理对象本身，method,args表示调用方法以及参数。
+
+下面是一个覆盖 =Runnable= 接口的代码示例，其中使用到了匿名内部类技术：
+#+BEGIN_SRC Java
+class X {
+    public static void main(String[] args) throws InterruptedException {
+        final Runnable r = new Runnable() {
+            public void run() {
+                for (int i = 0; i < 10; i++) {
+                    System.out.println("run...");
+                }
+            }
+        };
+        Runnable proxy = (Runnable) Proxy.newProxyInstance(r.getClass().getClassLoader(), new Class[]{Runnable.class}, new InvocationHandler() {
+            public Object invoke(Object proxy, Method m, Object[] args) {
+                System.out.println("entering...");
+                try {
+                    return m.invoke(r, args);
+                } catch (Exception ex) {
+                    return null;
+                }
+            }
+        });
+        Thread t = new Thread(proxy);
+        t.start();
+        t.join();
+    }
+}
+
+#+END_SRC
+
+下面是一个覆盖 =List= 接口的代码示例：
+- 生成一个ArrayList对象，当做目标对象
+- 代理 =List= 的接口，但是每次调用之前会打印方法和参数信息
+
+#+BEGIN_SRC Java
+
+public class ProxyTester implements InvocationHandler {
+    Object target;
+
+    public ProxyTester(Object target) {
+        this.target = target;
+    }
+
+    public static void main(String[] args) {
+        ArrayList<Integer> a = new ArrayList<>(Arrays.asList(1, 2, 3, 4, 5));
+        InvocationHandler h = new ProxyTester(a);
+        Object proxy = Proxy.newProxyInstance(null, new Class[]{List.class}, h);
+        List<Integer> b = (List<Integer>) proxy;
+        System.out.println(b.size());
+        System.out.println(b.get(2));
+    }
+
+    @Override
+    public Object invoke(final Object proxy, final Method method, final Object[] args) throws Throwable {
+        StringBuffer sb = new StringBuffer();
+        sb.append("calling " + method.getName() + "(");
+        if (args != null) {
+            for (Object arg : args) {
+                sb.append((arg != null ? arg.toString() : "null") + ", ");
+            }
+            if (args.length != 0) {
+                sb.setLength(sb.length() - 2);
+            }
+        }
+        sb.append(")");
+        System.out.println(sb.toString());
+
+        Object res = method.invoke(target, args);
+        return res;
+    }
+}
+#+END_SRC
+
+关于对象代理类：
+- Java没有定义代理类的名字，sun虚拟机中的Proxy类将生成一个以字符串$Proxy开头的类名。
+- 对于特定的类加载器和预设的一组接口来说，只能够有一个代理类。也就是说，如果使用同一个类加载器刚和接口数组调用newProxyInstance方法两次的话，那么只能够得到同一个类的两个对象。
+- 可以使用Proxy.getProxyClass获得对应代理类，通过Proxy.isProxyClass判断某个类是否为代理类。
+
+** 类和反射(Class & Reflection)
+Class类本身表示这个类的一些元信息。通常拿到这个类的元信息之后，就可以完成一些动态事情比如反射。Java有三种方式可以获得Class类：
+1. 对象调用getClass()方法。
+2. 字面量直接获取 App.class
+3. 通过类名动态查找 Class.forName("java.util.Date")
+
+获得Class之后，就可以获取到这个class内部：
+1. fields
+2. methods
+3. constructors
+这样就可以开始做一些反射工作了。
+
+#todo: more about reflection
+
+** 线程和同步(Thread & Synchronization)
+
+线程包括下面6种状态，并且切换关系如下：
+1. new 线程创建好并且分配资源但是没有运行，调用start进入runnable状态。
+2. runnable 正在运行的状态。运行过程中如果调用return或者是exit的话，那么进入terminated状态。
+3. terminated 线程已经被终止并且进行资源回收。
+4. blocked 在runnable时候，如果acquire lock失败的话那么会进行block状态，当获得锁之后那么返回runnable状态。
+5. waiting 在runnable时候，如果等待notification那么进行这个状态，如果notification触发的话那么返回runnable状态。
+6. timed waiting 其实和waiting状态差不多，只不过这个notification状态会存在一个超时。
+
+关于4，5，6这三个状态其实可以对应到lock/condition上。通常我们在acquire lock失败之后会进入到blocked状态，通常lock会自带一个 =condition= 变量。
+如果这个时候调用 =condition.wait()= 的话，那么就切换到了waiting状态上；而如果调用 =condition.timedWait()= 的话，则切换到了timed waiting状态上。
+直到其他进程调用 =condition.signal/signalAll()= 的话，这些waiting状态才会重新到runnable状态，重新去获取锁。
+
+守护线程（daemon）和unix操作系统的daemon有些差别。在Java里面如果还有存活的线程的话，即使main线程完毕那么程序依然不会结束（这个在c/c++程序里面则不然）。如果将线程设置成为daemon状态的话，那么最后剩下的线程都是daemon的话，那么jvm也会自动退出。
+
+Runnable的run方法是不允许抛出任何异常的，对于可检查的异常可以在代码里面完成，而对于不可检查的异常因为不能够处理，因此如果触发的话那么线程终止。而对于可检查异常如果没有处理的话，那么在线程死亡之前，异常会被一个异常处理器处理：
+- Thread.UncaughtExceptionHandler接口 =void uncaughtException(Thread t,Throwable e)=
+  - 通过setUncaughtExceptionHandler为单个线程安装处理器
+  - 也可以通过setDefaultUncaughtExceptionHandler为所有线程安装。
+- 默认处理器为空。如果线程安装的话，那么使用该线程的ThreadGroup对象作为异常处理器
+  - 如果这个线程存在父线程组，那么交给父线程组处理。
+  - 如果Thread.getDefaultUncaughtExceptionHandler为非空的话那么调用。
+  - 如果Throwable为ThreadDeath实例，那么什么也不做。
+  - 将线程名字和Throwable的stacktrace输出到stderr上面。
+
+=synchronized= 关键字有两个使用场景：
+- 如果作用于对象或者是对象方法的话，那么其实相当是同步这个对象(对象存在一个mutex lock)
+- 如果作用于静态字段或者是静态方法的话，那么其实相当是同步这个类（类有一个mutex lock)
+一旦理解这点之后，就比较好理解為什麼存在wait, notify, notifyAll这些方法了。其实都是相当于这个lock对应的condition本身提供的方法。
+本质上 =synchronized= 关键字的引入是为了使用监视器(monitoring)这个同步概念，但是考虑到性能又做些某些妥协导致存在安全隐患。
+我估计production环境下面很少会使用这种同步机制。
+
+volatile关键字为 *实例字段* 的同步访问提供了一种免锁机制。如果声明一个字段为volatile的话，那么编译器和虚拟机就可以知道这个字段很可能会被另外一个线程并发更新。
+关键这个话题需要去阅读Java内存模型的文档，如果不确定的话，还是使用基本的同步机制或者是 =AtomicInteger= 这样的原子操作类。
+
+*為什麼要抛弃stop和suspend方法？* 因为这些方法都尝试破坏线程本身正常的行为。比如A，B两个线程同时acquire一个lock，如果A成功之后，B在等待，这个之后A被stop或者是suspend的话，那么情况就变成了死锁。
+
+关于Future的一点个人感想如下： *Future这个概念非常好，可以做成一个Callable对象的continuation.*  曾经一段时间我非常希望将其当作一个类似Nio下面的Channel对象来看待，因为一旦如此那么便可以使用类似Select/Epoll这种多路复用组件，来管理众多的continuation。可以检测continuation是否ready或者是是否超时，然后触发回调，整个过程和Nio多路复用非常类似，这样在这上面做异步就非常容易了。但是后来考虑清楚了，这件事情是不靠谱的。原因如下：
+- 检测continuation是否ready非常容易，只需要把continuation逻辑写在发起的Callable之后即可。因此在JDK里面也有FutureTask并且衍生了一些辅助类比如ExecutorCompletionService, 但是这些组件实际上都是封装，没有解决实际问题。
+- 事实上Future和Channel存在本质的不同，Future发起的是一个Callable操作也就是CPU操作，虽然这里面可能有IO操作，但是如果当作通用的CPU操作来看的话，这个操作即使检测到超时也不能够停止，而Channel上read/write是不同的，Channel上面的操作是允许中断的。
+- 就像之前所说的，Future本质发起的Callable对象是一个CPU操作，里面可能也带有IO操作，将Callable对象放在线程池里面执行，也就是说实际上需要靠线程池数量来支撑Callable并发，这点和异步是相反思路的。
+
+下面是 =CyclicBarrier= 的一个示例代码。CyclicBarrier和CountDownLatch很类似，只不过它可以循环使用，一旦计数器减少到0又会被重置回去。
+
+#+BEGIN_SRC Java
+
+public class CyclicBarrierTest {
+
+    public static void main(String[] args) throws InterruptedException {
+        CyclicBarrier cb = new CyclicBarrier(10, () -> {
+            System.out.println("OK>>>>");
+        });
+        ExecutorService es = Executors.newCachedThreadPool();
+        for (int i = 0; i < 10; i++) {
+            final int threadId = i;
+            es.submit(() -> {
+                for (int j = 0; j < 2; j++) {
+                    try {
+                        cb.await();
+                        System.out.println("thread " + threadId + " started..");
+                    } catch (InterruptedException | BrokenBarrierException e) {
+                        break;
+                    }
+                }
+            });
+        }
+        es.shutdown();
+        es.awaitTermination(100, TimeUnit.SECONDS);
+    }
+}
+#+END_SRC
+
+
+** 集合(Collection)
+** 泛型编程(Generics)
+
+https://waylau.gitbooks.io/essential-java/docs/generics.html
+
+我对于类型擦除的理解是，在生成字节码的时候，类型参数会使用类型上界（比如T extends Comparable<T>，那么
+类型上界就是Comparable）来代替。如果没有设定类型上界的话，那么使用Object代替。除非是使用类似C++这样
+编译方式（实例化模板来生成代码），否则泛型必须将一部分功能放在运行时，而在编译时能做的就是有限的检查。
+
+#+BEGIN_QUOTE
+泛型被引入到Java语言中，以便在编译时提供更严格的类型检查并支持泛型编程。为了实现泛型，Java编译器将类型擦除应用于：
+- 如果类型参数是无界的，则用泛型或对象替换泛型类型中的所有类型参数。因此，生成的字节码仅包含普通的类\接口和方法。
+- 如有必要，插入类型铸件以保持类型安全。
+- 生成桥接方法以保留扩展泛型类型中的多态性。
+类型擦除能够确保不为参数化类型创建新类，因此，泛型不会产生运行时开销。
+#+END_QUOTE
+
+考虑单链表节点的泛型类。因为T没有设置上界，那么在Java编译器会用Object代替T.
+#+BEGIN_SRC java
+public class Node<T> {
+
+    private T data;
+    private Node<T> next;
+
+    public Node(T data, Node<T> next) {
+        this.data = data;
+        this.next = next;
+    }
+
+    public T getData() { return data; }
+    // ...
+}
+#+END_SRC
+
+如果写成下面这样的话，那么会用Comparable来代替T.
+
+#+BEGIN_SRC java
+public class Node<T extends Comparable<T>> {
+
+    private T data;
+    private Node<T> next;
+
+    public Node(T data, Node<T> next) {
+        this.data = data;
+        this.next = next;
+    }
+
+    public T getData() { return data; }
+    // ...
+}
+#+END_SRC
+
+总之，需要记住有关Java泛型转换的事实：
+1. 虚拟机中没有泛型，只有普通的类和方法
+2. 所有的类型都是逗用它们的限定类型替换
+3. 桥方法被合成用来保持多态（虚拟机中用参数类型和返回类型确定一个方法）
+4. 为了保持类型安全，必要时插入强制类型转换

@@ -1,0 +1,35 @@
+#+title: Reducing Image File Size at Etsy
+
+[[https://codeascraft.com/2017/05/30/reducing-image-file-size-at-etsy/]]
+
+esty 如何处理图片文件的
+
+配置专门的服务器来处理上传图片，和专门的服务器来对请求图片做缓存.
+
+一个缩小图片文件的简单办法就是降低quality, 但是不太好确定一个静态quality, 理想的情况是根据上传图片自动选择。可以认为85是一个平衡（基准，保守）的数值，quality的降低可以以这个作为bench.
+
+[[https://ece.uwaterloo.ca/~z70wang/research/ssim/][SSIM]] ([[https://github.com/pornel/dssim][dssim]]) 可以通过比较两个图片的结构相似度，来估计从人类视觉角度来看，两个图片的差异度。这个数值的范围是0-inf. 如果我们认为quality=85是一个比较平衡的数值的话，那么我们可以通过二分办法来尝试多种quality, 一旦某个quality的SSIM和quality=85的SSIM的比例，高于某个范围的话，我们就可以认为这个quality是可行的。
+
+原始的dssim只能用于比较png, [[https://github.com/technopagan/cjpeg-dssim][cjpeg-dssim]] 可以用来比较jpeg. esty在此基础上进行了多种优化，把时间减半：
+- 最新的dssim可以比较jpeg
+- 直接比较image blob而不是每次从文件中读取
+- quality range 限制在[70, 85]
+虽然后台会对图片保存多种尺寸，但是发现尺寸对于quality影响不大，所以在一个固定的尺寸上就可以很好地计算出quality，但是直接应用于其他尺寸上。
+
+-----
+上线之后几个统计数据：
+- 处理图片的平均延迟在500ms, 90th在800ms.
+- quality的平均值在73左右，所以相比85确实小了很多
+- 流量减少了20-30%
+
+页面加载性能提升分析：
+| MIME Type | 	Bytes     |
+|-----------+-------------------|
+| js        | 	6,119,491 |
+| image     | 	1,022,820 |
+| font      | 	129,496   |
+| css       | 	122,731   |
+| html      | 	86,744    |
+| other     | 	3,838     |
+| Total     | 	7,485,120 |
+其中js, css, font这些内容可以在整个站点被浏览的时候缓存下来，所以对于image在整个流量中占据非常大的部分。流量减少20-30%，可以让用户在2G网络下面（roughly 14.4 kbps）减少接近20s的加载时间。

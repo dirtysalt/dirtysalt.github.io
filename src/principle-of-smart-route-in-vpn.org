@@ -1,0 +1,76 @@
+#+title: VPN的智能加速原理
+
+参考的是 [[https://www.yuntiweb.com/admin/speed_up][云梯]] 的智能加速方案。原理其实很简单，就是对国内站点网段走默认网关，其他的才会走VPN. 
+
+所以我们首先需要挑选出来国内站点的网段，ipip.net的工作者在 [[https://github.com/17mon/china_ip_list][github]] 上整理出了许多国内站点网段。
+
+然后修改vpn设置：每次启动的时候增加路由规则，将这些国内网段走默认网关，关闭的时候将这些路由规则移除。每个步骤对应的脚本看下面这段代码
+#+BEGIN_SRC Shell
+
+function fedora_install() {
+  cp $SCRIPTDIR/data/ip-pre-up /etc/NetworkManager/dispatcher.d/pre-up.d/ip-pre-up
+  chmod +x /etc/NetworkManager/dispatcher.d/pre-up.d/ip-pre-up
+
+  cp $SCRIPTDIR/data/ip-up /etc/ppp/ip-up.local
+  chmod +x /etc/ppp/ip-up.local
+
+  cp $SCRIPTDIR/data/ip-down /etc/ppp/ip-down.local
+  chmod +x /etc/ppp/ip-down.local
+}
+
+function ubuntu_install() {
+  cp $SCRIPTDIR/data/ip-pre-up /etc/ppp/ip-pre-up
+  chmod +x /etc/ppp/ip-pre-up
+
+  cp $SCRIPTDIR/data/ip-up /etc/ppp/ip-up.d/ip-up
+  chmod +x /etc/ppp/ip-up.d/ip-up
+
+  cp $SCRIPTDIR/data/ip-down /etc/ppp/ip-down.d/ip-down
+  chmod +x /etc/ppp/ip-down.d/ip-down
+}
+
+#+END_SRC
+
+
+`/etc/ppp/ip-pre-up` 应该是在vpn开启之前调用，这样可以获得默认网关.
+#+BEGIN_SRC Bash
+#!/bin/bash
+# Generate on 2017-02-03 04:38 by VPNCloud
+export PATH="/bin:/sbin:/usr/sbin:/usr/bin"
+
+OLDGW=`ip route show | grep '^default' | sed -e 's/default via \([^ ]*\).*/\1/'`
+
+if [ $OLDGW == '' ]; then
+    exit 0
+fi
+
+echo $OLDGW > /tmp/vpn_oldgw
+#+END_SRC
+
+vpn启动之后执行 `/etc/ppp/ip-ip` . 执行如下命令添加路由规则
+#+BEGIN_SRC Bash
+#!/bin/bash
+# Generate on 2017-02-03 04:38 by VPNCloud
+export PATH="/bin:/sbin:/usr/sbin:/usr/bin"
+
+OLDGW=`cat /tmp/vpn_oldgw`
+
+route add -net 1.0.1.0 netmask 255.255.255.0 gw $OLDGW
+route add -net 1.0.2.0 netmask 255.255.254.0 gw $OLDGW
+route add -net 1.0.8.0 netmask 255.255.248.0 gw $OLDGW
+route add -net 1.0.32.0 netmask 255.255.224.0 gw $OLDGW
+route add -net 1.1.0.0 netmask 255.255.255.0 gw $OLDGW
+#+END_SRC
+
+vpn关闭的时候执行 `/etc/ppp/ip-down` 把之前添加的路由规则移除
+#+BEGIN_SRC Bash
+#!/bin/bash
+# Generate on 2017-02-03 04:38 by VPNCloud
+export PATH="/bin:/sbin:/usr/sbin:/usr/bin"
+
+OLDGW=`cat /tmp/vpn_oldgw`
+
+
+route del -net 1.0.1.0 netmask 255.255.255.0
+route del -net 1.0.2.0 netmask 255.255.254.0
+#+END_SRC

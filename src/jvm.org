@@ -1,0 +1,81 @@
+#+title: JVM
+
+* Garbage Collector(GC)
+JVM GC方面文章
+- Sun jdk 1.6 gc http://www.slideshare.net/BlueDavy/sun-jdk-16-gc
+- Java SE 6 HotSpot[tm] Virtual Machine Garbage Collection Tuning : http://www.oracle.com/technetwork/java/javase/gc-tuning-6-140523.html
+- Performance Tuning Garbage Collection in Java : http://www.petefreitag.com/articles/gctuning/
+- java - Garbage Collection and Threads - Stack Overflow : http://stackoverflow.com/questions/2085544/garbage-collection-and-threads
+- JVM performance optimization
+     - JVM performance optimization, Part 1: A JVM technology primer http://www.javaworld.com/javaworld/jw-08-2012/120821-jvm-performance-optimization-overview.html
+     - JVM performance optimization, Part 2: Compilers http://www.javaworld.com/javaworld/jw-09-2012/120905-jvm-performance-optimization-compilers.html
+     - JVM performance optimization, Part 3: Garbage collection http://www.javaworld.com/javaworld/jw-10-2012/121010-jvm-performance-optimization-garbage-collection.html
+     - JVM performance optimization, Part 4: C4 garbage collection for low-latency Java applications http://www.javaworld.com/javaworld/jw-11-2012/121107-jvm-performance-optimization-low-latency-garbage-collection.html
+- Understanding JVM Internals | CUBRID Blog http://www.cubrid.org/blog/dev-platform/understanding-jvm-internals
+- The Principles of Java Application Performance Tuning | CUBRID Blog : http://www.cubrid.org/blog/dev-platform/the-principles-of-java-application-performance-tuning/
+- Understanding JVM Internals, from Basic Structure to Java SE 7 Features | Architects Zone http://architects.dzone.com/articles/understanding-jvm-internals
+- Garbage Collection Optimization for High-Throughput and Low-Latency Java Applications | LinkedIn Engineering : http://engineering.linkedin.com/garbage-collection/garbage-collection-optimization-high-throughput-and-low-latency-java-applications
+- Java Garbage Collection Introduction http://javapapers.com/java/java-garbage-collection-introduction/
+
+为了监控GC情况添加如下参数 `-verbose:gc -XX:-PrintGCDetails -XX:+PrintGCTimeStamps -XX:+PrintGCApplicationConcurrentTime`
+- =-XX:+PrintGCDetails= 关于GC更详细的细节
+- =-XX:+PrintGCDateStamps= GC操作的时间戳
+- =-XX:+PrintGCApplicationConcurrentTime= 在应用线程仍然运行的情况下用在GC上的时间
+
+下面GC参数可供参考 `-server -Xms8192m -Xmx8192m -XX:NewSize=1024m -XX:+UseConcMarkSweepGC -XX:+CMSIncrementalMode -XX:+CMSIncrementalPacing -XX:+UseParNewGC -XX:ParallelGCThreads=8`
+- =-XX:+UseConcMarkSweepGC= 打开CMS收集
+- =-XX:+CMSIncrementalMode= 增量模式（一般都需要）
+- =-XX:+CMSIncrementalPacing= 配合增量模式，根据应用程序的行为自动调整每次执行的垃圾回收任务的幅度（一般都需要）
+- =-XX:+UseParNewGC= 并发收集年轻代
+- =-XX:ParallelGCThreads=<N>= GC使用的线程数
+
+----------
+
+非标准的JVM选项
+- 以-X:开头的选项不是标准选项，在其他JVM上可能不可用。
+- 以-XX:开头的是扩展选项，不要随便使用。很多与性能相关的选项都是扩展选项。
+- 有些选项相当于布尔型的参数，并且前面有+或-作为它的开关。还有带参数的选项，比如-XX:CompileThreshold=1000（这个方法会在调用次数达到1000之后才被JIT编译）。
+- 还有一些参数（包括很多标准参数）既没有开关也不能带参数。
+
+----------
+
+Java平台对基本的标记清除方法进行了改进，采用“分代式垃圾收集”。在这种方法中，会根据Java对象的生命周期将堆内存划分为不同的区域。在对象的生存期内，对它的引用可能指向内存中几个不同区域（如图6-5所示）。在垃圾收集过程中，可能会将对象移动到不同区域。
+这样做是因为根据对系统运行时期的研究，发现对象的生存期或者较短，或者很长。Java平台把堆内存划分为不同区域可以充分利用对象生命周期的这种特点。
+- 伊甸园 eden
+- 幸存者乐园 s0/s1(from/to)
+- 终身园 old generation
+
+file:images/java-gc-gen.png
+
+关于Major/Minor GC:
+- 新生代GC（Minor GC）：指发生在新生代的垃圾收集动作，因为Java对象大多都具备朝生夕灭的特性，所以Minor GC非常频繁，一般回收速度也比较快。
+- 老年代GC（Major GC/Full GC）：指发生在老年代的GC，出现了Major GC，经常会伴随至少一次的Minor GC（但非绝对的，在Parallel Scavenge收集器的收集策略里就有直接进行Major GC的策略选择过程）。
+- Major GC的速度一般会比Minor GC慢10倍以上。
+
+
+
+* Java Memory Model(JMM)
+
+----------
+
+Java在其混沌初开的时期（Java 1.0）就已经把volatile作为关键字了，它是一种简单的对象域同步处理办法，包括原始类型。一个volatile域需遵循如下规则：
+- 线程所见的值在使用之前总会从主内存中再读出来。
+- 线程所写的值总会在指令完成之前被刷回到主内存中。
+
+可以把围绕该域的操作看成是一个小小的同步块。程序员可以借此编写简化的代码，但付出的代价是每次访问都要额外刷一次内存。还有一点要注意，volatile变量不会引入线程锁，所以使用volatile变量不可能发生死锁。
+
+更加微妙的是，volatile变量是真正线程安全的，但只有写入时不依赖当前状态（读取的状态）的变量才应该声明为volatile变量。对于要关注当前状态的变量，只能借助线程锁保证其绝对安全性。
+
+volatile读写本身是有原子性的，但是结合起来却不具有原子性，所以不能用它来代替AtomicInteger。
+
+----------
+
+之前发生(Happens-Before) - 这种关系表明一段代码块在其他代码开始之前就已经全部完成了。
+
+同步约束(Synchronizes-With) 这意味着动作继续执行之前必须把它的对象视图与主内存进行同步。
+
+JMM(Java Memory Model)的主要规则如下：
+- 在监测对象上的解锁操作与后续的锁操作之间存在同步约束关系。（锁这样的对象可以用于同步约束）
+- 对易失性（volatile）变量的写入与后续对该变量的读取之间存在同步约束关系。（volatile关键字可以用于同步约束）
+- 如果动作A受到动作B的同步约束，则A在B之前发生。（跨线程的通过同步约束保证顺序）
+- 如果在程序中的线程内A出现在B之前，则A在B之前发生。 (单线程内无条件地保证顺序）

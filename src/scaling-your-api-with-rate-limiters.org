@@ -1,0 +1,40 @@
+#+title: Scaling your API with rate limiters
+
+https://stripe.com/blog/rate-limiters [[https://gist.github.com/ptarjan/e38f45f2dfe601419ca3af937fff574d][code]]
+
+Rate limiting can help make your API more reliable in the following scenarios: 下面几个场景需要 rate limiting 支持
+- One of your users is responsible for a spike in traffic, and you need to stay up for everyone else. # 某个用户瞬间很多请求，出现spike
+- One of your users has a misbehaving script which is accidentally sending you a lot of requests. Or, even worse, one of your users is intentionally trying to overwhelm your servers. # 某个用户有大量的请求，但是可能均匀分布，所以没有spike.
+- A user is sending you a lot of lower-priority requests, and you want to make sure that it doesn’t affect your high-priority traffic. For example, users sending a high volume of requests for analytics data could affect critical transactions for other users. # 很多优先级低的请求，阻塞高优先级请求
+- Something in your system has gone wrong internally, and as a result you can’t serve all of your regular traffic and need to drop low-priority requests. # 系统内部故障需要降级，优先满足高优先级. 这个需要load shedder来解决。load shedder更加关注系统的整体状态。
+
+-----
+
+At Stripe, we operate 4 different types of limiters in production. The first one, the Request Rate Limiter, is by far the most important one. We recommend you start here if you want to improve the robustness of your API.
+
+- Request rate limiter. 限制每秒请求数量. HTTP 403 响应
+
+file:images/request-rate-limiter.svg
+
+
+- Concurrent requests limiter. 限制并发请求数量. HTTP 429 响应
+
+file:images/concurrent-requests-limiter.svg
+
+- Fleet usage load shedder. 按照预估容量进行配置，对关键请求和非关键请求分离，
+
+We always reserve a fraction of our infrastructure for critical requests. If our reservation number is 20%, then any non-critical request over their 80% allocation would be rejected with status code 503.
+
+file:images/fleet-usage-load-shedder.svg
+
+- Worker utilization load shedder. 按照当前可用资源配置，对不同优先级请求分离。这个需要系统自身能发现当前资源使用状态，以决定是否和如何做load shedder.
+
+file:images/worker-utilization-load-shedder.svg
+
+-----
+
+Building rate limiters in practice
+- Hook the rate limiters into your middleware stack safely. 作为middleware集成进来
+- Show clear exceptions to your users. 给用户显示正确的异常，比如是429(Too Many Requests)还是503(Service Unavailable)
+- Build in safeguards so that you can turn off the limiters. 可以快速上线和下线limiters
+- Dark launch each rate limiter to watch the traffic they would block. 要能观察到blocked requests的情况

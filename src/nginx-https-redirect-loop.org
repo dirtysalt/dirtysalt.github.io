@@ -1,0 +1,83 @@
+#+title: nginx的https重定向循环问题
+
+*TL;DR https重定向循环问题有可能是因为aws elb配置不当造成的。*
+
+最近我们的站点需要全部升级到https, 为此需要修改nginx配置，配置文件如下：
+#+BEGIN_SRC Nginx
+server {
+    listen 80;
+    server_name castbox.fm www.castbox.fm;
+    return 301 https://castbox.fm$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    ssl_certificate server.crt;
+    ssl_certificate_key server.key;
+    server_name www.castbox.fm;
+    return 301 https://castbox.fm$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    ssl_certificate server.crt;
+    ssl_certificate_key server.key;
+    server_name castbox.fm;
+    ....
+}
+#+END_SRC
+
+上线之后我们立刻发现问题：访问 https://castbox.fm 会不断地重定向到 https://castbox.fm
+
+开始我们以为是nginx配置问题或者是cloudflare的问题，直到我们拿另外一个无关的域名做测试，才排除这两种可能。这个域名也是托管在cloudflare上的，按照类似上面nginx的配置，都是可以正常work的。这两个域名之间唯一差别就是aws elb.
+
+在elb里面可以配置https的处理：
+1. elb可以直接处理https的加密解密工作，然后以http请求转发给后端
+2. 或者是elb可以直接转发https请求给后端的nginx.
+
+file:images/nginx-https-redirect-loop-elb0.png file:images/nginx-https-redirect-loop-elb1.png
+
+如果是使用方式1的话就会出现循环跳转的问题（这也是我们最开始的配置）：
+- 请求 https://castbox.fm 到达elb
+- elb解析https请求，转发http请求给后端nginx. 也就是请求 http://castbox.fm
+- nginx接收到 http://castbox.fm 请求，触发重定向到 https://castbox.fm
+
+-----
+
+update@201812: 最近有遇到了一个类似的问题，就是我们的页面会出现从https到http的跳转. nginx里面的相关配置是
+
+#+BEGIN_SRC Nginx
+
+server {
+    listen 80;
+    listen 443 ssl;
+    ssl_certificate server.crt;
+    ssl_certificate_key server.key;
+    server_name m.castbox.fm;
+    location / {
+        alias /public/static/m/;
+    }
+    location /.git/ {
+        return 403;
+    }
+}
+#+END_SRC
+
+当我们访问 https://m.castbox.fm/ios 会自动跳转到 http://m.castbox.fm/ios/. 开始我们没有定位这个问题，是因为在 "ios/"之后带上了很长的
+utm_*等字段，导致我们没有发现多了一个slash. 用chrome devtools检查的时候才发现有了这个多余的跳转。
+
+原来 https://m.castbox.fm/ios 其实是需要找到 /public/static/m/ios/index.html 这个文件，而nginx会对这种请求自动增加trailing slash.
+这时我们的aws elb上已经配置了证书以及ssl termination，导致所有从elb过来的请求都是http的。
+
+file:images/nginx-https-redirect-loop-elb2.png
+
+所以当nginx增加trailing slash的时候，其实跳转的url是 http://m.castbox.fm/ios/.
+
+解决这个问题也不是麻烦，就是显示地指定这种情况：当出现类似directory结尾的情况时，去查找是否有目录下面index.html文件
+
+#+BEGIN_SRC Nginx
+location / {
+    try_files $uri $uri/index.html $uri/ =404;
+    alias /root/www/;
+}
+#+END_SRC

@@ -1,0 +1,117 @@
+#+title: java tools
+
+** jvisualvm
+Profiling Applications with VisualVM — Java.net http://visualvm.java.net/profiler.html
+
+远程调试需要程序启动的时候加上下面这些选项：
+- -Dcom.sun.management.jmxremote.port=1999
+- -Dcom.sun.management.jmxremote.ssl=false 不走ssl
+- -Dcom.sun.management.jmxremote.authenticate=false 不做验证
+- -Dcom.sun.management.jmxremote.port=12345 -Dcom.sun.management.jmxremote.ssl=false  -Dcom.sun.management.jmxremote.authenticate=false
+
+插件 *Tools->Plugins*
+- https://visualvm.java.net/pluginscenters.html
+- VisualGC 可以用来观察GC执行情况
+- VisualVM-MBeans 用来察看mbean对象
+
+** hprof
+HPROF: A Heap/CPU Profiling Tool
+- http://docs.oracle.com/javase/7/docs/technotes/samples/hprof.html
+- HPROF is actually a JVM native agent library which is dynamically loaded through a command line option, at JVM startup, and becomes part of the JVM process.
+- The binary format file from HPROF can be used with tools such as [[https://hat.dev.java.net/][HAT]] to browse the allocated objects in the heap. 二进制输出可以使用HAT这个工具来察看
+- HPROF is capable of presenting
+  - CPU usage,
+  - heap allocation statistics,
+  - and monitor contention profiles.
+  - complete heap dumps and
+  - states of all the monitors and threads
+
+使用java -agentlib:hprof=help可以察看hprof的调用方式
+#+BEGIN_EXAMPLE
+
+     HPROF: Heap and CPU Profiling Agent (JVMTI Demonstration Code)
+
+hprof usage: java -agentlib:hprof=[help]|[<option>=<value>, ...]
+
+Option Name and Value  Description                    Default
+---------------------  -----------                    -------
+heap=dump|sites|all    heap profiling                 all
+cpu=samples|times|old  CPU usage                      off
+monitor=y|n            monitor contention             n
+format=a|b             text(txt) or binary output     a
+file=<file>            write data to file             java.hprof[{.txt}]
+net=<host>:<port>      send data over a socket        off
+depth=<size>           stack trace depth              4
+interval=<ms>          sample interval in ms          10
+cutoff=<value>         output cutoff point            0.0001
+lineno=y|n             line number in traces?         y
+thread=y|n             thread in traces?              n
+doe=y|n                dump on exit?                  y
+msa=y|n                Solaris micro state accounting n
+force=y|n              force output to <file>         y
+verbose=y|n            print messages about dumps     y
+
+Obsolete Options
+----------------
+gc_okay=y|n
+
+Examples
+--------
+  - Get sample cpu information every 20 millisec, with a stack depth of 3:
+      java -agentlib:hprof=cpu=samples,interval=20,depth=3 classname
+- Get heap usage information based on the allocation sites:
+      java -agentlib:hprof=heap=sites classname
+
+Notes
+-----
+  - The option format=b cannot be used with monitor=y.
+  - The option format=b cannot be used with cpu=old|times.
+  - Use of the -Xrunhprof interface can still be used, e.g.
+       java -Xrunhprof:[help]|[<option>=<value>, ...]
+    will behave exactly the same as:
+       java -agentlib:hprof=[help]|[<option>=<value>, ...]
+
+Warnings
+--------
+  - This is demonstration code for the JVMTI interface and use of BCI,
+    it is not an official product or formal part of the JDK.
+- The -Xrunhprof interface will be removed in a future release.
+- The option format=b is considered experimental, this format may change
+    in a future release.
+#+END_EXAMPLE
+- force=y 会删除原来的文件，如果是多个VM来同时使用hprof的话那么需要使用force=n
+- heap= sites能够看到所有的分配以及热点，而dump能够看到所有引用的对象，而all则能看到两个
+  - #note: dump，all能够消耗大量内存，最好别使用，而且没有太大意义
+  - 如果不希望对heap做分析的话，那么不要指定这个选项。
+- cpu=samples采用采样方式来做分析,interval则是设置采样间隔。 #note: 可能比较使用于长期运行的程序profiling
+- cpu=times采用代码注入的方式在函数entry和return部分加上代码来做profile.
+- thread=y 可以针对将不同线程区分开，每个线程单独进行profile.
+- depth=n 控制stacktrace的深度，加大深度可以看到更详细的调用栈。
+- doe=n 在exit的时候不dump任何数据
+
+代码处理选项部分还是比较诡异的，可以看看代码是如何处理的 https://cluster.earlham.edu/trac/bccd-ng/browser/branches/skylar-install_jdk/trees/software/bccd/software/jdk1.6.0_14/demo/jvmti/hprof/src/hprof_init.c?rev=1854
+
+-----
+How Does HPROF Work?
+- a dynamically-linked native library that uses JVM TI and writes out profiling information either to a file descriptor or to a socket in ascii or binary format. （native动态链接库完成的，使用了JVM TI接口，将数据写到socket或者是文件）
+  - [[http://docs.oracle.com/javase/7/docs/technotes/guides/jvmti/index.html][JVM TI]] Java Virtual Machine Tool Interface
+  - calls to JVM TI
+  - event callbacks from JVM TI,
+  - and through Byte Code Insertion (BCI)
+- The cpu=samples option doesn't use BCI, HPROF just spawns a separate thread that sleeps for a fixed number of micro seconds, and wakes up and samples all the running thread stacks using JVM TI. 通过另外线程通过JVM TI来监控其他线程栈
+- The cpu=times option attempts to track the running stack of all threads, and keep accurate CPU time usage on all methods. This option probably places the greatest strain on the VM, where every method entry and method exit is tracked. Applications that make many method calls will be impacted more than others.
+- The heap=sites and heap=dump options are the ones that need to track object allocations. These options can be memory intensive (less so with hprof=sites) and applications that allocate many objects or allocate and free many objects will be impacted more with these options. On each object allocation, the stack must be sampled so we know where the object was allocated, and that stack information must be saved. HPROF has a series of tables allocated in the C or malloc() heap that track all it's information. HPROF currently does not allocate any Java objects.
+
+** JMX
+- jmxtrans/jmxtrans · GitHub https://github.com/jmxtrans/jmxtrans
+- Trail: Java Management Extensions (JMX) (The Java™ Tutorials) http://docs.oracle.com/javase/tutorial/jmx/index.html
+- Lesson: Introducing MBeans (The Java™ Tutorials > Java Management Extensions (JMX)) http://docs.oracle.com/javase/tutorial/jmx/mbeans/index.html
+- Standard MBeans (The Java™ Tutorials > Java Management Extensions (JMX) > Introducing MBeans) http://docs.oracle.com/javase/tutorial/jmx/mbeans/standard.html
+
+jmx似乎是一个标准，在JDK里面有默认的实现。通过jmx可以暴露jvm进程的一些运行参数以及系统状态（jdk默认实现），也可以暴露应用程序状态（需要自己实现），在jvm内部用单独的线程以server运行。外部client可以通过jmx协议访问，然后输出到其他terminal上面（比如opentsdb, ganglia等，jmxtrans就是做这个事情的）。
+
+我大致阅读了一下代码，在server有两个比较重要的概念:agent(mbean server)和mxbean. agent(mbean server)类似server启动，mxbean则是各个data source. 但是从jdk默认的实现（ManagementFactory::getPlatformMBeanServer)里面可以看到，mxbean不是一个静态基类，而是通过反射的方式将mxbean类转换成为DynamicMBean（猜测数据传输格式应该是JPO，Java Persistent Object,也就是java对象自带序列化方式，这种方式的好处就是没有限制data source format，但是却复杂了实现）。
+- com.dirlt.java.tomb.SimpleJMX 例子比较简单，显示和修改数据 #note:只有基本类型可以显示和修改。如果数据类型为object的话，那么不能显示和修改
+- MXBean允许做RMI
+- Notifcation允许RMI之后做通知
+- *so advanced, so powerful, yet so complex*

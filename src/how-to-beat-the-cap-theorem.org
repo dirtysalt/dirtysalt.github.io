@@ -1,0 +1,30 @@
+#+title: How to beat the CAP theorem
+http://nathanmarz.com/blog/how-to-beat-the-cap-theorem.html
+
+** Consistency and Availability
+- The CAP theorem states a database cannot guarantee consistency, availability, and partition-tolerance at the same time. But you can't sacrifice partition-tolerance (see here and here), so you must make a tradeoff between availability and consistency. (只能够在CA之间进行选择）
+- Consistency means that after you do a successful write, future reads will always take that write into account. Availability means that you can always read and write to the system. During a partition, you can only have one of these properties.
+- Systems that choose consistency over availability have to deal with some awkward issues. What do you do when the database isn't available? You can try buffering writes for later, but you risk losing those writes if you lose the machine with the buffer. Also, buffering writes can be a form of inconsistency because a client thinks a write has succeeded but the write isn't in the database yet. Alternatively, you can return errors back to the client when the database is unavailable. But if you've ever used a product that told you to "try again later", you know how aggravating this can be. (选择Consistency，如果出现unavailable的话，那么write如何处理，拒绝client write还是将这个write buffer起来稍后提交，但是即使稍后提交也会出现一致性问题）
+- The other option is choosing availability over consistency. The best consistency guarantee these systems can provide is "eventual consistency". If you use an eventually consistent database, then sometimes you'll read a different result than you just wrote. Sometimes multiple readers reading the same key at the same time will get different results. Updates may not propagate to all replicas of a value, so you end up with some replicas getting some updates and other replicas getting different updates. It is up to you to repair the value once you detect that the values have diverged. This requires tracing back the history using vector clocks and merging the updates together (called "read repair").（如果选择availability的话，那么可能会出现read value inconsistent的情况。如果出现读取value不一致的话那么可能需要tracing back history并且使用vector clock来做merge update，这个过程称为 *read repair* ）
+- I believe that maintaining eventual consistency in the application layer is too heavy of a burden for developers. Read-repair code is extremely susceptible to developer error; if and when you make a mistake, faulty read-repairs will introduce irreversible corruption into the database.（但是read-repair不太好理解同时容易出现bug致使corrupt database）
+- There is another way. You can't avoid the CAP theorem, but you can isolate its complexity and prevent it from sabotaging your ability to reason about your systems. The complexity caused by the CAP theorem is a symptom of fundamental problems in how we approach building data systems. Two problems stand out in particular: the use of mutable state in databases and the use of incremental algorithms to update that state. It is the interaction between these problems and the CAP theorem that causes complexity.（CAP理论造成复杂性最基本的问题在于我们如何构建自己的系统，具体有两个问题：1.我们在database里面使用了mutable state 2.对于这个状态的更新都是增量完成的。正是因为这两个问题参杂在一起导致复杂性）
+ 
+** What is a data system?
+- There are two crucial properties to note about data. First, data is inherently time based. A piece of data is a fact that you know to be true at some moment of time. The second property of data follows immediately from the first: data is inherently immutable. Because of its connection to a point in time, the truthfulness of a piece of data never changes. One cannot go back in time to change the truthfulness of a piece of data. This means that there are only two main operations you can do with data: read existing data and add more data. CRUD has become CR. （关于数据的理解有两个特性 1.数据本质上是基于时间的，也就是说对于数据的正确性理解是在一定时间范围内的 2.考虑到数据是基于时间的，因为数据本质上是immutable的。考虑到这两点我们可以将data操作从CRUD限定为CR）
+
+** Beating the CAP theorem
+- What caused complexity before was the interaction between incremental updates and the CAP theorem. Incremental updates and the CAP theorem really don't play well together; mutable values require read-repair in an eventually consistent system. By rejecting incremental updates, embracing immutable data, and computing queries from scratch each time, you avoid that complexity. The CAP theorem has been beaten（最主要的问题就是incemental updates和CAP不太好同时处理。如果data mutable的话那么incremental updates需要使用read-pair来达到最终一致性，而如果我们认为数据是immutable的并且拒绝使用incremental updates的话那么就可以避免使用这种复杂性）
+
+后面有一篇评论是这样的
+#+BEGIN_QUOTE
+>  The other option is choosing availability over consistency. The best consistency guarantee these systems can provide is "eventual consistency"
+
+No, the best consistency these systems can provide is eventually-known consistency: In addition to always servicing reads and writes, you can also ask "when is the most recent point such that you're guaranteed to be consistent with respect to all writes prior to that point?"
+
+This is a far more useful consistency model than eventual consistency, since it allows strong consistency to be constructed on top of it (at the expense of sacrificing availability during a partition).
+#+END_QUOTE
+我觉得这个评论说的很对，nathan marz可能没有理解两者差别
+- eventual-consistency 系统最终可以一致，但是对于read来说不知道在那个点上数据是一致的。好比有A，B两个value需要同时更新 *事务* ，在t1有A(t1) B(t1),而在t2时候可能只是更新了A(t2),而B依然为B(t1). 但是系统没有办法知道在t1这个事务才完成。当然原因也是因为数据是mutable的。
+- eventually-known consistency 同样系统最终可以一致，但是系统可以告诉说在t1上数据集合是一致的，虽然有部分数据修改成为了t2.
+
+file:images/batch-realtime-architecture.png

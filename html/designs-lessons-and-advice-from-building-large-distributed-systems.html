@@ -1,0 +1,159 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Designs, Lessons and Advice from Building Large Distributed Systems</title>
+<meta name="generator" content="Org mode" />
+<meta name="author" content="dirtysalt" />
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content">
+<h1 class="title">Designs, Lessons and Advice from Building Large Distributed Systems</h1>
+<div id="table-of-contents">
+<h2>Table of Contents</h2>
+<div id="text-table-of-contents">
+<ul>
+<li><a href="#org103bd36">1. Architectural view of the storage hierarchy</a></li>
+<li><a href="#orgce0c140">2. Reliability &amp; Availability</a></li>
+<li><a href="#orge3876f3">3. Making Applications Robust Against Failures</a></li>
+<li><a href="#orgc2f04f6">4. Add Sufficient Monitoring/Status/Debugging Hooks</a></li>
+<li><a href="#org52b6236">5. BigTable: What’s New Since OSDI’06?</a></li>
+</ul>
+</div>
+</div>
+<ul class="org-ul">
+<li><a href="http://www.cs.cornell.edu/projects/ladis2009/talks/dean-keynote-ladis2009.pdf">http://www.cs.cornell.edu/projects/ladis2009/talks/dean-keynote-ladis2009.pdf</a></li>
+<li><a href="http://static.googleusercontent.com/external_content/untrusted_dlcp/research.google.com/en//people/jeff/stanford-295-talk.pdf">http://static.googleusercontent.com/external_content/untrusted_dlcp/research.google.com/en//people/jeff/stanford-295-talk.pdf</a></li>
+</ul>
+
+
+<div id="outline-container-org103bd36" class="outline-2">
+<h2 id="org103bd36"><span class="section-number-2">1</span> Architectural view of the storage hierarchy</h2>
+<div class="outline-text-2" id="text-1">
+<p>
+对于分布式系统来说，存储层次扩展到了rack,cluster,datacenter级别
+</p>
+
+
+<div class="figure">
+<p><img src="images/architectural-view-of-the-storage-hierarchy.png" alt="architectural-view-of-the-storage-hierarchy.png" />
+</p>
+</div>
+
+<ul class="org-ul">
+<li>带宽收到了网络限制，因此memory和disk的bandwidth是相同的。</li>
+<li>内存延迟变化比较大，而disk延迟本身基数就比较大因此变化不明显。</li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-orgce0c140" class="outline-2">
+<h2 id="orgce0c140"><span class="section-number-2">2</span> Reliability &amp; Availability</h2>
+<div class="outline-text-2" id="text-2">
+<ul class="org-ul">
+<li>Things will crash. Deal with it! （就是MTBF有30年，但是如果有上万节点的话，那么每年也会挂掉一台，所以设计fault-tolerant软件是必要的）
+<ul class="org-ul">
+<li>Assume you could start with super reliable servers (MTBF of 30 years)</li>
+<li>Build computing system with 10 thousand of those</li>
+<li>Watch one fail per day</li>
+</ul></li>
+<li>Fault-tolerant software is inevitable</li>
+<li>Typical yearly flakiness metrics
+<ul class="org-ul">
+<li>1-5% of your disk drives will die</li>
+<li>Servers will crash at least twice (2-4% failure rate)</li>
+</ul></li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-orge3876f3" class="outline-2">
+<h2 id="orge3876f3"><span class="section-number-2">3</span> Making Applications Robust Against Failures</h2>
+<div class="outline-text-2" id="text-3">
+<ul class="org-ul">
+<li>Canary requests</li>
+<li>Failover to other replicas/datacenters</li>
+<li>Bad backend detection:（后端故障检测，如果出现问题尽早退出）
+<ul class="org-ul">
+<li>stop using for live requests until behavior gets better</li>
+</ul></li>
+<li>More aggressive load balancing when imbalance is more severe（比较严重的imbalance那么越需要比较激进的balance策略）</li>
+<li>Make your apps do something reasonable even if not all is right – Better to give users limited functionality than an error page（出现问题的话尽可能地只是限制功能）</li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-orgc2f04f6" class="outline-2">
+<h2 id="orgc2f04f6"><span class="section-number-2">4</span> Add Sufficient Monitoring/Status/Debugging Hooks</h2>
+<div class="outline-text-2" id="text-4">
+<ul class="org-ul">
+<li>All our servers:
+<ul class="org-ul">
+<li>Export HTML-based status pages for easy diagnosis（输出HTML状态页面便于简单地分析）</li>
+<li>Export a collection of key-value pairs via a standard interface – monitoring systems periodically collect this from running servers（通过标准接口输出kv便于收集数据） #note: 这点和JMX类似，但是JMX过于重量</li>
+<li>RPC subsystem collects sample of all requests, all error requests, all requests &gt;0.0s, &gt;0.05s, &gt;0.1s, &gt;0.5s, &gt;1s, etc.（RPC收集请求采样并且统计时间分布）</li>
+</ul></li>
+<li>Support low-overhead online profiling #note: 这点JMX也完成得非常好
+<ul class="org-ul">
+<li>cpu profiling</li>
+<li>memory profiling</li>
+<li>lock contention profiling</li>
+</ul></li>
+<li>If your system is slow or misbehaving, can you figure out why?</li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-org52b6236" class="outline-2">
+<h2 id="org52b6236"><span class="section-number-2">5</span> BigTable: What’s New Since OSDI’06?</h2>
+<div class="outline-text-2" id="text-5">
+<p>
+bigtable相对于原始论文的改进
+</p>
+
+<ul class="org-ul">
+<li>Lots of work on scaling</li>
+<li>Service clusters, managed by dedicated team</li>
+<li>Improved performance isolation（隔离性）
+<ul class="org-ul">
+<li>fair-share scheduler within each server, better accounting of memory used per user (caches, etc.)（每个server对用户使用资源进行隔离）</li>
+<li>can partition servers within a cluster for different users or tables（每个table和用户允许使用的服务器不同）</li>
+</ul></li>
+<li>Improved protection against corruption
+<ul class="org-ul">
+<li>many small changes</li>
+<li>e.g. immediately read results of every compaction, compare with CRC. Catches ~1 corruption/5.4 PB of data compacted</li>
+</ul></li>
+<li>Replication
+<ul class="org-ul">
+<li>Configured on a per-table basis</li>
+<li>Typically used to replicate data to multiple bigtable clusters in different data centers</li>
+<li>Eventual consistency model: writes to table in one cluster eventually appear in all configured replicas（最终一致性）</li>
+<li>Nearly all user-facing production uses of BigTable use replication（延迟已经非常低）</li>
+</ul></li>
+<li>Coprocessors
+<ul class="org-ul">
+<li>Arbitrary code that runs run next to each tablet in table
+<ul class="org-ul">
+<li>as tablets split and move, coprocessor code automatically splits/moves too</li>
+</ul></li>
+<li>High-level call interface for clients
+<ul class="org-ul">
+<li>Unlike RPC, calls addressed to rows or ranges of rows</li>
+<li>coprocessor client library resolves to actual locations</li>
+<li>Calls across multiple rows automatically split into multiple parallelized RPCs</li>
+</ul></li>
+<li>Very flexible model for building distributed services
+<ul class="org-ul">
+<li>automatic scaling, load balancing, request routing for apps</li>
+</ul></li>
+</ul></li>
+</ul>
+</div>
+</div>
+</div>
+</body>
+</html>

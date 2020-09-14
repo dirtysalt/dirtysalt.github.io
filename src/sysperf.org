@@ -1,0 +1,102 @@
+#+title: sysperf
+** What Your Computer Does While You Wait
+http://duartes.org/gustavo/blog/post/what-your-computer-does-while-you-wait
+
+| 指标                     | 数据              |
+|--------------------------+-------------------|
+| CPU主频                  | 3.0GHz            |
+| 指令周期                 | 1 insn/cycle      |
+| 时间周期                 | 0.33ns/cycle      |
+| L1数据缓存               | 32KB              |
+| L1指令缓存               | 32KB              |
+| L1存取延迟               | 3cycles(1ns)      |
+| L2缓存                   | 6MB               |
+| L2存取延迟               | 14cycles(4.7ns)   |
+| 分支预测失败             | 5ns               |
+| 锁操作开销               | 25ns              |
+| 内存延迟                 | 250cycles(83ns)   |
+| 内存带宽                 | 10GB/s            |
+| 内存顺序读取1MB          | 0.25ms            |
+| Snappy压缩1M数据         | 3ms               |
+| SATA(Serial ATA)端口带宽 | 300MB/s           |
+| 磁盘转速                 | 7200RPM           |
+| 磁盘读寻道延迟           | 41Mcycles(13.7ms) |
+| 磁盘写寻道延迟           | 45Mcycles(15ms)   |
+| 磁盘读写带宽             | 60MB/s            |
+| 磁盘顺序读取1MB          | 20ms              |
+| 千兆网卡带宽             | 100MB/s           |
+| 同机房RTT                | 0.5ms             |
+| gettimeofday系统调用     | 3000cycles(1us)   |
+| 单CPU软中断次数          | 10w/s             |
+
+** Numbers Everyone Should Know
+[[file:designs-lessons-and-advice-from-building-large-distributed-systems.org][Designs, Lessons and Advice from Building Large Distributed Systems]] @ladis-2009 jeff dean
+
+- L1 cache reference 0.5 ns
+- Branch mispredict 5 ns
+- L2 cache reference 7 ns
+- Mutex lock/unlock 100 ns
+- Main memory reference 100 ns
+- Compress 1K bytes with Zippy 10,000 ns
+- Send 2K bytes over 1 Gbps network 20,000 ns
+- Read 1 MB sequentially from memory 250,000 ns
+- Round trip within same datacenter 500,000 ns
+- Disk seek 10,000,000 ns
+- Read 1 MB sequentially from network 10,000,000 ns
+- Read 1 MB sequentially from disk 30,000,000 ns
+- Send packet CA->Netherlands->CA 150,000,000 ns
+
+file:images/numbers-everyone-should-know.jpg
+
+** The Joys of Real Hardware
+[[file:designs-lessons-and-advice-from-building-large-distributed-systems.org][Designs, Lessons and Advice from Building Large Distributed Systems]] @ladis-2009 jeff dean
+
+Typical first year for a new cluster:
+- ~0.5 overheating (power down most machines in <5 mins, ~1-2 days to recover)
+- ~1 PDU failure (~500-1000 machines suddenly disappear, ~6 hours to come back)
+- ~1 rack-move (plenty of warning, ~500-1000 machines powered down, ~6 hours)
+- ~1 network rewiring (rolling ~5% of machines down over 2-day span)
+- ~20 rack failures (40-80 machines instantly disappear, 1-6 hours to get back)
+- ~5 racks go wonky (40-80 machines see 50% packetloss)
+- ~8 network maintenances (4 might cause ~30-minute random connectivity losses)
+- ~12 router reloads (takes out DNS and external vips for a couple minutes)
+- ~3 router failures (have to immediately pull traffic for an hour)
+- ~dozens of minor 30-second blips for dns
+- ~1000 individual machine failures
+- ~thousands of hard drive failures
+- slow disks, bad memory, misconfigured machines, flaky machines, etc.
+- Long distance links: wild dogs, sharks, dead horses, drunken hunters, etc.
+
+** 延迟和带宽
+延迟指原子信息通过介质所需要的时间，带宽指信息在介质中传播的速度。如果我们以浏览Web页面为例的话，如果等待长时间才开始显示一个页面，但立刻就全部出现了，这说明网络的延迟比较大，带宽还不错。如果页面立刻开始出现，但是花了很长时间才全部显示出来，这说明网络的延迟还可以，但带宽较小。
+
+对于网络传输来说，网卡，传输线路以及交换机路由器本身都是有延迟和带宽指标的。我没有办法获得所有这些指标的具体数据，只能够就我所知道的稍微说说。对于网卡来说，延迟取决于系统负载和所处网络拥塞程度。更细程度考量的话可能就是从user buffer->kernel buffer->device buffer同时考虑系统完成这件事情调度时间比如TCP_NODELAY和TCP_CORK带来的影响，我猜想的:（。网卡带宽就是所谓的千兆网卡(1000Mbps)和万兆网卡(10000Mbps).对于传输线路来说，如果是光纤的话那么传播速度是光速，在光纤中传播距离可能是实际距离的1.1-1.2倍(估计，因为不可能走直线).假设天津机房和北京机房距离150km,那么延迟为150km / 光速(3*10^5km/s) * 1.2(实际距离比率) = 0.6ms.不过考虑同事告诉我说这样计算可能是不太准确的，撇开铺线的实际距离不谈，光纤每段上会加一个中继器来增强光信号，这样计算实际上是不准确的。他友好地给我说了一下北京机房<->天津机房RTT大概10ms.最后就是交换机路由器。很少有人关注这个单项指标，因为这个取决于内部机房机架是怎么部署的，大家更关心的是从同机房两个机架上服务器延迟多少，带宽多少。而事实证明(实际上是同事告诉我的)延迟基本没有，带宽取决于服务器网卡带宽。
+
+- ping本机0.01ms
+- ping同机房机器0.1ms
+- ping同城机器1ms
+- ping不同城机器20ms
+- 北（南）方ping南（北）方机器50ms
+- ping外国机器200ms
+- ping不通是因为GFW
+
+** 存储系统IOPS
+http://rickardnobel.se/storage-performance-iops-latency-throughput/
+
+iops(io per second)是我们在分析存储介质时抽象出的概念，表示可以发起多少个io操作/s.  *因为每种存储介质工作方式是不同的，抽象出的iops则可以更好地让我们分析。*  好比磁盘的话我们使用转速来衡量，但是放在磁带或者是SSD上的话，那么转速这个指标就没有意义。iops可以比较好定量地分析某个存储介质的操作速度。
+
++如果我们考虑磁盘的话，那么iops基本上和磁盘转速相关。+ （和磁盘带宽和读写负载也有关系） 比如转速是7200RPM的话，那么应该是120RPS.如果一个操作磁头需要转一圈的话，那么延迟大概在8ms左右。另外考虑向某个磁道移动时间的话，我们可以大概可以认为延迟在15ms左右。 +这样折合计算iops大概在66-67+. (这个数值没有意义，因为不可能每次读取都需要转动磁头以及移动磁道）
+
++存储系统一方便受限于iops，一方便受限于磁盘带宽 。通常磁盘带宽大约在80MB/s一下，50~60MB/s是比较典型的值。+ （磁盘带宽取决于读写负载）
+
+note@2015-05-22: 更正一下，即使对于HDD来说iops也不仅仅和磁盘转速相关，还和磁盘带宽以及读写负载有关，所以事实上iops就是衡量存储介质和存储系统的一个独立综合指标。这也同时意味着，当我们宣称某个存储介质或者是存储系统iops是多少时，我们一定要把读写负载情况这个context也说明情况。
+
+-----
+
+note@ 015-05-21: iops的测算非常复杂，主要是涉及到的环境配置参数非常多，比如read/write buffer size, 多少个线程来做读写，以及随机和顺序读写等。前段时间想要测量一下磁盘的iops，所以就在网上搜索了一下这方面的工具和文章：
+- http://code.google.com/p/ioping/ # ioping. C, 使用方便，可测读写，但是不支持多线程
+- Measuring Disk Usage In Linux (%iowait vs IOPS) - Everything is a Ghetto : http://www.thattommyhall.com/2011/02/18/iops-linux-iostat/ # 使用iostat -dx 1来查看iops
+- Measuring Disk IO Performance « Benjamin Schweizer. : http://benjamin-schweizer.de/measuring-disk-io-performance.html # iops. Python, 使用方便，只能测读，支持多线程
+- http://www.ee.pw.edu.pl/~pileckip/aix/iowait.htm # 只看iowait比例是没有意义的
+** 存储系统性能
+存储系统的性能主要包括两个维度：吞吐量和访问延迟。设计系统时要求能够在保证访问延迟的基础上，通过最低的成本实现尽可能高的吞吐量。磁盘和SSD的访问延迟差别很大，但是带宽差别不大。因此磁盘适合大块顺序访问的存储系统，SSD适合随机访问较多或者对延迟比较敏感的关键系统。二者也常常组合在一起进行混合存储，热数据（访问频繁）存储到SSD，冷数据（访问不频繁）存储到磁盘中。

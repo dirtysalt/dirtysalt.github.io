@@ -1,0 +1,160 @@
+#+title: On Designing and Deploying Internet-Scale Services
+- http://duanple.blog.163.com/blog/static/70971767201352105348729/
+- http://www.mvdirona.com/jrh/TalksAndPapers/JamesRH_Lisa.pdf
+
+** Introduction
+a set of three simple tenets worth considering up front:
+1. Expect failures. A component may crash or be stopped at any time. Dependent components might fail or be stopped at any time. There will be network failures. Disks will run out of space. Handle all failures gracefully.
+2. Keep things simple. Complexity breeds prob-lems. Simple things are easier to get right. Avoid unnecessary dependencies. Installation should be simple. Failures on one server should have no impact on the rest of the data center.
+3. Automate everything. People make mistakes. People need sleep. People forget things. Auto-mated processes are testable, fixable, and there-fore ultimately much more reliable. Automate wherever possible.
+
+** Recommendations
+** Overall Application Design
+Throughout the sections that follow, a consensus emerges that firm separation of development, test, and operations isn’t the most effective approach in the ser-vices world. The trend we’ve seen when looking across many services is that low-cost administration correlates highly with how closely the development, test, and operations teams work together.
+
+Rational constraints on hard-ware selection, service design, and deployment mod-els are a big driver of reduced administrative costs and greater service reliability.
+
+Some of the operations-friendly basics that have the biggest impact on overall service design are:
+- Design for failure. Armando Fox of Stanford has argued that the best way to test the failure path is never to shut the service down normally. Just hard-fail it. This sounds counter-intuitive, but if the failure paths aren’t frequently used, they won’t work when needed.
+- Redundancy and fault recovery. Very unusual combinations of failures may be determined sufficiently unlikely that ensuring the system can operate through them is uneconomical. Be cautious when making this judgment. We’ve been surprised at how fre-quently ‘‘unusual’’ combinations of events take place when running thousands of servers that produce millions of opportunities for compo- nent failures each day. Rare combinations can become commonplace.
+- Commodity hardware slice. The key observations are
+     1. large clusters of commodity servers are much less expensive than the small num-ber of large servers they replace,
+     2. server performance continues to increase much faster than I/O performance, making a small server a more balanced system for a given amount of disk,
+     3. power consumption scales linearly with servers but cubically with clock frequency, making higher performance servers more expensive to operate, and (功耗按照CPU时钟频率三次方比例增长)
+     4. a small server affects a smaller proportion of the overall service workload when fail-ing over.
+- Single-version software. Two factors that make some services less expensive to develop and faster to evolve than most packaged products are 1)the software needs to only target a single internal deployment and 2) previous versions don’t have to be support-ed for a decade as is the case for enter-prise-targeted products. The most economic services don’t give cus-tomers control over the version they run, and only host one version. Holding this single-ver-sion software line requires 1) care in not producing substantial user ex-perience changes release-to-release and 2) a willingness to allow customers that need this level of control to either host internally or switch to an application service provider willing to provide this people-intensive multi-version support.(服务相对打包软件来说更加容易开发和进化是因为，一方面软件只是针对内部部署，另外一方面是早期版本不需要支持。提供单版本软件需要注意，首先不要在两个release之间产生巨大变化，其次需要可以很方便地在其他环境部署或者让ASP来提供多版本支持)
+- Multi-tenancy. Multi-tenancy is the hosting of all companies or end users of a service in the same service without physical isolation, where-as single tenancy is the segregation of groups of users in an isolated cluster. The argument for multi-tenancy is nearly identical to the argu-ment for single version support and is based up-on providing fundamentally lower cost of ser-vice built upon automation and large-scale.
+
+More specific best practices for designing opera-tions-friendly services are:
+- Quick service health check. This is the services version of a build verification test. It’s a sniff test that can be run quickly on a developer’s system to ensure that the service isn’t broken in any substantive way. Not all edge cases are test-ed, but if the quick health check passes, the code can be checked in.
+- Develop in the full environment. Developers should be unit testing their components, but should also be testing the full service with their component changes. Achieving this goal effi-ciently requires single-server deployment, and the preceding best practice, a quick service health check.
+- Zero trust of underlying components. Assume that underlying components will fail and ensure that components will be able to recover and con-tinue to provide service.
+- Do not build the same functionality in multiple components.
+- One pod or cluster should not affect another pod or cluster. Global services even with redundancy are a central point of failure. Some-times they cannot be avoided but try to have ev-erything that a cluster needs inside the clusters.
+- Allow (rare) emergency human intervention. An operations engineer working under pressure at 2 a.m. will make mistakes. Design the system to first not require operations inter-vention under most circumstances, but work with operations to come up with recovery plans if they need to intervene. Rather than docu-menting these as multi-step, error-prone proce-dures, write them as scripts and test them in production to ensure they work. What isn’t test-ed in production won’t work, so periodically the operations team should conduct a ‘‘firedrill’’ using these tools. If the service-availabil-ity risk of a drill is excessively high, then insuf-ficient investment has been made in the design, development, and testing of the tools.
+- Keep things simple and robust.
+- Enforce admission control at all levels.Any good system is designed with admission control at the front door. This follows the long-under-stood principle that it’s better to not let more work into an overloaded system than to contin-ue accepting work and beginning to thrash. Some form of throttling or admission control is common at the entry to the service, but there should also be admission control at all major components boundaries. Work load characteris-tic changes will eventually lead to sub-compo-nent overload even though the overall service is operating within acceptable load levels. The general rule is to attempt to gracefully degrade rather than hard failing and to block entry to the service before giving uniform poor service to all users.
+- Partition the service.
+- Understand the network design.
+- Analyze throughput and latency.
+- Treat operations utilities as part of the service. Operations utilities produced by development, test, program management, and operations should be code-reviewed by development, checked into
+the main source tree, and tracked on the same schedule and with the same testing. Frequently these utilities are mission critical and yet nearly untested.
+- Understand access patterns.
+- Version everything.
+- Keep the unit/functional tests from the last re-lease.
+- Avoid single points of failure.
+
+** Automatic Management and Provisioning
+Automating administration of a service after de-sign and deployment can be very difficult. Successful automation requires simplicity and clear, easy-to-make operational decisions. This in turn depends on a care-ful service design that, when necessary, sacrifices some latency and throughput to ease automation. The trade-off is often difficult to make, but the administra-tive savings can be more than an order of magnitude in high-scale services. In fact, the current spread be-tween the most manual and the most automated ser-vice we’ve looked at is a full two orders of magnitude in people costs.(为了更加容易自动化可能会牺牲一些延迟和吞吐，但是能够节省不止一个量级的运维管理成本)
+
+Best practices in designing for automation include:
+- Be restartable and redundant.
+- Support geo-distribution.
+- Automatic provisioning and installation.
+- Configuration and code as a unit.
+- Manage server roles or personalities rather than servers.
+- Multi-system failures are common. Expect fail-ures of many hosts at once (power, net switch, and rollout). Unfortunately, services with state will have to be topology-aware. Correlated fail-ures remain a fact of life.
+- Recover at the service level. Handle failures and correct errors at the service level where the full execution context is available rather than in lower software levels. For example, build re- dundancy into the service rather than depending upon recovery at the lower software layer.(在软件的更高级别做恢复)
+- Never rely on local storage for non-recoverable in-formation.
+- Keep deployment simple.
+- Fail services regularly.
+
+** Dependency Management
+Dependencies do make sense when
+   1. the components being depended upon are sub-stantial in size or complexity, or
+   2. the service being depended upon gains its value in being a single, central instance.
+Examples of the first class are storage and consensus algorithm implementations. Examples of the second class of are identity and group management systems. The whole value of these systems is that they are a single, shared instance so multi-instancing to avoid dependency isn’t an option.（对于这类系统必须使用多实例来避免依赖）
+
+some best practices for manag-ing them are:
+- Expect latency. Calls to external components may take a long time to complete. Don’t let de-lays in one component or service cause delays in completely unrelated areas. Ensure all inter-actions have appropriate timeouts to avoid ty-ing up resources for protracted periods. Opera-tional idempotency allows the restart of re-quests after timeout even though those requests may have partially or even fully completed. En-sure all restarts are reported and bound restarts to avoid a repeatedly failing request from con-suming ever more system resources.
+- Isolate failures. The architecture of the site must prevent cascading failures. Always ‘‘fail fast.’’ When dependent services fail, mark them as down and stop using them to prevent threads from being tied up waiting on failed compo-nents.
+- Use shipping and proven components. Proven technology is almost always better than operat-ing on the bleeding edge. Stable software is better than an early copy, no matter how valu-able the new feature seems. This rule applies to hardware as well. Stable hardware shipping in volume is almost always better than the small performance gains that might be attained from early release hardware.
+- Implement inter-service monitoring and alerting. If the service is overloading a dependent ser-vice, the depending service needs to know and, if it can’t back-off automatically, alerts need to be sent. If operations can’t resolve the problem quickly, it needs to be easy to contact engineers from both teams quickly. All teams with depen-dencies should have engineering contacts on the dependent teams.
+- Dependent services require the same design point. Dependent services and producers of de-pendent components need to be committed to at least the same SLA as the depending service.（在做系统设计之前需要将所依赖的系统也考虑进去）
+- Decouple components. Where possible, ensure that components can continue operation, per-haps in a degraded mode, during failures of other components.
+
+** Release Cycle and Testing
+We instead recommend taking new service re-leases through standard unit, functional, and produc-tion test lab testing and then going into limited pro-duction as the final test phase. Clearly we don’t want software going into production that doesn’t work or puts data integrity at risk, so this has to be done care-fully. The following rules must be followed:（整个新服务部署是过渡地完成的，在期间必须遵循一下几点）
+   1. the production system has to have sufficient re-dundancy that, in the event of catastrophic new service failure, state can be quickly be recov-ered,（原先系统数据必须保留）
+   2. data corruption or state-related failures have to be extremely unlikely (functional testing must first be passing),（确保新系统不会有数据损坏或者是状态错误）
+   3. errors must be detected and the engineering team (rather than operations) must be monitor-ing system health of the code in test, and（主动检测错误以及系统状态）
+   4. it must be possible to quickly roll back all changes and this roll back must be tested before going into production.
+This sounds dangerous. But we have found that using this technique actually improves customer expe-rience around new service releases. Rather than de-ploying as quickly as possible, we put one system in production for a few days in a single data center. Then we bring one new system into production in each data center. Then we’ll move an entire data center into pro-duction on the new bits. And finally, if quality and performance goals are being met, we deploy globally. This approach can find problems before the service is at risk and can actually provide a better customer ex-perience through the version transition. Big-bang de-ployments are very dangerous.
+
+Another potentially counter-intuitive approach we favor is deployment mid-day rather than at night. At night, there is greater risk of mistakes. And, if anom-alies crop up when deploying in the middle of the night, there are fewer engineers around to deal with them. The goal is to minimize the number of engineer-ing and operations interactions with the system over-all, and especially outside of the normal work day, to both reduce costs and to increase quality.（选择在白天而不是午夜进行部署）
+
+Some best practices for release cycle and testing include:
+- Ship often. We like shipping on 3-month cy-cles, but arguments can be made for other schedules. Our gut feel is that the norm will eventually be less than three months, and many services are already shipping on weekly sched-ules. Cycles longer than three months are dan-gerous.
+- Use production data to find problems.
+- Invest in engineering. Too often, organizations grow operations to eal with scale and never take the time to engi-neer a scalable, reliable architecture. Services hat don’t think big to start with will be scram-bling to catch up later.
+- Support version roll-back.
+- Maintain forward and backward compatibility.
+- Single-server deployment. Without this, unit testing is difficult and doesn’t fully happen. And if running the full system is difficult, developers will have a tendency to take a component view rather than a systems view.
+- Stress test for load.
+- Perform capacity and performance testing prior to new releases.
+- Build and deploy shallowly and iteratively.
+- Test with real data.
+- Run system-level acceptance tests. Tests that run locally provide sanity check that speeds it-erative development. To avoid heavy mainte-nance cost they should still be at system level.
+- Test and develop in full environments.
+
+** Hardware Selection and Standardization
+The usual argument for SKU standardization is that bulk purchases can save considerable money. This is inarguably true. The larger need for hardware stan-dardization is that it allows for faster service deploy-ment and growth. If each service is purchasing their own private infrastructure, then each service has to
+   1. determine which hardware currently is the best cost/performing option,
+   2. order the hardware, and
+   3. do hardware qualification and software deploy-ment once the hardware is installed in the data center.
+This usually takes a month and can easily take more. (SKU = Stock Keeping Unit, 最小存货单位, 定义为保存库存控制的最小可用单位)
+
+Best practices for hardware selection include:
+- Use only standard SKUs. Having a single or small number of SKUs in production allows re- sources to be moved fluidly between services as needed. The most cost-effective model is to develop a standard service-hosting framework that includes automatic management and provi-sioning, hardware, and a standard set of shared services. Standard SKUs is a core requirement to achieve this goal.
+- Purchase full racks.
+- Write to a hardware abstraction. Write the service to an abstract hardware description. Rather than fully-exploiting the hardware SKU, the service should neither exploit that SKU nor depend up-on detailed knowledge of it. This allows the 2-way, 4-disk SKU to be upgraded over time as better cost/performing systems come available. The SKU should be a virtual description that in-cludes number of CPUs and disks, and a mini-mum for memory. Finer-grained information about the SKU should not be exploited.
+- Abstract the network and naming. Abstract the network and naming as far as possible, using DNS and CNAMEs. Always, always use a CNAME. Hardware breaks, comes off lease, and gets repurposed. Never rely on a machine name in any part of the code. A flip of the CNAME in DNS is a lot easier than changing configuration files, or worse yet, production code. If you need to avoid flushing the DNS cache, remember to set Time To Live suffi-ciently low to ensure that changes are pushed as quickly as needed.
+
+** Operations and Capacity Planning
+The recovery scripts need to be tested in produc-tion. *The general rule is that nothing works if it isn’t tested frequently so don’t implement anything the team doesn’t have the courage to use. If testing in pro- duction is too risky, the script isn’t ready or safe for use in an emergency.* The key point here is that disas-ters happen and it’s amazing how frequently a small disaster becomes a big disaster as a consequence of a recovery step that doesn’t work as expected. Antici-pate these events and engineer automated actions to get the service back on line without further loss of da-ta or up time.
+- Make the development team responsible. Amazon is perhaps the most aggressively down this path with their slogan ‘‘you built it, you manage it.’’ That position is perhaps slightly stronger than the one we would take, but it’s clearly the right gen-eral direction. If development is frequently called in the middle of the night, automation is the like-ly outcome. If operations is frequently called, the usual reaction is to grow the operations team.
+- Soft delete only. Never delete anything. Just mark it deleted. When new data comes in, record the requests on the way. Keep a rolling two week (or more) history of all changes to help recover from software or administrative errors.
+- Track resource allocation. Understand the costs of additional load for capacity planning. Every ser-vice needs to develop some metrics of use such as concurrent users online, user requests per sec- ond, or something else appropriate. Whatever the metric, there must be a direct and known correla-tion between this measure of load and the hard-ware resources needed. The estimated load num-ber should be fed by the sales and marketing teams and used by the operations team in capaci-ty planning. Different services will have different change velocities and require different ordering cycles. We’ve worked on services where we up-dated the marketing forecasts every 90 days, and updated the capacity plan and ordered equipment every 30 days.(根据线上负载来决定硬件资源使用. 每90天做一次市场预测，每30天做一次容量规划和设备采购)
+- Make one change at a time.
+- Make Everything Configurable.
+
+** Auditing, Monitoring and Alerting
+Any time there is a configuration change, the ex-act change, who did it, and when it was done needs to be logged in the audit log. When production problems begin, the first question to answer is what changes have been made recently. Without a configuration au-dit trail, the answer is always ‘‘nothing’’ has changed and it’s almost always the case that what was forgotten was the change that led to the question.
+
+To get alerting levels correct, two metrics can help and are worth tracking: 1) alerts-to-trouble ticket ratio (with a goal of near one), and 2) number of sys-tems health issues without corresponding alerts (with a goal of near zero). (报警正确性方面有两个衡量指标，一个是false negative, 一个是false positive)
+
+- Instrument everything. Measure every customer interaction or transaction that flows through the system and report anomalies.
+- Data is the most valuable asset. If the normal operating behavior isn’t well-understood, it’s hard to respond to what isn’t. Lots of data on what is happening in the system needs to be gathered to know it really is working well. Many services have gone through catastrophic failures and only learned of the failure when the phones started ringing.（通常我们只是收到一个最终的失败，而系统内部可能已经经过许多灾难性的失败）
+- Have a customer view of service.
+- Instrumentation required for production testing.
+- Latencies are the toughest problem.
+- Have sufficient production data. In order to find problems, data has to be available. Build fine grained monitoring in early or it becomes ex-pensive to retrofit later. The most important da-ta that we’ve relied upon includes:（早期就需要构建良好的监控系统不然以后改进代价会很高）
+  - Use performance counters for all opera-tions.
+  - Audit all operations.
+  - Track all fault tolerance mechanisms. Fault tolerance mechanisms hide failures. Track every time a retry happens, or a piece of data is copied from one place to another, or a machine is rebooted or a service restart-ed. Know when fault tolerance is hiding little failures so they can be tracked down before they become big failures.(追踪fault-tolerance机制, 因为触发fault-tolerance可能会导致更严重的错误，而这些错误如果没有记录fault-tolerance情况的话比较难以推测）
+  - Track operations against important entities. Make an ‘‘audit log’’ of everything signifi-cant that has happened to a particular enti-ty, be it a document or chunk of docu-ments. When running data analysis, it’s common to find anomalies in the data. Know where the data came from and what processing it’s been through. This is partic-ularly difficult to add later in the project.
+  - Asserts.
+  - Keep historical data. Historical performance and log data is necessary for trending and problem diagnosis.
+- Configurable logging.
+- Expose health information for monitoring. 
+- Make all reported errors actionable.
+- Enable quick diagnosis of production problems.
+  - Give enough information to diagnose.
+  - Chain of evidence. Make sure that from be-ginning to end there is a path for developer to diagnose a problem. This is typically done with logs.
+  - Debugging in production.
+  - Record all significant actions.
+
+** Graceful Degradation and Admission Control
+- Support a ‘‘big red switch.’’The concept of a big red switch is to keep the vi-tal processing progressing while shedding or de-laying some non-critical workload. By design, this should never happen but it’s good to have recourse when it does. Trying to figure these out when the service is on fire is risky. If there is some load that can be queued and processed lat-er, it’s a candidate for a big red switch. If it’s possible to continue to operate the transaction system while disabling advance querying, that’s also a good candidate. The key thing is deter-mining what is minimally required if the system is in trouble, and implementing and testing the option to shut off the non-essential services when that happens. Note that a correct big red switch is reversible. Resetting the switch should be tested to ensure that the full service returns to operation, including all batch jobs and other pre-viously halted non-critical work.（关闭或者是延迟响应部分高级或者是non-critical功能来应对workload）
+- Control admission. Another technique is to service premium customers ahead of non-premium customers, or known users ahead of guests, or guests ahead of users if ‘‘try and buy’’ is part of the businessmodel. （这里所谓的admission就是指为了保持整个系统平稳负载可以控制一些请求的进入。这个控制策略可以定制，一种办法是可以区分付费和非付费用户）
+- Meter admission. 
+
+** Customer and Press Communication Plan
+Systems fail, and there will be times when laten-cy or other issues must be communicated to cus-tomers. Communications should be made available through multiple channels in an opt-in basis: RSS, web, instant messages, email, etc. For those services with clients, the ability for the service to communicate with the user through the client can be very useful. The client can be asked to back off until some specific time or for some duration. The client can be asked to run in disconnected, cached mode if supported. The client can show the user the system status and when full functionality is expected to be available again.（client可以返回当前服务状态信息，如果服务状态异常的话可以back off一段时间或者是工作在离线模式，并且可以让用户知道大约在什么时候可以恢复）
+
+Even without a client, if users interact with the system via web pages for example, the system state can still be communicated to them. If users understand what is happening and have a reasonable expectation of when the service will be restored, satisfaction is much higher. There is a natural tendency for service owners to want to hide system issues but, over time, we’ve become convinced that making information on the state of the service available to the customer base almost always improves customer satisfaction. Even in no-charge systems, if people know what is happening and when it’ll be back, they appear less likely to aban-don the service.（让用户了解当前发生了什么状况）
+
+Certain types of events will bring press coverage. The service will be much better represented if these scenarios are prepared for in advance. Issues like mass data loss or corruption, security breach, privacy viola- tions, and lengthy service down-times can draw the press. Have a communications plan in place. Know who to call when and how to direct calls. The skeleton of the communications plan should already be drawn up. Each type of disaster should have a plan in place on who to call, when to call them, and how to handle communications.（针对可能出现的重大事件做好沟通预案，比如如何对外解释这些问题以及谁来解释这些问题）
+
+** Customer Self-Provisioning and Self-Help
+Customer self-provisioning substantially reduces costs and also increases customer satisfaction. If a cus-tomer can go to the web, enter the needed data and just start using the service, they are happier than if they had to waste time in a call processing queue. We’ve always felt that the major cell phone carriers miss an opportunity to both save and improve cus-tomer satisfaction by not allowing self-service for those that don’t want to call the customer support group.（客户可以通过自助服务来提出自己需求启动服务）

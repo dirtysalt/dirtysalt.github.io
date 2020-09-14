@@ -1,0 +1,377 @@
+#+title: PIC(位置无关代码)
+
+内容都是来自于《深入理解计算机系统》这本书的
+
+** 什么是PIC
+pic的意思是position independent code(位置无关代码),就是指运行和放置地址无关的代码。
+其实这里pic是一个相对意思，因为生成代码或多或少都使用了位置无关代码这个概念，就好比跳转指令：
+#+BEGIN_SRC C++
+int main(int argc,char const* argv[]){
+    if(argc>=2){
+        argc++;
+    }else{
+        argc+=2;
+    }
+    return 0;
+}
+#+END_SRC
+#+BEGIN_EXAMPLE
+08048434 <main>:
+ 8048434:       8d 4c 24 04             lea    0x4(%esp),%ecx
+ 8048438:       83 e4 f0                and    $0xfffffff0,%esp
+ 804843b:       ff 71 fc                pushl  -0x4(%ecx)
+ 804843e:       55                      push   %ebp
+ 804843f:       89 e5                   mov    %esp,%ebp
+ 8048441:       51                      push   %ecx
+ 8048442:       83 ec 04                sub    $0x4,%esp
+ 8048445:       89 4d f8                mov    %ecx,-0x8(%ebp)
+ 8048448:       8b 45 f8                mov    -0x8(%ebp),%eax
+ 804844b:       83 38 01                cmpl   $0x1,(%eax)
+ 804844e:       7e 08                   jle    8048458 <main+0x24>
+ 8048450:       8b 45 f8                mov    -0x8(%ebp),%eax
+ 8048453:       83 00 01                addl   $0x1,(%eax)
+//jmp编码是0xeb,0x6是相对地址。执行这条指令的话pc已经下面一条指令了
+//也就是0x8048458,然后+0x6正好就是0x804845e
+//从某种意义上来说这也是位置无关代码
+ 8048456:       eb 06                   jmp    804845e <main+0x2a>
+ 8048458:       8b 45 f8                mov    -0x8(%ebp),%eax
+ 804845b:       83 00 02                addl   $0x2,(%eax)
+ 804845e:       b8 00 00 00 00          mov    $0x0,%eax
+ 8048463:       83 c4 04                add    $0x4,%esp
+ 8048466:       59                      pop    %ecx
+ 8048467:       5d                      pop    %ebp
+ 8048468:       8d 61 fc                lea    -0x4(%ecx),%esp
+ 804846b:       c3                      ret
+#+END_EXAMPLE
+
+而我们这里谈到的pic是指动态链接库所遇到的符号安排问题。动态链接库可能被加载器加载到任何虚拟地址上，所以通常
+编译一个动态链接库是需要打开PIC功能的。使用gcc编译位置无关代码的话，需要加上-fPIC编译选项。
+
+如果一个可执行文件是代码位置无关的话，那么个可执行文件就是PIE(position indepdent executable).
+PIE在被加载器(loader)加载的时候地址是不固定的，从而大大提高了程序的安全性。如果要生成PIE的话，需要
+在编译的时候加上-fPIE选项。
+
+UPDATE@201912：按照我粗浅的理解是
+- 如果编译的内容是为了制作可执行程序或者静态库的话，那么不用添加任何选项。
+- 如果编译的内容是为了制作动态库的话，那么增加-fPIC, -shared(制作动态库）
+- -fPIE（编译选项）和-pie（连接选项）使用起来不太常见
+
+** 为什么需要PIC
+考虑可执行程序使用静态库而言的话，最终使用的所有静态库符号，都会进行符号重定位的。因为在编译静态库的时候，
+汇编器不确定最终每个符号安排在什么位置上，所有从0x0这个地址开始依次安排每一个符号，不同的段是分开的：
+#+BEGIN_SRC C++
+int global_variable_data=1;
+static int global_variable_bss;
+int echo(){
+    return 0;
+}
+int main(){
+    return 0;
+}
+#+END_SRC
+#+BEGIN_EXAMPLE
+//逻辑地址从0x0安排，存放在bss段
+00000000 b global_variable_bss
+//逻辑地址从0x0安排，存放在data段
+00000000 D global_variable_data
+//逻辑地址从0x0安排，存放在text段
+00000000 T echo
+0000000a T main
+#+END_EXAMPLE
+
+看上去重定位符号是一件很麻烦的事情，实际上也不麻烦。因为汇编器在汇编成为目标文件的时候，
+将那些需要重定位的表项都已经放在一个单独的段里面了，成为rel段。在链接的时候，链接器只是需要读取rel段里面内容，
+遍历每个需要重定位的表项然后修改内容即可。重定位表项定位需要知道符号的字符串表示是什么，
+表项里面只是存放字符串的指针，具体字符串内容是存放在一个strtab段里面的。当然一个库也需要暴露自己有哪些符号，
+那么这些符号都是定义在symtab段里面的。我们可以strings查看一下.o文件里面是有不少字符串信息的：
+#+BEGIN_EXAMPLE
+/lib/ld-linux.so.2 //动态链接库载入器
+libstdc++.so.6 //listdc++
+__gmon_start__
+_Jv_RegisterClasses
+__gxx_personality_v0
+libm.so.6 //数学库
+libgcc_s.so.1 //gcc内置实现库
+libc.so.6 //libc
+_IO_stdin_used
+__libc_start_main
+CXXABI_1.3
+GLIBC_2.0
+#+END_EXAMPLE
+
+不过如果可执行程序链接的是动态库的话，那么就出现一个问题了。动态库是没有和可执行程序联编的，
+就导致链接器不好为动态库里面的一些符号确定最终的地址，符号重定位。只有动态库被系统加载的那个时候，
+各个符号的地址才被确定了。很明显符号重定位这件事情肯定是需要做的，不过现在不是ld链接器来完成了，
+而是交给动态链接器载入器来完成，就是上面提到的/lib/ld-linux.so.2，在运行时完成。
+
+** 动态库
+可执行程序在和动态库链接的时候，不会将符号定义copy进入自身，相反是存下一个索引(GOT+PLT)来实现的，具体原理后面会说到。
+同时会将所有的.so路径都存在内部，然后在进行符号查找的时候会在这些.so里面逐个进行符号查找。如果可以的话就会保存下来，
+也可以避免下次进行重复的符号查找和定位。
+
+可以看到每个符号是和对应的.so绑定起来的。我们在使用动态库的时候，有几种方法可以联编动态库：
+#+BEGIN_EXAMPLE
+g++ wrapper.o /home/dirlt/libmain.so
+g++ wrapper.o -L. -lmain
+g++ wrapper.o -L. -lmain -Xlinker -rpath .
+#+END_EXAMPLE
+第一种是最不推荐的方式，因为这样一来的话，所有在libmain.so里面的符号，在运行时候就会在/home/dirlt/libmain.so里面查找。
+第二种是最常见的方式，但是我们需要export LD_LIBRARY_PATH=.;$LD_LIBRARY_PATH之后运行时才正常，因为大部分情况下面加载目录是不包括当前目录的。
+第三种的话，联编时候就告诉加载器，在加载的时候就需要需要去.目录下面查找，是一种比较好的方式。
+
+这里提一点就是，通过连接动态链接库生成的可执行程序，内部保存了所有的动态链接库位置。对于这些动态链接库，
+在可执行程序启动的时候就会完全加载进来，而不管这些动态链接库是否被使用。这点可以通过strace观察到。
+
+上面是对于可执行程序情况，对于动态链接库自身也存在这样的问题。因为动态链接库可能被动态运行，
+如果动态库使用了某个外部全局变量，或者是使用了某个外部函数的话，而这些符号相对于动态链接库本身也是位置不确定的。
+
+所以仔细考虑的话，会发现一旦用到动态链接库的话，就会用到位置无关代码来解析符号。只不过对于最终编译成为应用程序的.o文件而言，
+在最后链接时候是可以知道哪些符号是链接了动态链接库的话，如果链接了动态链接库的符号的话，那么最后重定位上就通过位置无关代码来使用这个符号。
+而对于最终编译成为动态链接库的.o文件而言，是没有办法经历最后步骤的来进行调整的，所以必须在编译阶段就确定"如果我们使用外部符号，
+那么我必须通过位置无关代码来使用，因为我最后可能会生成动态链接库".
+
+为了证实链接器确实能够感知某个文件是目标文件还是动态链接库文件，可以使用readelf查看文件头部：
+#+BEGIN_EXAMPLE
+[dirlt@localhost.localdomain]$ readelf -h echo.o
+ELF Header:
+  Magic:   7f 45 4c 46 01 01 01 00 00 00 00 00 00 00 00 00
+  Class:                             ELF32
+  Data:                              2's complement, little endian
+  Version:                           1 (current)
+  OS/ABI:                            UNIX - System V
+  ABI Version:                       0
+  Type:                              REL (Relocatable file) //relocatable object file
+  Machine:                           Intel 80386
+  Version:                           0x1
+  Entry point address:               0x0
+  Start of program headers:          0 (bytes into file)
+  Start of section headers:          292 (bytes into file)
+  Flags:                             0x0
+  Size of this header:               52 (bytes)
+  Size of program headers:           0 (bytes)
+  Number of program headers:         0
+  Size of section headers:           40 (bytes)
+  Number of section headers:         13
+  Section header string table index: 10
+[dirlt@localhost.localdomain]$ readelf -h libecho.so
+ELF Header:
+  Magic:   7f 45 4c 46 01 01 01 00 00 00 00 00 00 00 00 00
+  Class:                             ELF32
+  Data:                              2's complement, little endian
+  Version:                           1 (current)
+  OS/ABI:                            UNIX - System V
+  ABI Version:                       0
+  Type:                              DYN (Shared object file) //shared object file
+  Machine:                           Intel 80386
+  Version:                           0x1
+  Entry point address:               0x410
+  Start of program headers:          52 (bytes into file)
+  Start of section headers:          2224 (bytes into file)
+  Flags:                             0x0
+  Size of this header:               52 (bytes)
+  Size of program headers:           32 (bytes)
+  Number of program headers:         6
+  Size of section headers:           40 (bytes)
+  Number of section headers:         28
+  Section header string table index: 25
+#+END_EXAMPLE
+
+假设main.cc编译出main，里面调用echo函数定义在libecho.so里面。main.o不需要是位置无关代码，所以不用-fPIC编译。
+#+BEGIN_SRC C++
+//==============================main.cc==============================
+#include <cstdio>
+extern "C" int global_variable;
+extern "C" int echo();
+int global_variable=0;
+int main(){
+    echo();
+    return 0;
+}
+//==============================echo.cc==============================
+#include <cstdio>
+extern "C" int global_variable;
+extern "C" int echo();
+int echo(){
+    printf("%d\n",global_variable);
+    return 0;
+}
+#+END_SRC
+
+#+BEGIN_EXAMPLE
+00000000 <main>:
+   0:   8d 4c 24 04             lea    0x4(%esp),%ecx
+   4:   83 e4 f0                and    $0xfffffff0,%esp
+   7:   ff 71 fc                pushl  -0x4(%ecx)
+   a:   55                      push   %ebp
+   b:   89 e5                   mov    %esp,%ebp
+   d:   51                      push   %ecx
+   e:   83 ec 04                sub    $0x4,%esp
+  11:   e8 fc ff ff ff          call   12 <main+0x12> //echo函数在这里，这里是有待填充的内容
+  16:   b8 00 00 00 00          mov    $0x0,%eax
+  1b:   83 c4 04                add    $0x4,%esp
+  1e:   59                      pop    %ecx
+  1f:   5d                      pop    %ebp
+  20:   8d 61 fc                lea    -0x4(%ecx),%esp
+  23:   c3                      ret
+#+END_EXAMPLE
+但是在链接完成之后，因为链接器可以知道链接的echo符号是来自于动态库的，所有使用plt来实现。
+#+BEGIN_EXAMPLE
+0804844c <echo@plt>:
+ 804844c:       ff 25 30 98 04 08       jmp    *0x8049830
+ 8048452:       68 08 00 00 00          push   $0x8
+ 8048457:       e9 d0 ff ff ff          jmp    804842c <_init+0x18>
+
+ 8048554:       8d 4c 24 04             lea    0x4(%esp),%ecx
+ 8048558:       83 e4 f0                and    $0xfffffff0,%esp
+ 804855b:       ff 71 fc                pushl  -0x4(%ecx)
+ 804855e:       55                      push   %ebp
+ 804855f:       89 e5                   mov    %esp,%ebp
+ 8048561:       51                      push   %ecx
+ 8048562:       83 ec 04                sub    $0x4,%esp
+ 8048565:       e8 e2 fe ff ff          call   804844c <echo@plt> //填充内容是echo@plt
+ 804856a:       b8 00 00 00 00          mov    $0x0,%eax
+ 804856f:       83 c4 04                add    $0x4,%esp
+ 8048572:       59                      pop    %ecx
+ 8048573:       5d                      pop    %ebp
+ 8048574:       8d 61 fc                lea    -0x4(%ecx),%esp
+ 8048577:       c3                      ret
+#+END_EXAMPLE
+
+而如果编译出libecho.so的echo.o不使用-fPIC来编译的话，那么生成代码就是这样的：
+#+BEGIN_EXAMPLE
+00000000 <echo2>:
+   0:   55                      push   %ebp
+   1:   89 e5                   mov    %esp,%ebp
+   3:   83 ec 08                sub    $0x8,%esp
+   6:   a1 00 00 00 00          mov    0x0,%eax
+   b:   89 44 24 04             mov    %eax,0x4(%esp)
+   f:   c7 04 24 00 00 00 00    movl   $0x0,(%esp)
+  16:   e8 fc ff ff ff          call   17 <echo2+0x17> //这个地方是printf
+  1b:   b8 00 00 00 00          mov    $0x0,%eax
+  20:   c9                      leave
+  21:   c3                      ret
+#+END_EXAMPLE
+
+而在生成.so之后，因为没有经过最终链接步骤，使得这段call代码没有被重定位。call这个地址显然是一个无效地址。
+#+BEGIN_EXAMPLE
+000004fc <echo2>:
+ 4fc:   55                      push   %ebp
+ 4fd:   89 e5                   mov    %esp,%ebp
+ 4ff:   83 ec 08                sub    $0x8,%esp
+ 502:   a1 00 00 00 00          mov    0x0,%eax
+ 507:   89 44 24 04             mov    %eax,0x4(%esp)
+ 50b:   c7 04 24 70 05 00 00    movl   $0x570,(%esp)
+ 512:   e8 fc ff ff ff          call   513 <echo2+0x17> //调用的时候就会悲剧了
+ 517:   b8 00 00 00 00          mov    $0x0,%eax
+ 51c:   c9                      leave
+ 51d:   c3                      ret
+#+END_EXAMPLE
+
+** GOT和PLT
+虽然上面说对于外部符号使用GOT+PLT方式来解决，但是对于全局变量和全局函数是使用两种不同的解析方法来获得的。
+
+*** 数据引用
+GOT是指全局偏移量表(global offset table).在数据引用里面的话，那么里面存放的就是全局变量的地址。
+因为单独编译.o的话，我们也可以将text段和data段紧密排列，比如将data放在text之后，这样data和text之间的偏移是常数。
+然后我们将GOT放在data的固定位置比如头部。一旦模块载入的话，那么动态链接器就会解析GOT里面所有的条目，
+并且填写上对应的地址。如果查找不到的话，那么就会报告错误
+#+BEGIN_EXAMPLE
+./main: symbol lookup error: ./libecho.so: undefined symbol: global_variable
+#+END_EXAMPLE
+
+以上面一节代码为例，看看echo.cc是如何使用global_variable的：
+#+BEGIN_EXAMPLE
+000004f7 <__i686.get_pc_thunk.bx>:
+ 4f7:   8b 1c 24                mov    (%esp),%ebx
+ 4fa:   c3                      ret
+ 4fb:   90                      nop
+
+ 4fc:   55                      push   %ebp
+ 4fd:   89 e5                   mov    %esp,%ebp
+ 4ff:   53                      push   %ebx
+ 500:   83 ec 14                sub    $0x14,%esp
+ 503:   e8 ef ff ff ff          call   4f7 <__i686.get_pc_thunk.bx> //得到pc
+ 508:   81 c3 dc 11 00 00       add    $0x11dc,%ebx //得到GOT,可以猜测data和text偏移是0x11dc
+ 50e:   8b 83 fc ff ff ff       mov    -0x4(%ebx),%eax //得到global_variable在GOT的索引
+ 514:   8b 00                   mov    (%eax),%eax //取值，至此eax里面就是global_variable的值了
+ 516:   89 44 24 04             mov    %eax,0x4(%esp)
+ 51a:   8d 83 ac ee ff ff       lea    -0x1154(%ebx),%eax
+ 520:   89 04 24                mov    %eax,(%esp)
+ 523:   e8 c0 fe ff ff          call   3e8 <printf@plt>
+ 528:   b8 00 00 00 00          mov    $0x0,%eax
+ 52d:   83 c4 14                add    $0x14,%esp
+ 530:   5b                      pop    %ebx
+ 531:   5d                      pop    %ebp
+ 532:   c3                      ret
+#+END_EXAMPLE
+
+可以看到在进行数据引用上存在性能缺陷，本来1条指令的取数据指令扩展到了6条，并且在6条中占用了
+%ebx这个寄存器，对于寄存器堆比较小的机器来说会造成寄存器压力。
+
+*** 函数调用
+PLT是指过程链接表(procedure linkage table).函数调用需要PLT和GOT配合来完成。需要注意的是GOT
+是存放在数据段的，而PLT是存放在代码段的。配合PLT的GOT的段为got.plt,而全局变量的GOT的段为got.
+
+如果像数据引用一样来进行函数调用的话，也是没有任何问题的，但是函数调用还是有更加简单的方法的。
+通常来说，PLT的GOT排列是这样的，我们以下面地址为例：
+|   地址 | 表项   |    内容 | 描述                         |
+|--------+--------+---------+------------------------------|
+| 0x16e4 | got(0) | 0x015fc | .dynamic节的地址             |
+| 0x16e8 | got(1) |     0x0 | 链接器标识信息，加载后填充   |
+| 0x16ec | got(2) |     0x0 | 动态链接库入口点，加载后填充 |
+| 0x1610 | got(3) |  0x03de | ???                          |
+| 0x1614 | got(4) |  0x03ee | echo的push                   |
+为了验证0x15fc确实是.dynamic节的地址：
+#+BEGIN_EXAMPLE
+  [20] .dynamic          DYNAMIC         000015fc 0005fc 0000d8 08  WA  4   0  4
+#+END_EXAMPLE
+
+#+BEGIN_EXAMPLE
+000003c8 <__gmon_start__@plt-0x10>:
+ 3c8:   ff b3 04 00 00 00       pushl  0x4(%ebx) //GOT[1]
+ 3ce:   ff a3 08 00 00 00       jmp    *0x8(%ebx) //GOT[2]
+
+000003e8 <printf@plt>:
+ 3e8:   ff a3 10 00 00 00       jmp    *0x10(%ebx) //这里ebx已经是GOT首地址(0x16e4),那么0x10(%ebx)就是print表项
+ 3ee:   68 08 00 00 00          push   $0x8
+ 3f3:   e9 d0 ff ff ff          jmp    3c8 <_init+0x18>
+
+000004fc <echo>:
+ 4fc:   55                      push   %ebp
+ 4fd:   89 e5                   mov    %esp,%ebp
+ 4ff:   53                      push   %ebx
+ 500:   83 ec 14                sub    $0x14,%esp
+ 503:   e8 ef ff ff ff          call   4f7 <__i686.get_pc_thunk.bx>
+ 508:   81 c3 dc 11 00 00       add    $0x11dc,%ebx //pc=0x508,ebx=0x16e4
+ 50e:   8b 83 fc ff ff ff       mov    -0x4(%ebx),%eax
+ 514:   8b 00                   mov    (%eax),%eax
+ 516:   89 44 24 04             mov    %eax,0x4(%esp)
+ 51a:   8d 83 ac ee ff ff       lea    -0x1154(%ebx),%eax
+ 520:   89 04 24                mov    %eax,(%esp)
+ 523:   e8 c0 fe ff ff          call   3e8 <printf@plt> //这里调用printf
+ 528:   b8 00 00 00 00          mov    $0x0,%eax
+ 52d:   83 c4 14                add    $0x14,%esp
+ 530:   5b                      pop    %ebx
+ 531:   5d                      pop    %ebp
+
+000016e4 <.got.plt>:
+    16e4:       fc                      cld
+    16e5:       15 00 00 00 00          adc    $0x0,%eax
+    16ea:       00 00                   add    %al,(%eax)
+    16ec:       00 00                   add    %al,(%eax)
+    16ee:       00 00                   add    %al,(%eax)
+    16f0:       de 03                   fiadd  (%ebx)
+    16f2:       00 00                   add    %al,(%eax)
+    16f4:       ee                      out    %al,(%dx)
+    16f5:       03 00                   add    (%eax),%eax
+    16f7:       00 fe                   add    %bh,%dh //0x10(%ebx)==0x03ee
+    16f9:       03 00                   add    (%eax),%eax
+#+END_EXAMPLE
+
+原理基本就是这样的：
+- 首先执行jmp *0x10(%ebx).初始时候，里面内容就是0x3ee即下一条指令。
+- 然后push 0x8表示echo函数对应的id,然后jmp 0x3c8
+- 然后压入链接器标识信息，然后进入动态链接库入口
+- 动态链接库通过这两个参数，来确定echo的地址
+- 将echo地址写到*(0x10(%ebx))里面.
+- 这样下一次调用的时候，就不会在进行解析了，而直接jump到echo地址。

@@ -1,0 +1,545 @@
+#+title: libev
+http://software.schmorp.de/pkg/libev.html
+
+** Overview
+libev所实现的功能就是一个强大的reactor, 可以notify的事件主要包括下面这些：
+- ev_io // IO可读可写
+- ev_stat // 文件属性变化
+- ev_async // 激活线程
+- ev_signal // 信号处理
+- ev_timer // 定时器
+- ev_periodic // 周期任务
+- ev_child // 子进程状态变化
+- ev_fork // 开辟进程
+- ev_cleanup // event loop退出触发事件
+- ev_idle // 每次event loop空闲触发事件
+- ev_embed // ???
+- ev_prepare // 每次event loop之前事件
+- ev_check // 每次event loop之后事件
+
+代码风格相当严谨而且排版也非常工整，并且从域名看出作者是德国人。但是内部使用了大量的宏造成阅读代码并不是非常方便。
+并且从代码角度分析，应该是一开始支持有一个默认的event_loop,但是随着多核产生实际应用中可能会使用到多个event_loop,
+猜想作者应该是为了方便的话使用了很多宏进行替换。允许使用多个event_loop的宏是EV_MULTIPLICITY.比如下面这段代码
+#+BEGIN_SRC C++
+void noinline
+ev_io_start (EV_P_ ev_io *w)
+{
+  int fd = w->fd;
+
+  if (expect_false (ev_is_active (w)))
+    return;
+
+  assert (("libev: ev_io_start called with negative fd", fd >= 0));
+  assert (("libev: ev_io_start called with illegal event mask", !(w->events & ~(EV__IOFDSET | EV_READ | EV_WRITE))));
+
+  EV_FREQUENT_CHECK;
+
+  ev_start (EV_A_ (W)w, 1);
+  array_needsize (ANFD, anfds, anfdmax, fd + 1, array_init_zero);
+  wlist_add (&anfds[fd].head, (WL)w);
+
+  fd_change (EV_A_ fd, w->events & EV__IOFDSET | EV_ANFD_REIFY);
+  w->events &= ~EV__IOFDSET;
+
+  EV_FREQUENT_CHECK;
+}
+#+END_SRC
+初次阅读这个代码会觉得非常难懂。
+| 宏    | 说明            | 定义                 |
+|-------+-----------------+----------------------|
+| EV_P  | event parameter | struct ev_loop *loop |
+| EV_P_ |                 | EV_P,                |
+| EV_A  | event argument  | loop                 |
+| EV_A_ |                 | EV_A,                |
+然后很多变量只要是ev_loop成员的话都被封装成为了宏。比如代码里面的anfds,实际上的宏定义是
+#+BEGIN_SRC C++
+#define anfds ((loop)->anfds)
+#+END_SRC
+事实上一个ev_loop里面的字段是相当多的，不过也很正常本身就是一个强大的reactor.但是这造成一个直接后果，
+就是对于想要了解ev_loop的全貌比较困难，所以想要彻底地了解libev也比较麻烦，所以我们只能够从应用层面来尝试了解它。
+
+** EventLoop
+首先我们关注一下reactor本身。在libev下面reactor对象称为event_loop.event_loop允许动态创建和销毁，并且允许绑定自定义数据
+#+BEGIN_SRC C++
+struct ev_loop * ev_loop_new (unsigned int flags);
+void ev_loop_destroy (EV_P);
+void ev_set_userdata (EV_P_ void *data);
+void *ev_userdata (EV_P);
+#+END_SRC
+我们这里主要关注一下flags.这里面主要是选择使用什么backend来进行poll操作，可以选择的有：
+- EVBACKEND_SELECT
+- EVBACKEND_POLL
+- EVBACKEND_EPOLL // 通常我们选择这个
+- EVBACKEND_KQUEUE
+- EVBACKEND_DEVPOLL
+- EVBACKEND_PORT
+但是还有三个比较重要选项：
+- EVFLAG_NOINOTIFY // 不适用inofity调用来使用ev_stat.这样可以减少fd使用。
+- EVFLAG_SIGNALFD // 使用signalfd来检测信号是否发生，同样这样可以减少fd使用。
+大部分时候我们使用EVFLAG_AUTO(0)一般就足够满足需求了，从代码角度来看如果支持epoll的话那么首先会选择epoll.
+因为在watcher的回调函数里面是可以知道当前event_loop的，这样就可以获得自定义数据。然后我们看看这个event_loop如何运行和停止的
+#+BEGIN_SRC C++
+void ev_run (EV_P_ int flags);
+void ev_break (EV_P_ int how);
+#+END_SRC
+同样我们这里比较关注flags和how这两个参数。flags有下面这几个：
+- 0.默认值。一直循环进行处理，直到外部引用计数==0或者是显示退出。
+- EVRUN_NOWAIT.运行一次，poll时候不会等待。如果有pending事件进行处理，否则立即返回。
+- EVRUN_ONCE.运行一次，poll时候会等待至少一个event发生，处理完成之后返回。
+而how有下面这几个：
+- EVBREAK_ONE.只是退出一次ev_run这个调用。通常来说使用这个就可以了。
+- EVBREAK_ALL.退出所有的ev_run调用。这种情况存在于ev_run在pengding处理时候会递归调用。
+在backend/epoll底层每次epoll_wait时候，libev提供了接口回调可以在epoll_wait前后调用
+#+BEGIN_SRC C++
+void ev_set_loop_release_cb (loop, void (*release)(EV_P), void (*acquire)(EV_P))
+static void
+epoll_poll (EV_P_ ev_tstamp timeout)
+{
+  /* epoll wait times cannot be larger than (LONG_MAX - 999UL) / HZ msecs, which is below */
+  /* the default libev max wait time, however. */
+  EV_RELEASE_CB;
+  eventcnt = epoll_wait (backend_fd, epoll_events, epoll_eventmax,
+                         epoll_epermcnt ? 0 : ev_timeout_to_ms (timeout));
+  EV_ACQUIRE_CB;
+}
+#+END_SRC
+在event_loop里面我们还关心一件事情，就是每次event_loop轮询的时间长短。通常来说这个不会是太大问题，但是在高性能情况下面我们需要设置
+#+BEGIN_SRC C++
+void ev_set_io_collect_interval (EV_P_ ev_tstamp interval);
+void ev_set_timeout_collect_interval (EV_P_ ev_tstamp interval);
+#+END_SRC
+在ev_run里面有使用这些参数的代码比较麻烦。但是大意是这样，如果我们这是了timeout_interval的话，那么我们每次检查timeout时间的话必须
+在timeout_interval，使用这段时间ev_sleep.但是这个又会影响到io_interval,所以内部做了一些换算，换算的结果作为epoll_wait超时时间。
+不过同样在大部分时候我们不需要关心它，默认时候是0.0,系统会使用最快的响应方式来处理。
+
+** Watcher
+然后我们关心一下EventHandler.在libev下面watcher相当于EventHandler这么一个概念，通常里面会绑定fd回调函数以及我们需要关注的事件。
+然后一旦触发事件之后会触发我们使用的回调函数，回调函数参数通常有reactor,watcher以及触发的事件。这里不打算重复文档里面的watcher
+相关的内容和对应的API,但是对于某些内容的话可能会提到并且附带一些注释。之前我们还是看看通用过程，这里使用TYPE区分不同类型watcher.
+#+BEGIN_SRC C++
+typedef void (*)(struct ev_loop *loop, ev_TYPE *watcher, int revents) callback; // callback都是这种类型
+ev_init (ev_TYPE *watcher, callback); // 初始化watcher
+ev_TYPE_set (ev_TYPE *watcher, [args]); // 设置watcher
+ev_TYPE_init (ev_TYPE *watcher, callback, [args]); // 通常使用这个函数最方便，初始化和设置都在这里
+ev_TYPE_start (loop, ev_TYPE *watcher); // 注册watcher
+ev_TYPE_stop (loop, ev_TYPE *watcher); // 注销watcher
+ev_set_priority (ev_TYPE *watcher, int priority); // 设置优先级
+ev_feed_event (loop, ev_TYPE *watcher, int revents); // 这个做跨线程通知非常有用，相当于触发了某个事件。
+bool ev_is_active (ev_TYPE *watcher); // watcher是否active.
+bool ev_is_pending (ev_TYPE *watcher); // watcher是否pending.
+int ev_clear_pending (loop, ev_TYPE *watcher); // 清除watcher pending状态并且返回事件
+#+END_SRC
+wacther的状态有下面这么几种：
+- initialiased.调用init函数初始化
+- active.调用start进行注册
+- pending.已经触发事件但是没有处理
+- inactive.调用stop注销。这个状态等同于initialised这个状态。
+其实关于每个watcher具体是怎么实现的没有太多意思，因为大部分现有代码都差不多。会在下一节说说内部数据结构是怎么安排的，
+了解内部数据结构以及过程之后很多问题就可以避免了，比如"The special problem of disappearing file descriptors"这类问题。
+
+** How it works
+*** ev_run
+最主要的还是看看ev_run这个部分代码。我们不打算仔细阅读只是看看梗概然后大体分析一下数据结构应该怎么样的
+#+BEGIN_SRC C++
+void
+ev_run (EV_P_ int flags)
+{
+  assert (("libev: ev_loop recursion during release detected", loop_done != EVBREAK_RECURSE));
+
+  loop_done = EVBREAK_CANCEL;
+
+  EV_INVOKE_PENDING; /* in case we recurse, ensure ordering stays nice and clean */
+
+  do
+    {
+      if (expect_false (loop_done))
+        break;
+
+      /* update fd-related kernel structures */
+      fd_reify (EV_A);
+
+      /* calculate blocking time */
+      {
+        ev_tstamp waittime  = 0.;
+        ev_tstamp sleeptime = 0.;
+
+        /* remember old timestamp for io_blocktime calculation */
+        ev_tstamp prev_mn_now = mn_now;
+
+        /* update time to cancel out callback processing overhead */
+        time_update (EV_A_ 1e100);
+
+        if (expect_true (!(flags & EVRUN_NOWAIT || idleall || !activecnt)))
+          {
+            waittime = MAX_BLOCKTIME;
+
+            if (timercnt)
+              {
+                ev_tstamp to = ANHE_at (timers [HEAP0]) - mn_now + backend_fudge;
+                if (waittime > to) waittime = to;
+              }
+
+            /* don't let timeouts decrease the waittime below timeout_blocktime */
+            if (expect_false (waittime < timeout_blocktime))
+              waittime = timeout_blocktime;
+
+            /* extra check because io_blocktime is commonly 0 */
+            if (expect_false (io_blocktime))
+              {
+                sleeptime = io_blocktime - (mn_now - prev_mn_now);
+
+                if (sleeptime > waittime - backend_fudge)
+                  sleeptime = waittime - backend_fudge;
+
+                if (expect_true (sleeptime > 0.))
+                  {
+                    ev_sleep (sleeptime);
+                    waittime -= sleeptime;
+                  }
+              }
+          }
+
+        assert ((loop_done = EVBREAK_RECURSE, 1)); /* assert for side effect */
+        backend_poll (EV_A_ waittime);
+        assert ((loop_done = EVBREAK_CANCEL, 1)); /* assert for side effect */
+
+        /* update ev_rt_now, do magic */
+        time_update (EV_A_ waittime + sleeptime);
+      }
+
+      /* queue pending timers and reschedule them */
+      timers_reify (EV_A); /* relative timers called last */
+
+      EV_INVOKE_PENDING;
+    }
+  while (expect_true (
+    activecnt
+    && !loop_done
+    && !(flags & (EVRUN_ONCE | EVRUN_NOWAIT))
+  ));
+
+  if (loop_done == EVBREAK_ONE)
+    loop_done = EVBREAK_CANCEL;
+}
+#+END_SRC
+我们可以总结一下大致步骤，其实和大部分的event loop写出来差不多。
+- 首先触发那些已经pending的watchers.
+- 判断是否loop_done
+- fd_reify.这个后面会单独说。
+- 计算出waittime并且进行必要的sleep.
+- backend_poll开始轮询,并且整理好pending事件
+- timers_reify.这个和fd_reify不同
+- 调用EV_INVOKE_PENDING来触发pending的io事件
+非常简单。接下来我们看看fd_reify,backend_poll,timers_reify以及EV_INVOKE_PENDING.
+
+*** fd_reify
+下面是fd_reify代码片段.可以看出，这个部分就是在修改fd关注的events。
+#+BEGIN_SRC C++
+inline_size void
+fd_reify (EV_P)
+{
+  int i;
+  for (i = 0; i < fdchangecnt; ++i)
+    {
+      int fd = fdchanges [i];
+      ANFD *anfd = anfds + fd;
+      ev_io *w;
+
+      unsigned char o_events = anfd->events;
+      unsigned char o_reify  = anfd->reify;
+
+      anfd->reify  = 0;
+
+      /*if (expect_true (o_reify & EV_ANFD_REIFY)) probably a deoptimisation */
+        {
+          anfd->events = 0;
+
+          for (w = (ev_io *)anfd->head; w; w = (ev_io *)((WL)w)->next)
+            anfd->events |= (unsigned char)w->events;
+
+          if (o_events != anfd->events)
+            o_reify = EV__IOFDSET; /* actually |= */
+        }
+
+      if (o_reify & EV__IOFDSET)
+        backend_modify (EV_A_ fd, o_events, anfd->events);
+    }
+
+  fdchangecnt = 0;
+}
+#+END_SRC
+而这个fdchanges这个是在哪里调用的呢。我们可以看到就是在ev_io_start这个部分。也就是说如果我们想要修改
+fd关注事件的话，我们必须显示地ev_io_stop掉然后修正之后重新ev_io_start.底层调用fd_change的话底层维护
+数组fdchanges来保存发生events变动的fd.
+#+BEGIN_SRC C++
+void noinline
+ev_io_start (EV_P_ ev_io *w)
+{
+  int fd = w->fd;
+
+  if (expect_false (ev_is_active (w)))
+    return;
+
+  assert (("libev: ev_io_start called with negative fd", fd >= 0));
+  assert (("libev: ev_io_start called with illegal event mask", !(w->events & ~(EV__IOFDSET | EV_READ | EV_WRITE))));
+
+  EV_FREQUENT_CHECK;
+
+  ev_start (EV_A_ (W)w, 1);
+  array_needsize (ANFD, anfds, anfdmax, fd + 1, array_init_zero);
+  wlist_add (&anfds[fd].head, (WL)w);
+
+  fd_change (EV_A_ fd, w->events & EV__IOFDSET | EV_ANFD_REIFY);
+  w->events &= ~EV__IOFDSET;
+
+  EV_FREQUENT_CHECK;
+}
+
+inline_size void
+fd_change (EV_P_ int fd, int flags)
+{
+  unsigned char reify = anfds [fd].reify;
+  anfds [fd].reify |= flags;
+
+  if (expect_true (!reify))
+    {
+      ++fdchangecnt;
+      array_needsize (int, fdchanges, fdchangemax, fdchangecnt, EMPTY2);
+      fdchanges [fdchangecnt - 1] = fd;
+    }
+}
+#+END_SRC
+
+*** backend_poll
+backend_poll底层支持很多poll实现，我们这里仅仅看ev_epoll.c就可以.代码在这里面我们不列举了，
+如果某个fd触发事件的话那么最终会调用fd_event(EV_A_,fd,event)来进行通知。所以我们看看fd_event.
+#+BEGIN_SRC C++
+inline_speed void
+fd_event_nocheck (EV_P_ int fd, int revents)
+{
+  ANFD *anfd = anfds + fd;
+  ev_io *w;
+
+  for (w = (ev_io *)anfd->head; w; w = (ev_io *)((WL)w)->next)
+    {
+      int ev = w->events & revents;
+
+      if (ev)
+        ev_feed_event (EV_A_ (W)w, ev);
+    }
+}
+void noinline
+ev_feed_event (EV_P_ void *w, int revents)
+{
+  W w_ = (W)w;
+  int pri = ABSPRI (w_);
+
+  if (expect_false (w_->pending))
+    pendings [pri][w_->pending - 1].events |= revents;
+  else
+    {
+      w_->pending = ++pendingcnt [pri];
+      array_needsize (ANPENDING, pendings [pri], pendingmax [pri], w_->pending, EMPTY2);
+      // set the watcher and revents.
+      pendings [pri][w_->pending - 1].w      = w_;
+      pendings [pri][w_->pending - 1].events = revents;
+    }
+}
+#+END_SRC
+可以看到底层是一个ANFD的数组，根据fd进行偏移。如果fd过大的话似乎会影响性能没有hpserver里面的demuxtable实现方式好。
+然后得到这个fd下面所有的watcher,然后在loop->pendings里面记录所有这些触发的watcher.
+
+*** timers_reify
+其中HEAP0就是最小堆下标。如果repeat的话说明需要重复发生，那么就会重新调整时间戳，如果不是repeat的话，
+那么内部会调用ev_timer_stop这个方法将这个计时器移除。所有的定时任务都通过feed_reverse添加。feed_reverse
+内部是维护一个动态数组来保存所有的定时器任务，然后在feed_reverse_done里面遍历这些任务来触发这些定时器任务。
+#+BEGIN_SRC C++
+inline_size void
+timers_reify (EV_P)
+{
+  EV_FREQUENT_CHECK;
+
+  if (timercnt && ANHE_at (timers [HEAP0]) < mn_now)
+    {
+      do
+        {
+          ev_timer *w = (ev_timer *)ANHE_w (timers [HEAP0]);
+
+          /*assert (("libev: inactive timer on timer heap detected", ev_is_active (w)));*/
+
+          /* first reschedule or stop timer */
+          if (w->repeat)
+            {
+              ev_at (w) += w->repeat;
+              if (ev_at (w) < mn_now)
+                ev_at (w) = mn_now;
+
+              assert (("libev: negative ev_timer repeat value found while processing timers", w->repeat > 0.));
+
+              ANHE_at_cache (timers [HEAP0]);
+              downheap (timers, timercnt, HEAP0);
+            }
+          else
+            ev_timer_stop (EV_A_ w); /* nonrepeating: stop timer */
+
+          EV_FREQUENT_CHECK;
+          feed_reverse (EV_A_ (W)w);
+        }
+      while (timercnt && ANHE_at (timers [HEAP0]) < mn_now);
+
+      feed_reverse_done (EV_A_ EV_TIMER);
+    }
+}
+#+END_SRC
+
+*** EV_INVOKE_PENDING
+这个宏最终调用的函数就是下面这个，遍历所有的pendings事件并且逐一触发。
+#+BEGIN_SRC C++
+void noinline
+ev_invoke_pending (EV_P)
+{
+  int pri;
+
+  for (pri = NUMPRI; pri--; )
+    while (pendingcnt [pri])
+      {
+        ANPENDING *p = pendings [pri] + --pendingcnt [pri];
+
+        p->w->pending = 0;
+        EV_CB_INVOKE (p->w, p->events);
+        EV_FREQUENT_CHECK;
+      }
+}
+#+END_SRC
+
+** Example
+尝试编写一个简单的带有超时的echo-server和echo-client就发现其实还有非常多的其他的工作量，比如buffer的管理状态机实现等。
+所以我没有写出一个完整的example,只是简单地写了假设echo-client连接上server的话就简单地打印链接信息并且关闭。
+*** common.h
+#+BEGIN_SRC C++
+#ifndef _COMMON_H_
+#define _COMMON_H_
+
+#include <unistd.h>
+#include <fcntl.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <arpa/inet.h>
+#include <strings.h>
+#include <cstdlib>
+#include <cstdio>
+#include <cstddef>
+#include <string>
+
+namespace common{
+
+#define D(exp,fmt,...) do {                     \
+        if(!(exp)){                             \
+            fprintf(stderr,fmt,##__VA_ARGS__);  \
+            abort();                            \
+        }                                       \
+    }while(0)
+
+static void setnonblock(int fd){
+    fcntl(fd,F_SETFL,fcntl(fd,F_GETFL) | O_NONBLOCK);
+}
+static void setreuseaddr(int fd){
+    int ok=1;
+    setsockopt(fd,SOL_SOCKET,SO_REUSEADDR,&ok,sizeof(ok));
+}
+
+static void setaddress(const char* ip,int port,struct sockaddr_in* addr){
+    bzero(addr,sizeof(*addr));
+    addr->sin_family=AF_INET;
+    inet_pton(AF_INET,ip,&(addr->sin_addr));
+    addr->sin_port=htons(port);
+}
+
+static std::string address_to_string(struct sockaddr_in* addr){
+    char ip[128];
+    inet_ntop(AF_INET,&(addr->sin_addr),ip,sizeof(ip));
+    char port[32];
+    snprintf(port,sizeof(port),"%d",ntohs(addr->sin_port));
+    std::string r;
+    r=r+"("+ip+":"+port+")";
+    return r;
+}
+
+static int new_tcp_server(int port){
+    int fd=socket(AF_INET,SOCK_STREAM,IPPROTO_TCP);
+    D(fd>0,"socket failed(%m)\n");
+    setnonblock(fd);
+    setreuseaddr(fd);
+    sockaddr_in addr;
+    setaddress("0.0.0.0",port,&addr);
+    bind(fd,(struct sockaddr*)&addr,sizeof(addr));
+    listen(fd,64); // backlog = 64
+    return fd;
+}
+
+static int new_tcp_client(const char* ip,int port){
+    int fd=socket(AF_INET,SOCK_STREAM,IPPROTO_TCP);
+    setnonblock(fd);
+    sockaddr_in addr;
+    setaddress(ip,port,&addr);
+    connect(fd,(struct sockaddr*)(&addr),sizeof(addr));
+    return fd;
+}
+
+}; // namespace common
+
+#endif // _COMMON_H_
+#+END_SRC
+
+*** echo-client.cc
+#+BEGIN_SRC C++
+
+#include "ev.h"
+#include "common.h"
+
+static void do_connected(struct ev_loop* reactor,ev_io* w,int events){
+    close(w->fd);
+    ev_break(reactor,EVBREAK_ALL);
+}
+
+int main(){
+    struct ev_loop* reactor=ev_loop_new(EVFLAG_AUTO);
+    int fd=common::new_tcp_client("127.0.0.1",34567);
+    ev_io io;
+    ev_io_init(&io,&do_connected,fd,EV_WRITE);
+    ev_io_start(reactor,&io);
+    ev_run(reactor,0);
+    close(fd);
+    ev_loop_destroy(reactor);
+    return 0;
+}
+
+#+END_SRC
+
+*** echo-server.cc
+#+BEGIN_SRC C++
+
+#include "ev.h"
+#include "common.h"
+
+static void do_accept(struct ev_loop* reactor,ev_io* w,int events){
+    struct sockaddr_in addr;
+    socklen_t addr_size=sizeof(addr);
+    int conn=accept(w->fd,(struct sockaddr*)&addr,&addr_size);
+    std::string r=common::address_to_string(&addr);
+    fprintf(stderr,"accept %s\n",r.c_str());
+    close(conn);
+}
+
+int main(){
+    struct ev_loop* reactor=ev_loop_new(EVFLAG_AUTO);
+    int fd=common::new_tcp_server(34567);
+    ev_io w;
+    ev_io_init(&w,do_accept,fd,EV_READ);
+    ev_io_start(reactor,&w);
+    ev_run(reactor,0);
+    close(fd);
+    ev_loop_destroy(reactor);
+}
+
+#+END_SRC

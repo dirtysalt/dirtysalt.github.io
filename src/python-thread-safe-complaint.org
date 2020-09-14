@@ -1,0 +1,51 @@
+#+title: Python线程安全的抱怨
+
+Python许多开源组件都没有清晰表明是否线程安全的，所以在使用的时候很容易出现奇怪的问题。所以用这些开源组件之前，
+一定要了解这些组件是否是线程安全的，allocate新的对象开销是不是很大，是否有pool的实现。如果没有Pool实现并且不是线程安全的话，
+那么就需要加一个锁（mutex或者是读写锁）。
+
+python logging模块里面的handler在实现上就是通过加锁来保证线程安全的。
+
+#+BEGIN_SRC Python
+
+    def handle(self, record):
+        """
+        Conditionally emit the specified logging record.
+        Emission depends on filters which may have been added to the handler.
+        Wrap the actual emission of the record with acquisition/release of
+        the I/O thread lock. Returns whether the filter passed the record for
+        emission.
+        """
+        rv = self.filter(record)
+        if rv:
+            self.acquire()
+            try:
+                self.emit(record)
+            finally:
+                self.release()
+        return rv
+#+END_SRC
+
+
+然后最近看到一个handler支持向cloudwatch输出日志，它的实现方式就是可选地往一个memory queue里面写入日志，然后后台
+有个worker在不断地将memory queue里面的日志输出到cloudwatch上。 [[https://github.com/kislyuk/watchtower][watchtower]]
+
+#+BEGIN_SRC Python
+        if self.use_queues:
+            if stream_name not in self.queues:
+                self.queues[stream_name] = queue.Queue()
+                thread = threading.Thread(target=self.batch_sender,
+                                          args=(self.queues[stream_name], stream_name, self.send_interval,
+                                                self.max_batch_size, self.max_batch_count))
+                self.threads.append(thread)
+                thread.daemon = True
+                thread.start()
+            if self.shutting_down:
+                warnings.warn("Received message after logging system shutdown", WatchtowerWarning)
+            else:
+                self.queues[stream_name].put(cwl_message)
+        else:
+            self._submit_batch([cwl_message], stream_name)
+#+END_SRC
+
+另外python里面居然还没有read/write lock实现！难以置信。

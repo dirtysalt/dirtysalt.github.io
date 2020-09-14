@@ -1,0 +1,298 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>spark</title>
+<meta name="generator" content="Org mode" />
+<meta name="author" content="dirtysalt" />
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content">
+<h1 class="title">spark</h1>
+<div id="table-of-contents">
+<h2>Table of Contents</h2>
+<div id="text-table-of-contents">
+<ul>
+<li><a href="#orgafb076c">1. 运行模式</a></li>
+<li><a href="#orged4f614">2. 示例代码</a></li>
+</ul>
+</div>
+</div>
+<div id="outline-container-orgafb076c" class="outline-2">
+<h2 id="orgafb076c"><span class="section-number-2">1</span> 运行模式</h2>
+<div class="outline-text-2" id="text-1">
+<p>
+spark整体架构如下图:
+</p>
+
+
+<div class="figure">
+<p><img src="images/spark-cluster-overview.png" alt="spark-cluster-overview.png" />
+</p>
+</div>
+
+<p>
+由这么几个部分组成：
+</p>
+<ul class="org-ul">
+<li>driver progam # 客户端. 在这里创建sparkcontext, 然后提交任务到cluster上</li>
+<li>cluster manager # master节点. 当然这里也可能包括其他资源管理系统比如mesos或yarn.</li>
+<li>worker node # worker节点. 在上面会启动executor, 每个executor则会启动多个task. 一个task对应a action on a partition.</li>
+</ul>
+
+<p>
+根据spark文档中<a href="http://spark.apache.org/docs/latest/cluster-overview.html">Cluster Mode Overview</a> 一节描述, 共有下面几种运行方式
+</p>
+<ul class="org-ul">
+<li>local. 本地模式. master, worker都在一个JVM中.</li>
+<li>local cluster. 本地集群模式. master, worker在一个机器上, 但是是不同的JVM</li>
+<li>standalone. 独立集群模式. master做资源管理和状态收集.</li>
+<li>mesos. 借助mesos来做资源管理</li>
+<li>yarn cluster. 借助yarn来做资源管理. driver program运行在yarn集群上</li>
+<li>yarn client. 和上面不同的是driver program运行在客户本地.</li>
+</ul>
+
+<hr />
+<p>
+这些运行方法内部实现原理非常类似. 先看看local cluster和standalone.(因为local将所有东西放在一个JVM里面, 所以许多组件都被省略)
+</p>
+
+
+<div class="figure">
+<p><img src="images/spark-local-cluster-mode.png" alt="spark-local-cluster-mode.png" />
+</p>
+</div>
+
+<p>
+standalone完全一样. 每个worker/executor上运行一个CoarseGrainedExecutorBackend和driver进行通信. driver对应组件是SparkDeploySchedulerBackend, 双方使用Akka来做通信. TaskSchedulerImpl管理整个DAG如何拆分成为tasks以及这些task按照什么顺序执行. task会被序列化发送到executor上, executor反序列化task然后执行, 执行完成后汇报给driver. driver从matser上申请资源, 然后master会在worker上启动executor来提供执行资源. driver还会向master汇报状态.
+</p>
+
+<p>
+这里顺带说一下spark是如何评估应用使用资源的. spark应用资源申请是以core为单位的(spark.cores.max). 集群启动时worker会检查这个机器有多少core, 然后汇报给master. 同时我们也需要配置每个executor占用多少core(spark.executor.cores). 这样spark在提交应用时候就知道这个应用会使用多少core以及使用多少executor
+</p>
+
+<hr />
+<p>
+mesos模式分为粗细两种粒度. 粗粒度和local cluster/standalone一样. 应用程序开始便申请executor, 如果没有足够资源不启动. 期间资源完全占据, 直到应用退出executor资源才会归还. 而细粒度则不通, 只要集群中有一些资源给部分executor的话, 那么应用程序就会开始执行任务(task). 任务执行完成之后, 那么executor资源就会归还. 粗粒度是以app/job作为分配单元的, 而细粒度是以task作为分配单元的. 这里的tradeoff是资源使用率以及调度带来的开销.
+</p>
+
+<p>
+<img src="images/spark-mesos-coarse-mode.png" alt="spark-mesos-coarse-mode.png" /> <img src="images/spark-mesos-fine-mode.png" alt="spark-mesos-fine-mode.png" />
+</p>
+
+<p>
+对于yarn来说只有粗粒度模式. cluster/client在启动executor细节上有所差异. cluster模式中因为driver已经运行在NM上所以可以直接启动其他NM上的executors, 而client必须委托一个NM来创建executors.
+</p>
+
+<p>
+<img src="images/spark-yarn-cluster-mode.png" alt="spark-yarn-cluster-mode.png" /> <img src="images/spark-yarn-client-mode.png" alt="spark-yarn-client-mode.png" />
+</p>
+
+<hr />
+<p>
+RDD从生成到执行过程, 以及这个过程中使用的组件, 可以参考下图:
+</p>
+<ul class="org-ul">
+<li>SparkContext 用户用来生成RDD</li>
+<li>DAGScheduler
+<ul class="org-ul">
+<li>将RDD生成Jobs, 并且将Jobs划分成为Stages</li>
+<li>然后将Stage细分到Tasks, 提交给TaskScheduler.</li>
+</ul></li>
+<li>TaskScheduler是执行Tasks的引擎.
+<ul class="org-ul">
+<li>它会创建一个TaskSetManager来管理这些任务执行顺序(比如locality以及resource考虑)</li>
+<li>TaskScheduler收到Tasks执行结果, 将结果汇报给DAGScheduler.</li>
+</ul></li>
+</ul>
+
+
+<div class="figure">
+<p><img src="images/spark-rdd-scheduling.jpg" alt="spark-rdd-scheduling.jpg" />
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orged4f614" class="outline-2">
+<h2 id="orged4f614"><span class="section-number-2">2</span> 示例代码</h2>
+<div class="outline-text-2" id="text-2">
+<p>
+<a href="https://github.com/dirtysalt/codes/tree/master/java/spark/src/main/scala/AvroDataFrame.scala">使用Spark DataFrame操作Avro文件</a>
+</p>
+
+<div class="org-src-container">
+<pre class="src src-scala"><span class="org-keyword">import</span> java.io.<span class="org-constant">File</span>
+
+<span class="org-keyword">import</span> com.databricks.spark.avro.<span class="org-keyword">_</span>
+<span class="org-keyword">import</span> org.apache.commons.io.<span class="org-constant">FileUtils</span>
+<span class="org-keyword">import</span> org.apache.spark.sql.<span class="org-constant">SQLContext</span>
+<span class="org-keyword">import</span> org.apache.spark.{<span class="org-constant">SparkConf</span>, <span class="org-constant">SparkContext</span>}
+
+<span class="org-doc">/**</span>
+<span class="org-doc"> * Created by dirlt on 9/6/15.</span>
+<span class="org-doc"> */</span>
+<span class="org-keyword">object</span> <span class="org-constant">AvroDataFrame</span> {
+  <span class="org-keyword">def</span> <span class="org-function-name">main</span>(args<span class="org-keyword">:</span> <span class="org-type">Array</span>[<span class="org-constant">String</span>])<span class="org-keyword">:</span> <span class="org-type">Unit</span> <span class="org-keyword">=</span> {
+    <span class="org-keyword">val</span> <span class="org-variable-name">conf</span> <span class="org-keyword">=</span> <span class="org-keyword">new</span> <span class="org-type">SparkConf</span>()
+    conf.setAppName(<span class="org-string">"avro-df"</span>)
+    conf.setMaster(<span class="org-string">"local"</span>)
+    <span class="org-keyword">val</span> <span class="org-variable-name">sc</span> <span class="org-keyword">=</span> <span class="org-keyword">new</span> <span class="org-type">SparkContext</span>(conf)
+    <span class="org-keyword">val</span> <span class="org-variable-name">sqlContext</span> <span class="org-keyword">=</span> <span class="org-keyword">new</span> <span class="org-type">SQLContext</span>(sc)
+
+    <span class="org-comment-delimiter">// </span><span class="org-comment">&#35835;&#21462;&#26412;&#22320;&#25991;&#20214;</span>
+    <span class="org-comment-delimiter">// </span><span class="org-comment">&#36733;&#20837;&#38750;&#24120;&#23481;&#26131;. &#22312;&#25968;&#25454;&#19978;&#26597;&#35810;&#38750;&#24120;&#26041;&#20415;.</span>
+    <span class="org-keyword">val</span> <span class="org-variable-name">df</span> <span class="org-keyword">=</span> sqlContext.read.avro(<span class="org-string">"events1.avro"</span>)
+    <span class="org-comment-delimiter">// </span><span class="org-comment">directory works too.</span>
+    <span class="org-comment-delimiter">// </span><span class="org-comment">val df = sqlContext.read.avro("hdfs://localhost:8020/events1.avro")</span>
+    df.show()
+    df.printSchema()
+
+    <span class="org-comment-delimiter">// </span><span class="org-comment">&#20294;&#26159;&#20889;&#22238;&#26377;&#28857;&#40635;&#28902;, &#38656;&#35201;&#26174;&#31034;&#25351;&#26126;schema. &#23545;&#23884;&#22871;&#23618;&#27425;&#32467;&#26500;&#25968;&#25454;&#19981;&#22826;&#26377;&#21033;</span>
+    <span class="org-comment-delimiter">// </span><span class="org-comment">&#34429;&#28982;&#20063;&#21487;&#20197;&#25353;&#29031;avro&#26684;&#24335;&#20889;&#22238;, &#20294;&#26159;&#20165;&#38480;&#20110;&#21333;&#23618;&#32467;&#26500;.</span>
+    <span class="org-keyword">import</span> sqlContext.implicits.<span class="org-keyword">_</span>
+    <span class="org-keyword">val</span> <span class="org-variable-name">df2</span> <span class="org-keyword">=</span> df.filter(<span class="org-string">"id = 12345"</span>).map(x <span class="org-keyword">=&gt;</span> x.getAs[<span class="org-constant">String</span>](<span class="org-string">"id"</span>) + <span class="org-string">"!!!"</span>).toDF(<span class="org-string">"new_id"</span>)
+    df2.show()
+    df2.printSchema()
+    <span class="org-keyword">val</span> <span class="org-variable-name">path</span> <span class="org-keyword">=</span> <span class="org-string">"/tmp/events1-avro-output"</span>
+    <span class="org-constant">FileUtils</span>.deleteDirectory(<span class="org-keyword">new</span> <span class="org-type">File</span>(path))
+    df2.write.avro(path)
+    <span class="org-keyword">val</span> <span class="org-variable-name">path2</span> <span class="org-keyword">=</span> <span class="org-string">"/tmp/events1-parquet-output"</span>
+    <span class="org-constant">FileUtils</span>.deleteDirectory(<span class="org-keyword">new</span> <span class="org-type">File</span>(path2))
+    df2.write.parquet(path2)
+    sc.stop()
+  }
+}
+</pre>
+</div>
+
+
+<hr />
+
+
+<p>
+<a href="https://github.com/dirtysalt/codes/tree/master/java/spark/src/main/scala/AvroRawRDD.scala">使用Spark RDD操作Avro文件</a>
+</p>
+
+<div class="org-src-container">
+<pre class="src src-scala"><span class="org-keyword">import</span> com.dirlt.avro.<span class="org-constant">Event</span>
+<span class="org-keyword">import</span> org.apache.avro.mapred.<span class="org-keyword">_</span>
+<span class="org-keyword">import</span> org.apache.hadoop.fs.{<span class="org-constant">FileSystem</span>, <span class="org-constant">Path</span>}
+<span class="org-keyword">import</span> org.apache.hadoop.io.<span class="org-constant">NullWritable</span>
+<span class="org-keyword">import</span> org.apache.spark.api.java.<span class="org-constant">JavaPairRDD</span>
+<span class="org-keyword">import</span> org.apache.spark.{<span class="org-constant">SparkConf</span>, <span class="org-constant">SparkContext</span>}
+
+<span class="org-doc">/**</span>
+<span class="org-doc"> * Created by dirlt on 9/6/15.</span>
+<span class="org-doc"> */</span>
+<span class="org-keyword">object</span> <span class="org-constant">AvroRawRDD</span> {
+  <span class="org-keyword">def</span> <span class="org-function-name">main</span>(args<span class="org-keyword">:</span> <span class="org-type">Array</span>[<span class="org-constant">String</span>])<span class="org-keyword">:</span> <span class="org-type">Unit</span> <span class="org-keyword">=</span> {
+    <span class="org-keyword">val</span> <span class="org-variable-name">conf</span> <span class="org-keyword">=</span> <span class="org-keyword">new</span> <span class="org-type">SparkConf</span>()
+    conf.setAppName(<span class="org-string">"avro-rdd"</span>)
+    conf.setMaster(<span class="org-string">"local"</span>)
+    <span class="org-keyword">val</span> <span class="org-variable-name">sc</span> <span class="org-keyword">=</span> <span class="org-keyword">new</span> <span class="org-type">SparkContext</span>(conf)
+    <span class="org-comment-delimiter">// </span><span class="org-comment">sc.hadoopConfiguration.set("fs.default.name", "hdfs://localhost:8020")</span>
+    <span class="org-keyword">val</span> <span class="org-variable-name">path</span> <span class="org-keyword">=</span> <span class="org-string">"/tmp/events1.avro"</span>
+    <span class="org-keyword">val</span> <span class="org-variable-name">rdd</span> <span class="org-keyword">=</span> sc.hadoopFile(path, classOf[<span class="org-constant">AvroInputFormat</span>[<span class="org-constant">Event</span>]], classOf[<span class="org-constant">AvroWrapper</span>[<span class="org-constant">Event</span>]], classOf[<span class="org-constant">NullWritable</span>])
+    rdd.map (x <span class="org-keyword">=&gt;</span> {
+      <span class="org-keyword">val</span> <span class="org-variable-name">event</span> <span class="org-keyword">=</span> x._1.datum()
+      event.toString
+    }).foreach(println)
+    <span class="org-keyword">val</span> <span class="org-variable-name">output</span> <span class="org-keyword">=</span> rdd.map (x <span class="org-keyword">=&gt;</span> {
+      <span class="org-keyword">val</span> <span class="org-variable-name">event</span> <span class="org-keyword">=</span> x._1.datum()
+      <span class="org-keyword">val</span> <span class="org-variable-name">builder</span> <span class="org-keyword">=</span> <span class="org-constant">Event</span>.newBuilder(event)
+      builder.setEvent(event.getEvent + <span class="org-string">"!!!"</span>)
+      (<span class="org-keyword">new</span> <span class="org-type">AvroWrapper</span>(builder.build()), <span class="org-constant">NullWritable</span>.get())
+    })
+    output.map(<span class="org-keyword">_</span>._1.toString).collect().foreach(println)
+    <span class="org-keyword">val</span> <span class="org-variable-name">output2</span> <span class="org-keyword">=</span> <span class="org-constant">JavaPairRDD</span>.fromRDD[<span class="org-constant">AvroWrapper</span>[<span class="org-constant">Event</span>], <span class="org-constant">NullWritable</span>](output)
+    <span class="org-keyword">val</span> <span class="org-variable-name">outputPath</span> <span class="org-keyword">=</span> <span class="org-string">"/tmp/events1-avro-output"</span>
+    <span class="org-constant">FileSystem</span>.get(sc.hadoopConfiguration).delete(<span class="org-keyword">new</span> <span class="org-type">Path</span>(outputPath))
+
+    sc.hadoopConfiguration.set(<span class="org-string">"avro.output.schema"</span>,<span class="org-constant">Event</span>.getClassSchema.toString)
+    output2.saveAsHadoopFile(outputPath, classOf[<span class="org-constant">AvroWrapper</span>[<span class="org-constant">Event</span>]], classOf[<span class="org-constant">NullWritable</span>], classOf[<span class="org-constant">AvroOutputFormat</span>[<span class="org-constant">Event</span>]])
+
+    <span class="org-comment-delimiter">// </span><span class="org-comment">validate.</span>
+    <span class="org-keyword">val</span> <span class="org-variable-name">rdd2</span> <span class="org-keyword">=</span> sc.hadoopFile(outputPath, classOf[<span class="org-constant">AvroInputFormat</span>[<span class="org-constant">Event</span>]], classOf[<span class="org-constant">AvroWrapper</span>[<span class="org-constant">Event</span>]], classOf[<span class="org-constant">NullWritable</span>])
+    <span class="org-keyword">val</span> <span class="org-variable-name">rdd22</span> <span class="org-keyword">=</span> rdd2.map(<span class="org-keyword">_</span>._1.datum().getEvent.toString).collect()
+    rdd22.foreach(x <span class="org-keyword">=&gt;</span> {
+      <span class="org-keyword">val</span> <span class="org-variable-name">len</span> <span class="org-keyword">=</span> x.length()
+      assert(x.substring(len - <span class="org-constant">3</span>) == <span class="org-string">"!!!"</span>)
+    })
+    sc.stop()
+  }
+}
+</pre>
+</div>
+
+<hr />
+
+<p>
+<a href="https://github.com/dirtysalt/codes/tree/master/java/spark/src/main/scala/TestOnHBase.scala">使用Spark读写HBase</a>
+</p>
+
+<div class="org-src-container">
+<pre class="src src-scala"><span class="org-keyword">import</span> org.apache.hadoop.hbase.client.{<span class="org-constant">Put</span>, <span class="org-constant">Result</span>, <span class="org-constant">Scan</span>}
+<span class="org-keyword">import</span> org.apache.hadoop.hbase.io.<span class="org-constant">ImmutableBytesWritable</span>
+<span class="org-keyword">import</span> org.apache.hadoop.hbase.mapreduce.{<span class="org-constant">TableInputFormat</span>, <span class="org-constant">TableOutputFormat</span>}
+<span class="org-keyword">import</span> org.apache.hadoop.hbase.protobuf.<span class="org-constant">ProtobufUtil</span>
+<span class="org-keyword">import</span> org.apache.hadoop.hbase.util.{<span class="org-constant">Base64</span>, <span class="org-constant">Bytes</span>}
+<span class="org-keyword">import</span> org.apache.hadoop.mapreduce.<span class="org-constant">Job</span>
+<span class="org-keyword">import</span> org.apache.spark.rdd.<span class="org-constant">PairRDDFunctions</span>
+<span class="org-keyword">import</span> org.apache.spark.{<span class="org-constant">SparkConf</span>, <span class="org-constant">SparkContext</span>}
+
+<span class="org-doc">/**</span>
+<span class="org-doc"> * Created by dirlt on 9/11/15.</span>
+<span class="org-doc"> */</span>
+<span class="org-keyword">object</span> <span class="org-constant">TestOnHBase</span> {
+  <span class="org-keyword">def</span> <span class="org-function-name">main</span>(args<span class="org-keyword">:</span> <span class="org-type">Array</span>[<span class="org-constant">String</span>])<span class="org-keyword">:</span> <span class="org-type">Unit</span> <span class="org-keyword">=</span> {
+    <span class="org-keyword">val</span> <span class="org-variable-name">conf</span> <span class="org-keyword">=</span> <span class="org-keyword">new</span> <span class="org-type">SparkConf</span>()
+    conf.setAppName(<span class="org-string">"test-on-hbase"</span>)
+    conf.setMaster(<span class="org-string">"local"</span>)
+
+    <span class="org-keyword">val</span> <span class="org-variable-name">sc</span> <span class="org-keyword">=</span> <span class="org-keyword">new</span> <span class="org-type">SparkContext</span>(conf)
+    <span class="org-keyword">val</span> <span class="org-variable-name">job</span> <span class="org-keyword">=</span> <span class="org-keyword">new</span> <span class="org-type">Job</span>(sc.hadoopConfiguration)
+    job.setOutputKeyClass(classOf[<span class="org-constant">ImmutableBytesWritable</span>])
+    job.setOutputValueClass(classOf[<span class="org-constant">Result</span>])
+    job.setOutputFormatClass(classOf[<span class="org-constant">TableOutputFormat</span>[<span class="org-constant">ImmutableBytesWritable</span>]])
+    job.getConfiguration.set(<span class="org-constant">TableOutputFormat</span>.<span class="org-constant">OUTPUT_TABLE</span>, <span class="org-string">"t1"</span>)
+
+    <span class="org-keyword">implicit</span> <span class="org-keyword">def</span> <span class="org-function-name">strToBytes</span>(s<span class="org-keyword">:</span> <span class="org-type">String</span>) <span class="org-keyword">=</span> <span class="org-constant">Bytes</span>.toBytes(s)
+
+    <span class="org-keyword">val</span> <span class="org-variable-name">rdd</span> <span class="org-keyword">=</span> sc.parallelize(<span class="org-constant">Map</span>(<span class="org-string">"k1"</span> -&gt; <span class="org-string">"v1"</span>, <span class="org-string">"k2"</span> -&gt; <span class="org-string">"v2"</span>, <span class="org-string">"k3"</span> -&gt; <span class="org-string">"v3"</span>).toList, <span class="org-constant">3</span>)
+    <span class="org-keyword">val</span> <span class="org-variable-name">hbase_rdd</span> <span class="org-keyword">=</span> rdd.map(x <span class="org-keyword">=&gt;</span> {
+      <span class="org-keyword">val</span> (<span class="org-variable-name">k</span><span class="org-keyword">:</span><span class="org-type">String</span>, <span class="org-variable-name">v</span><span class="org-keyword">:</span><span class="org-type">String</span>) <span class="org-keyword">=</span> x
+      <span class="org-keyword">val</span> <span class="org-variable-name">p</span> <span class="org-keyword">=</span> <span class="org-keyword">new</span> <span class="org-type">Put</span>(k)
+      p.addImmutable(<span class="org-string">"cf"</span>, <span class="org-string">"v"</span>, v)
+      (<span class="org-keyword">new</span> <span class="org-type">ImmutableBytesWritable</span>(), p)
+    })
+    <span class="org-keyword">new</span> <span class="org-type">PairRDDFunctions</span>(hbase_rdd).saveAsNewAPIHadoopDataset(job.getConfiguration)
+
+    job.getConfiguration.set(<span class="org-constant">TableInputFormat</span>.<span class="org-constant">INPUT_TABLE</span>, <span class="org-string">"t1"</span>)
+    <span class="org-keyword">val</span> <span class="org-variable-name">scan</span> <span class="org-keyword">=</span> <span class="org-keyword">new</span> <span class="org-type">Scan</span>()
+    scan.addColumn(<span class="org-string">"cf"</span>, <span class="org-string">"v"</span>)
+    <span class="org-keyword">val</span> <span class="org-variable-name">proto</span> <span class="org-keyword">=</span> <span class="org-constant">ProtobufUtil</span>.toScan(scan);
+    <span class="org-keyword">val</span> <span class="org-variable-name">scan_string</span> <span class="org-keyword">=</span> <span class="org-constant">Base64</span>.encodeBytes(proto.toByteArray)
+    job.getConfiguration.set(<span class="org-constant">TableInputFormat</span>.<span class="org-constant">SCAN</span>, scan_string)
+    <span class="org-keyword">val</span> <span class="org-variable-name">rdd2</span> <span class="org-keyword">=</span> sc.newAPIHadoopRDD(job.getConfiguration, classOf[<span class="org-constant">TableInputFormat</span>],
+      classOf[<span class="org-constant">ImmutableBytesWritable</span>], classOf[<span class="org-constant">Result</span>])
+    rdd2.map(x <span class="org-keyword">=&gt;</span> {
+      <span class="org-keyword">val</span> <span class="org-variable-name">k</span> <span class="org-keyword">=</span> x._1.asInstanceOf[<span class="org-constant">ImmutableBytesWritable</span>]
+      <span class="org-keyword">val</span> <span class="org-variable-name">r</span> <span class="org-keyword">=</span> x._2.asInstanceOf[<span class="org-constant">Result</span>]
+      <span class="org-keyword">val</span> <span class="org-variable-name">v</span> <span class="org-keyword">=</span> r.getValue(<span class="org-string">"cf"</span>, <span class="org-string">"v"</span>)
+      <span class="org-keyword">new</span> <span class="org-type">String</span>(k.get()) + <span class="org-string">":"</span> + <span class="org-keyword">new</span> <span class="org-type">String</span>(v)
+    }).collect().foreach(println)
+    sc.stop()
+
+  }
+}
+</pre>
+</div>
+</div>
+</div>
+</div>
+</body>
+</html>

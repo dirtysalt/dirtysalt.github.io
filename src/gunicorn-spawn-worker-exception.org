@@ -1,0 +1,88 @@
+#+title: gunicorn spawn worker exception
+
+** 事故现场
+@2019-08-13T10:40:41
+
+上周gunicorn事故，在其他webapp也出现了类似状况(push_rpc_server)。当时是data_rpc_server出现故障，但是日志里面没有具体原因
+
+#+BEGIN_SRC python
+Traceback (most recent call last):
+  File "src/gevent/greenlet.py", line 716, in gevent._greenlet.Greenlet.run
+  File "/home/ec2-user/pulsar/venv/lib64/python3.6/dist-packages/gunicorn/arbiter.py", line 245, in handle_chld
+    self.reap_workers()
+  File "/home/ec2-user/pulsar/venv/lib64/python3.6/dist-packages/gunicorn/arbiter.py", line 525, in reap_workers
+    raise HaltServer(reason, self.WORKER_BOOT_ERROR)
+gunicorn.errors.HaltServer: <HaltServer 'Worker failed to boot.' 3>
+2019-08-06T05:53:55Z <Greenlet "Greenlet-0" at 0x7efd3483ca48: <bound method Arbiter.handle_chld of <gunicorn.arbiter.Arbiter object at 0x7efd34746978>>(17, None)> failed with HaltServer
+#+END_SRC
+
+然后今天 push_rpc_server 也出现类似故障，但是保存了错误日志
+
+#+BEGIN_SRC python
+[2019-08-12 07:09:52 +0000] [45142] [ERROR] Exception in worker process
+Traceback (most recent call last):
+  File "/home/ec2-user/pulsar/venv/lib64/python3.6/dist-packages/gunicorn/arbiter.py", line 583, in spawn_worker
+    worker.init_process()
+  File "/home/ec2-user/pulsar/venv/lib64/python3.6/dist-packages/gunicorn/workers/ggevent.py", line 203, in init_process
+    super(GeventWorker, self).init_process()
+  File "/home/ec2-user/pulsar/venv/lib64/python3.6/dist-packages/gunicorn/workers/base.py", line 129, in init_process
+    self.load_wsgi()
+  File "/home/ec2-user/pulsar/venv/lib64/python3.6/dist-packages/gunicorn/workers/base.py", line 138, in load_wsgi
+    self.wsgi = self.app.wsgi()
+  File "/home/ec2-user/pulsar/venv/lib64/python3.6/dist-packages/gunicorn/app/base.py", line 67, in wsgi
+    self.callable = self.load()
+  File "/home/ec2-user/pulsar/venv/lib64/python3.6/dist-packages/gunicorn/app/wsgiapp.py", line 52, in load
+    return self.load_wsgiapp()
+  File "/home/ec2-user/pulsar/venv/lib64/python3.6/dist-packages/gunicorn/app/wsgiapp.py", line 41, in load_wsgiapp
+    return util.import_app(self.app_uri)
+  File "/home/ec2-user/pulsar/venv/lib64/python3.6/dist-packages/gunicorn/util.py", line 350, in import_app
+    __import__(module)
+  File "/home/ec2-user/pulsar/push/webapp/app.py", line 8, in <module>
+    from push.webapp import ops_app
+  .....
+  File "/home/ec2-user/pulsar/core/ext/net_ext.py", line 23, in HttpProxyList
+    def get(self, region, request_region=config.APP_RUNNING_REGION, stats=None, raw_docs=None):
+AttributeError: module 'config' has no attribute 'APP_RUNNING_REGION'
+#+END_SRC
+
+从这个错误日志看出现了加载模块的错误 config 里面增加属性 APP_RUNNING_REGION. 但是当时我的操作只是更新代码，而没有进行重启。下面可以看到push_rpc_server一直在运行。
+
+#+BEGIN_EXAMPLE
+[ec2-user@host pulsar]$ supervisorctl
+push_rpc_server                  RUNNING   pid 37526, uptime 28 days, 8:28:01
+#+END_EXAMPLE
+
+** 事故分析
+这个和gunicorn运行机制有关系：
+
+1. gunicorn master首先会fork出多个workers
+2. worker处理一定请求之后，gunicorn会reap掉某个worker
+3. 然后spwan worker保持worker数量
+
+spawn worker是通过os.fork来实现的，worker里面得到的是app对象(app.wsgiapp.WSGIApplication)。这个app对象并没有load python code(gunicorn.util.import_app), 当在执行之前才会load(load_wsgiapp). 所以如果在worker里面load python code失败的话，那么就会一直出现这个错误。
+
+如果代码保持不变的话，那么load python code应该是不会失败的。但是如果期间发生代码变化的话，那么可能就会出现错误。TODO(yan): 现在还没有找到可以简单复现的例子，但是从stacktrace来看，的确是因为访问模块不存在的属性导致的。
+
+gunicorn上面有个选项是 `--preload` 这个选项是在第一次启动的时候就把python code全部import上来，之后所有的worker都直接使用这个wsgi对象，不再会触发load python code逻辑。
+
+#+BEGIN_SRC python
+# class Arbiter(object):
+def setup(self, app):
+   ...
+   if self.cfg.preload_app:
+       self.app.wsgi() # 这里会触发import逻辑
+
+# class Worker(object)
+def init_process(self): # worker里面初始化逻辑
+    ...
+    self.load_wsgi()
+    self.cfg.post_worker_init(self)
+
+# class BaseApplication(object):
+def wsgi(self):
+    if self.callable is None:
+        self.callable = self.load()
+    return self.callable
+#+END_SRC
+
+使用这种方式可以保证在整个运行期间，整个worker使用的code不再会变化。

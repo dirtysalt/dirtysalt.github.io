@@ -1,0 +1,75 @@
+#+title: 选用什么方法做baseline
+
+拿到一个问题，我们应该考虑用什么模型来尝试？
+
+这篇 [[http://machinelearningmastery.com/use-random-forest-testing-179-classifiers-121-datasets/][文章]] 在暗示我们，对于分类问题应该使用RF和Gaussian-SVM.
+
+我和同学稍微讨论了一下觉得还是非常有道理的，RF和SVM其实能够捕捉到的是完全两种不同的结构。按道理我们应该首先尝试低维度模型，所以GSVM可以考虑将gamma设置为0（或者是用linear-SVM). 如果GSVM可以很好地处理这个问题的话，其实我们可以分析gamma，然后自己手动来做特征映射，这样在实际大规模数据上就可以直接做LR了。
+
+从基本结构上出发，其实下面几个方法可以涵盖所有分类问题：1. Decision Tree(结构复杂) 2. Naive Bayes(概率模型) 3. SVM(线性模型+核方法) 4. kNN(基于实例)
+
+从增强方法上看就是Bagging + Blending. 这种增强办法作用在SVM, NB, kNN上是没有太多意义的，作用在DTree上的话就分别得到了RF+GBDT.
+
+所以如果是分类问题的话，我们还应该增加三个方法作为尝试点：GBDT, NB, kNN.
+
+这几个方法其实也可以作为解决回归问题的起点。
+
+所以我觉得，如果一开始遇到分类和回归问题的话，可以考虑用下面5个模型作为尝试起点：1. RF 2. SVM 3. GBDT 4. NB 5. kNN. 调优之后再考虑如何做bagging/blending.
+
+-----
+
+我觉得SVM, RF, GBDT, NB, kNN是几类相对来说比较迥异的算法。今天我稍微试验了一下RF和GBDT两个算法，发现GBDT应该从这个集合里面排除。也就是说我们常用算法应该就是SVM, RF, NB和kNN.
+
+RF和GBDT实验是用scikit-learn提供的数据集合来做的。代码在简书上好像不太适合粘贴，所以放在 [[https://gist.github.com/dirtysalt/5f16102a3798d1ccd15a][github]] 上了。使用数据集合分别是iris和digits. iris两者效果差不多(RF=GBDT=0.98, AdaBoost=0.89)，数据小特征数目也小。而digits差别就比较大，RF准确率0.97,  AdaBoost准确率是0.85, GBDT准确率是0.94，时间上GBDT比RF要长很多。
+
+对于这个结果，我是这么想的。对于Decision Tree一类算法来说，除非问题本身就能够非常好的用决策树来表示，否则Decision Tree结果一般都不太好。原因在于Decision Tree工作方式就是在特定数据集合上，用特定方式顺序选择feature来做切分，如果不引入随机性的话很容易发生过拟合。AdaBoost对数据集合进行resample, 但是对feature没有做筛选没有做顺序选择的改变; GBDT对数据集合进行resample, 对feature有筛选以及但是没有对选择顺序更改; RF对数据进行进行bootstrap, 对feature筛选以及选择顺序更改(Extremely Randomized Trees)。对比来看RF的randomness是最强的，所以效果应该会更高。(我们也可以预期extremely randomized trees可能会比RF更高)
+
+paste code here. `decision tree ensemble methods comparison`.
+
+#+BEGIN_SRC Python
+#!/usr/bin/env python
+#coding:utf-8
+#Copyright (C) dirlt
+
+from sklearn import datasets
+iris = datasets.load_iris()
+digits = datasets.load_digits()
+
+from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier, AdaBoostClassifier, ExtraTreesClassifier
+from sklearn import cross_validation
+from sklearn.metrics import classification_report
+
+# (data, target) = (iris.data, iris.target)
+(data, target) = (digits.data, digits.target)
+X_tr, X_tt, y_tr, y_tt = cross_validation.train_test_split(data, target, test_size = 0.3, random_state = 0)
+
+print '----------RandomForest----------'
+clf = RandomForestClassifier(n_estimators = 100, bootstrap = True, oob_score = True)
+clf.fit(X_tr, y_tr)
+print 'OOB Score = %.4f' % clf.oob_score_
+# print 'Feature Importance = %s' % clf.feature_importances_
+y_true, y_pred = y_tt, clf.predict(X_tt)
+print(classification_report(y_true, y_pred))
+
+print '----------ExtraForest----------'
+clf = ExtraTreesClassifier(n_estimators = 100, bootstrap = True, oob_score = True)
+clf.fit(X_tr, y_tr)
+print 'OOB Score = %.4f' % clf.oob_score_
+# print 'Feature Importance = %s' % clf.feature_importances_
+y_true, y_pred = y_tt, clf.predict(X_tt)
+print(classification_report(y_true, y_pred))
+
+print '----------AdaBoost----------'
+clf = AdaBoostClassifier(n_estimators = 100, learning_rate = 0.6, random_state = 0)
+clf.fit(X_tr, y_tr)
+# print 'Feature Importance = %s' % clf.feature_importances_
+y_true, y_pred = y_tt, clf.predict(X_tt)
+print(classification_report(y_true, y_pred))
+
+print '----------GradientBoosting----------'
+clf = GradientBoostingClassifier(n_estimators = 100, learning_rate = 0.6, random_state = 0)
+clf.fit(X_tr, y_tr)
+# print 'Feature Importance = %s' % clf.feature_importances_
+y_true, y_pred = y_tt, clf.predict(X_tt)
+print(classification_report(y_true, y_pred))
+#+END_SRC

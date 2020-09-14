@@ -1,0 +1,656 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Java Native Interface: Programmer's Guide and Specification</title>
+<meta name="generator" content="Org mode" />
+<meta name="author" content="dirtysalt" />
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content">
+<h1 class="title">Java Native Interface: Programmer's Guide and Specification</h1>
+<div id="table-of-contents">
+<h2>Table of Contents</h2>
+<div id="text-table-of-contents">
+<ul>
+<li><a href="#org7a02bb3">1. Introduction</a></li>
+<li><a href="#orgb955a40">2. Getting Started</a>
+<ul>
+<li><a href="#org5314aeb">2.1. Hello.java</a></li>
+<li><a href="#org8bcfe52">2.2. Hello.h</a></li>
+<li><a href="#org542a02a">2.3. Hello.cc</a></li>
+</ul>
+</li>
+<li><a href="#org765c7e1">3. Basic Types, Strings, and Arrays</a></li>
+<li><a href="#org1d291dd">4. Fields and Methods</a></li>
+<li><a href="#org795ef83">5. Local and Gloabl References</a></li>
+<li><a href="#org2cc00bc">6. Exceptions</a></li>
+<li><a href="#org1aabd05">7. The Invocation Interface</a></li>
+<li><a href="#org9ad29e7">8. Additional JNI Features</a>
+<ul>
+<li><a href="#org0026383">8.1. JNI and Threads</a></li>
+<li><a href="#org18894dd">8.2. Registering Native Methods</a></li>
+<li><a href="#orgd88390e">8.3. Load and Unload Handlers</a></li>
+</ul>
+</li>
+<li><a href="#org1354f5d">9. Leveraging Existing Native Libraries</a></li>
+<li><a href="#org94480c1">10. Traps and Pitfalls</a></li>
+<li><a href="#org479ace5">11. Overview of the JNI Design</a></li>
+</ul>
+</div>
+</div>
+<p>
+<a href="http://www.uni-ulm.de/fileadmin/website_uni_ulm/iui.inst.200/files/staff/domaschka/misc/jni_programmers_guide_spec.pdf">http://www.uni-ulm.de/fileadmin/website_uni_ulm/iui.inst.200/files/staff/domaschka/misc/jni_programmers_guide_spec.pdf</a>
+</p>
+
+<div id="outline-container-org7a02bb3" class="outline-2">
+<h2 id="org7a02bb3"><span class="section-number-2">1</span> Introduction</h2>
+<div class="outline-text-2" id="text-1">
+<p>
+The JNI is designed to handle situations where you need to combine Java applications with native code. As a two-way interface, the JNI can support two types of native code: native libraries and native applications. （允许相互调用）
+</p>
+<ul class="org-ul">
+<li>You can use the JNI to write native methods that allow Java applications to call functions implemented in native libraries. （native libraries通过native methods被JVM调用）</li>
+<li>The JNI supports an invocation interface that allows you to embed a Java vir-tual machine implementation into native applications.(native applications通过invocation interface调用JVM)</li>
+</ul>
+
+
+<div class="figure">
+<p><img src="images/role-of-the-jni.png" alt="role-of-the-jni.png" />
+</p>
+</div>
+
+<p>
+下面是一些JNI的代替方案（主要都是通过进程间通信来完成的）
+</p>
+<ul class="org-ul">
+<li>A Java application may communicate with a native application through a TCP/IP connection or through other inter-process communication (IPC) mechanisms.</li>
+<li>A Java application may connect to a legacy database through the JDBC API.</li>
+<li>A Java application may take advantage of distributed object technologies such as the Java IDL API.</li>
+</ul>
+
+<p>
+下面是一些JNI比较适合的场景
+</p>
+<ul class="org-ul">
+<li>The Java API might not support certain host-dependent features needed by an application. An application may want to perform, for example, special file operations that are not supported by the Java API, yet it is both cumbersome and inefficient to manipulate files through another process.（在一些host上面非常特殊的操作）</li>
+<li>You may want to access an existing native library and are not willing to pay for the overhead of copying and transmitting data across different processes. Loading the native library in the same process is much more efficient.（进程之间通信需要拷贝传输大量的数据）</li>
+<li>Having an application span multiple processes could result in unacceptable memory footprint. This is typically true if these processes need to reside on the same client machine. Loading a native library into the existing process hosting the application requires less system resources than starting a new pro-cess and loading the library into that process.（单独的进程会存在相当的overhead)</li>
+<li>You may want to implement a small portion of time-critical code in a lower-level language, such as assembly. If a 3D-intensive application spends most of its time in graphics rendering, you may find it necessary to write the core por-tion of a graphics library in assembly code to achieve maximum performance.(控制底层提高性能效率）</li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-orgb955a40" class="outline-2">
+<h2 id="orgb955a40"><span class="section-number-2">2</span> Getting Started</h2>
+<div class="outline-text-2" id="text-2">
+<p>
+主要介绍的是native methods编写，JVM通过so来调用native methods.这里给出一个无参native mthods例子。
+</p>
+<ul class="org-ul">
+<li>javac Hello.java 生成 Hello.class</li>
+<li>javah -jni Hello 生成 Hello.h</li>
+<li>编写 Hello.cc 使用 Hello.h 生成 libHello.so # g++ Hello.cc -fPIC -o libHello.so -shared -I$JAVA_HOME/include</li>
+<li>将 libHello.so 加入到library path.</li>
+<li>然后 java Hello 启动</li>
+</ul>
+
+<div class="figure">
+<p><img src="images/jni-example.png" alt="jni-example.png" />
+</p>
+</div>
+</div>
+
+<div id="outline-container-org5314aeb" class="outline-3">
+<h3 id="org5314aeb"><span class="section-number-3">2.1</span> Hello.java</h3>
+<div class="outline-text-3" id="text-2-1">
+<div class="org-src-container">
+<pre class="src src-Java">/* coding:utf-8
+ * Copyright (C) dirlt
+ */
+
+public class Hello {
+  private static native void run();
+  public static void main(String[] args) {
+    System.loadLibrary("Hello");
+    run();
+  }
+}
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org8bcfe52" class="outline-3">
+<h3 id="org8bcfe52"><span class="section-number-3">2.2</span> Hello.h</h3>
+<div class="outline-text-3" id="text-2-2">
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-comment-delimiter">/* </span><span class="org-comment">DO NOT EDIT THIS FILE - it is machine generated */</span>
+<span class="org-preprocessor">#include</span> <span class="org-string">&lt;jni.h&gt;</span>
+<span class="org-comment-delimiter">/* </span><span class="org-comment">Header for class Hello */</span>
+
+<span class="org-preprocessor">#if</span><span class="org-negation-char"><span class="org-preprocessor">n</span></span><span class="org-preprocessor">def</span> _Included_Hello
+<span class="org-preprocessor">#define</span> <span class="org-variable-name">_Included_Hello</span>
+<span class="org-preprocessor">#ifdef</span> __cplusplus
+<span class="org-keyword">extern</span> <span class="org-string">"C"</span> {
+<span class="org-preprocessor">#endif</span>
+<span class="org-comment-delimiter">/*</span>
+<span class="org-comment"> * Class:     Hello</span>
+<span class="org-comment"> * Method:    run</span>
+<span class="org-comment"> * Signature: ()V</span>
+<span class="org-comment"> */</span>
+JNIEXPORT <span class="org-type">void</span> <span class="org-function-name">JNICALL</span> Java_Hello_run
+  (<span class="org-type">JNIEnv</span> *, jclass);
+
+<span class="org-preprocessor">#ifdef</span> __cplusplus
+}
+<span class="org-preprocessor">#endif</span>
+<span class="org-preprocessor">#endif</span>
+
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org542a02a" class="outline-3">
+<h3 id="org542a02a"><span class="section-number-3">2.3</span> Hello.cc</h3>
+<div class="outline-text-3" id="text-2-3">
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-comment-delimiter">/* </span><span class="org-comment">coding:utf-8</span>
+<span class="org-comment"> * Copyright (C) dirlt</span>
+<span class="org-comment"> */</span>
+
+<span class="org-preprocessor">#include</span> <span class="org-string">&lt;cstdio&gt;</span>
+<span class="org-preprocessor">#include</span> <span class="org-string">"Hello.h"</span>
+
+JNIEXPORT <span class="org-type">void</span> <span class="org-function-name">JNICALL</span> Java_Hello_run  (JNIEnv * env, <span class="org-type">jclass</span> <span class="org-variable-name">cls</span>)
+    printf(<span class="org-string">"Hello,World\n"</span>);
+}
+
+</pre>
+</div>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org765c7e1" class="outline-2">
+<h2 id="org765c7e1"><span class="section-number-2">3</span> Basic Types, Strings, and Arrays</h2>
+<div class="outline-text-2" id="text-3">
+<ul class="org-ul">
+<li>The static initializer calls the System.loadLibrary method to load a native library called Prompt.
+<ul class="org-ul">
+<li>使用System.loadLibrary来载入动态库</li>
+</ul></li>
+<li>The JNIEXPORT and JNICALL macros (defined in the jni.h header file) ensure that this function is exported from the native library and C compilers generate code with the correct calling convention for this function
+<ul class="org-ul">
+<li>JNIEXPORT用来导出函数声明，JNICALL用来规定函数调用方式</li>
+</ul></li>
+<li>The name of the C function is formed by concatenating the “Java_” prefix, the class name, and the method name.
+<ul class="org-ul">
+<li>Java_作为前缀，然后是class name,然后是method_name</li>
+</ul></li>
+<li>The first parameter, the JNIEnv interface pointer, points to a location that contains a pointer to a function table.
+<ul class="org-ul">
+<li>JNIEnv定义了JNI所有可以访问JVM对象的接口方法</li>
+<li>这个结构在$JAVA_HOME/include/jni.h里面有定义</li>
+</ul></li>
+<li>The second argument to an instance native method is a reference to the object on which the method is invoked, similar to the this pointer in C++. The second argument to a static native method is a reference to the class in which the method is defined.
+<ul class="org-ul">
+<li>如果是static方法的话，那么参数是指class对象</li>
+<li>如果不是static方法的话，那么参数是指object对象</li>
+</ul></li>
+</ul>
+
+
+<div class="figure">
+<p><img src="images/jnienv-interface-pointer.png" alt="jnienv-interface-pointer.png" />
+</p>
+</div>
+
+<p>
+可以看到在pointer下面还有一个internal VM数据块，这个是线程级别的私有数据跟在pointer之后，可以通过指针偏移进行访问
+</p>
+
+<p>
+对于类型还说分为primitive和reference两种类型，reference type都是opaque pointer获取数据必须通过JNIEnv接口提供的方法才能够获得。
+</p>
+
+<p>
+至于具体类型是pritmitive还是reference的话，可以通过阅读jni.h和jni_md.h来判断。primitive type只有下面几种(defined in jni_md.h)
+</p>
+
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-preprocessor">#if</span><span class="org-negation-char"><span class="org-preprocessor">n</span></span><span class="org-preprocessor">def</span> _JAVASOFT_JNI_MD_H_
+<span class="org-preprocessor">#define</span> <span class="org-variable-name">_JAVASOFT_JNI_MD_H_</span>
+
+<span class="org-preprocessor">#define</span> <span class="org-variable-name">JNIEXPORT</span>
+<span class="org-preprocessor">#define</span> <span class="org-variable-name">JNIIMPORT</span>
+<span class="org-preprocessor">#define</span> <span class="org-variable-name">JNICALL</span>
+
+<span class="org-keyword">typedef</span> <span class="org-type">int</span> <span class="org-type">jint</span>;
+<span class="org-preprocessor">#ifdef</span> _LP64 <span class="org-comment-delimiter">/* </span><span class="org-comment">64-bit Solaris */</span>
+<span class="org-keyword">typedef</span> <span class="org-type">long</span> <span class="org-type">jlong</span>;
+<span class="org-preprocessor">#else</span>
+<span class="org-keyword">typedef</span> <span class="org-type">long</span> <span class="org-type">long</span> <span class="org-type">jlong</span>;
+<span class="org-preprocessor">#endif</span>
+
+<span class="org-keyword">typedef</span> <span class="org-type">signed</span> <span class="org-type">char</span> <span class="org-type">jbyte</span>;
+
+<span class="org-preprocessor">#endif</span> <span class="org-comment-delimiter">/* </span><span class="org-comment">!_JAVASOFT_JNI_MD_H_ */</span>
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org1d291dd" class="outline-2">
+<h2 id="org1d291dd"><span class="section-number-2">4</span> Fields and Methods</h2>
+<div class="outline-text-2" id="text-4">
+<p>
+Field操作：
+</p>
+<ul class="org-ul">
+<li>GetObjectClass获取object所属的class对象，类型是jclass. 如果是本地静态方法的话，那么传入参数应该就是class对象</li>
+<li>GetFieldID/GetStaticFieldID根据field descriptor获取field id，类型是jfieldID.
+<ul class="org-ul">
+<li>field descriptor字符串可以通过javap -s -p &lt;class&gt;来获取</li>
+<li>字符串称为JNI field descriptor
+<ul class="org-ul">
+<li>I int</li>
+<li>F float</li>
+<li>D double</li>
+<li>Z boolean</li>
+<li>/ 代替package name中的.</li>
+<li>[ array</li>
+<li>L reference</li>
+<li>V void</li>
+</ul></li>
+<li>比如如果是String[]的话，那么就是"[Ljava/lang/String;"</li>
+</ul></li>
+<li>Get&lt;type&gt;Field/GetStatic&lt;type&gt;Field获取field data.</li>
+<li>Set&lt;type&gt;Field/GetStatic&lt;type&gt;Field设置field data.</li>
+</ul>
+
+<p>
+Method操作：
+</p>
+<ul class="org-ul">
+<li>获取jclass</li>
+<li>GetMethodID/GetStaticMethodID根据method descriptor获取method id,类型是jmethodID.
+<ul class="org-ul">
+<li>method descriptor同样可以使用javap来获得</li>
+<li>字符串形式如下"(arg types)return type"</li>
+<li>比如如果是void f(String arg)，那么就是"(Ljava/lang/String;)V"</li>
+</ul></li>
+<li>Call&lt;Type&gt;Method/CallStatic&lt;Type&gt;Method来调用method.</li>
+<li>如果调用superclass method的话，那么调用CallNonvirtual&lt;Type&gt;Method.</li>
+<li>构造函数的名称是"&lt;init&gt;" （返回参数是void类型）
+<ul class="org-ul">
+<li>NewObject分配空间并且调用构造函数</li>
+<li>AllocObject只是开辟空间需要自己调用构造函数</li>
+</ul></li>
+</ul>
+
+<p>
+Cache fieldID/methodID:
+</p>
+<ul class="org-ul">
+<li>每次查找ID的代价非常大，通过cache可以避免</li>
+<li>第一种方法是每次查找的时候都判断是否为null，如果为null那么查找然后缓存起来。</li>
+<li>第二种方法是在类static区域调用初始化函数，初始化函数一次性获取所有的ID然后缓存。</li>
+<li>可以认为第一种方法就是lazy evaluation.</li>
+</ul>
+
+<hr />
+
+<p>
+Let us start by comparing the cost of Java/native calls with the cost of Java/Java calls. Java/native calls are potentially slower than Java/Java calls for the fol-lowing reasons: (Java/Java calls和Java/native calls的对比，Java/native calls通常更慢）：
+</p>
+<ul class="org-ul">
+<li>Native methods most likely follow a different calling convention than that used by Java/Java calls inside the Java virtual machine implementation. As a result, the virtual machine must perform additional operations to build argu-ments and set up the stack frame before jumping to a native method entry point.（额外操作来建立stack frame调用native method)</li>
+<li>It is common for the virtual machine to inline method calls. Inlining Java/native calls is a lot harder than inlining Java/Java calls. （inline方面Java/Java calls更容易做）</li>
+</ul>
+
+<p>
+The overhead of field access using the JNI lies in the cost of calling through the JNIEnv. Rather than directly dereferencing objects, the native code has to per- form a C function call which in turn dereferences the object. The function call is necessary because it isolates the native code from the internal object representa-tion maintained by the virtual machine implementation. The JNI field access over-head is typically negligible because a function call takes only a few cycles.（字段访问开销主要是通过一次得到ID间接访问造成的，但是这样带来的收益是能够将内部object表示不暴露出来，索性的是带来的开销并不大）
+</p>
+</div>
+</div>
+
+<div id="outline-container-org795ef83" class="outline-2">
+<h2 id="org795ef83"><span class="section-number-2">5</span> Local and Gloabl References</h2>
+<div class="outline-text-2" id="text-5">
+<p>
+reference和GC非常相关，决定了哪些对象作用域多大以及生命周期多长：
+</p>
+<ul class="org-ul">
+<li>The JNI supports three kinds of opaque references: local references, global references, and weak global references.</li>
+<li>Local and global references have different lifetimes. Local references are automatically freed, whereas global and weak global references remain valid until they are freed by the programmer.</li>
+<li>A local or global reference keeps the referenced object from being garbage collected. A weak global reference, on the other hand, allows the referenced object to be garbage collected.</li>
+</ul>
+<p>
+分为三类references:
+</p>
+<ul class="org-ul">
+<li>local 对象超过函数作用域之后就会自动释放
+<ul class="org-ul">
+<li>Why do you want to delete local references explicitly if the virtual machine automatically frees them after native methods return? A local reference keeps the referenced object from being garbage collected until the local reference is invali-dated.</li>
+<li>但是也可以显示标记不需要这个对象，这样可以减少无用对象的持有。使用DeleteLocalRef来标记。(似乎对于每一个native method最多支持16个local reference ???)</li>
+<li>NewLocalRef/DeleteLocalRef.</li>
+<li>JDK1.2以上有另外的方法支持很多local reference
+<ul class="org-ul">
+<li>EnsureLocalCapacity 确保这个frame至少之后可以分配多少个local ref</li>
+<li>PushLocalFrame/PopLocalFrame 新建和释放一个local frame.这样可以开辟更多的local ref.</li>
+</ul></li>
+</ul></li>
+<li>global 对象生命周期直到程序结束
+<ul class="org-ul">
+<li>NewGlobalRef/DeleteGlobalRef</li>
+</ul></li>
+<li>weak global 和global非常类似，但是可以通过操作标记这个对象不在需要然后被GC
+<ul class="org-ul">
+<li>NewGlobalWeakRef/DeleteGlobalWeakRef</li>
+</ul></li>
+<li>IsSameObject 能够判断两个reference是否相同
+<ul class="org-ul">
+<li>如果传入NULL的话表示，对于local和lglobal表示对象是否为null，对于weak global来说的话判断这个对象是否依然指向一个lived object而没有被回收。</li>
+</ul></li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-org2cc00bc" class="outline-2">
+<h2 id="org2cc00bc"><span class="section-number-2">6</span> Exceptions</h2>
+<div class="outline-text-2" id="text-6">
+<ul class="org-ul">
+<li>Throw 抛出已有异常</li>
+<li>ThrowNew 创建异常对象抛出</li>
+<li>ExceptionOccurred 获得pending exception.</li>
+<li>ExceptionCheck 检查是否存在pending exception.</li>
+<li>ExceptionDescribe 打印pening exception描述信息</li>
+<li>ExceptionClear 清除pending exception状态</li>
+<li>FatalError 打印fatal信息</li>
+</ul>
+
+<p>
+JNI programmers may deal with an exception in two ways:
+</p>
+<ul class="org-ul">
+<li>The native method may choose to return immediately, causing the exception to be thrown in the code that initiated the native method call.</li>
+<li>The native code may clear the exception by calling ExceptionClear and then execute its own exception-handling code.</li>
+</ul>
+<p>
+It is extremely important to check, handle, and clear a pending exception before calling any subsequent JNI functions.
+</p>
+
+<p>
+native code如果不处理异常的话，可以直接返回交给caller来处理异常。如果是自己处理异常的话，获得具体异常之后最好立刻清除状态，然后做后续操作。
+</p>
+
+<p>
+Calling most JNI functions with a pending exception leads to undefined results. The following is the complete list of JNI functions that can be called safely when there is a pending exception:
+</p>
+<ul class="org-ul">
+<li>ExceptionOccurred</li>
+<li>ExceptionDescribe</li>
+<li>ExceptionClear</li>
+<li>ExceptionCheck</li>
+<li>ReleaseStringChars</li>
+<li>ReleaseStringUTFchars</li>
+<li>ReleaseStringCritical</li>
+<li>Release&lt;Type&gt;ArrayElements</li>
+<li>ReleasePrimitiveArrayCritical</li>
+<li>DeleteLocalRef</li>
+<li>DeleteGlobalRef</li>
+<li>DeleteWeakGlobalRef</li>
+<li>MonitorExit</li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-org1aabd05" class="outline-2">
+<h2 id="org1aabd05"><span class="section-number-2">7</span> The Invocation Interface</h2>
+<div class="outline-text-2" id="text-7">
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-comment-delimiter">/* </span><span class="org-comment">coding:utf-8</span>
+<span class="org-comment"> * Copyright (C) dirlt</span>
+<span class="org-comment"> */</span>
+
+<span class="org-preprocessor">#include</span> <span class="org-string">&lt;cstdio&gt;</span>
+<span class="org-preprocessor">#include</span> <span class="org-string">&lt;cstdlib&gt;</span>
+<span class="org-preprocessor">#include</span> <span class="org-string">&lt;jni.h&gt;</span>
+
+<span class="org-keyword">static</span> <span class="org-type">JNIEnv</span>* <span class="org-variable-name">env</span>;
+<span class="org-keyword">static</span> <span class="org-type">JavaVM</span>* <span class="org-variable-name">jvm</span>;
+
+<span class="org-type">void</span> <span class="org-function-name">destroy</span>() {
+  <span class="org-keyword">if</span> (env-&gt;ExceptionOccurred()) {
+    env-&gt;ExceptionDescribe();
+  }
+  jvm-&gt;DestroyJavaVM();
+}
+
+<span class="org-type">int</span> <span class="org-function-name">main</span>() {
+  <span class="org-type">JavaVMInitArgs</span> <span class="org-variable-name">vm_args</span>;
+  <span class="org-type">JavaVMOption</span> <span class="org-variable-name">options</span>[1];
+  options[0].optionString = <span class="org-string">"-Djava.class.path=."</span>;
+  vm_args.version = JNI_VERSION_1_6;
+  vm_args.options = options;
+  vm_args.nOptions = 1;
+  vm_args.ignoreUnrecognized = JNI_TRUE;
+
+  <span class="org-comment-delimiter">/* </span><span class="org-comment">Create the Java VM */</span>
+  <span class="org-type">jint</span> <span class="org-variable-name">res</span> = JNI_CreateJavaVM(&amp;jvm, (<span class="org-type">void</span>**)&amp;env, &amp;vm_args);
+
+  <span class="org-keyword">if</span> (res &lt; 0) { <span class="org-comment-delimiter">// </span><span class="org-comment">can't create jvm.</span>
+    fprintf(stderr, <span class="org-string">"Can't create Java VM\n"</span>);
+    exit(1);
+  }
+
+  <span class="org-type">jclass</span> <span class="org-variable-name">cls</span> = env-&gt;FindClass(<span class="org-string">"Hello"</span>);
+  <span class="org-keyword">if</span> (cls == <span class="org-constant">NULL</span>) { <span class="org-comment-delimiter">// </span><span class="org-comment">can't find class.</span>
+    destroy();
+  }
+
+  <span class="org-type">jmethodID</span> <span class="org-variable-name">mid</span> = env-&gt;GetStaticMethodID(cls, <span class="org-string">"main"</span>,
+                                         <span class="org-string">"([Ljava/lang/String;)V"</span>);
+  <span class="org-keyword">if</span> (mid == <span class="org-constant">NULL</span>) { <span class="org-comment-delimiter">// </span><span class="org-comment">no main method.</span>
+    destroy();
+  }
+
+  <span class="org-type">jstring</span> <span class="org-variable-name">jstr</span> = env-&gt;NewStringUTF(<span class="org-string">" from C!"</span>);
+  <span class="org-keyword">if</span> (jstr == <span class="org-constant">NULL</span>) {
+    destroy();
+  }
+  <span class="org-type">jclass</span> <span class="org-variable-name">stringClass</span> = env-&gt;FindClass(<span class="org-string">"java/lang/String"</span>);
+  <span class="org-type">jobjectArray</span> <span class="org-variable-name">args</span> = env-&gt;NewObjectArray(1, stringClass, jstr);
+  <span class="org-keyword">if</span> (args == <span class="org-constant">NULL</span>) {
+    destroy();
+  }
+  env-&gt;CallStaticVoidMethod(cls, mid, args);
+  destroy();
+}
+
+
+</pre>
+</div>
+
+<pre class="example">
+➜  ~  g++ Hello.cc -I$JAVA_HOME/include -L$JAVA_HOME/jre/lib/amd64/server -ljvm
+Hello.cc: In function ‘int main()’:
+Hello.cc:22:29: warning: deprecated conversion from string constant to ‘char*’ [-Wwrite-strings]
+➜  ~  export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$JAVA_HOME/jre/lib/amd64/server
+➜  ~  ./a.out
+Hello,World
+</pre>
+
+<p>
+可以通过创建一个JVM来将多个线程attach上去，相当于这个JVM启动的多个线程。这里的线程使用的是OS native thread实现。
+</p>
+<ul class="org-ul">
+<li>AttachCurrentThread</li>
+<li>DetachCurrentThread</li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-org9ad29e7" class="outline-2">
+<h2 id="org9ad29e7"><span class="section-number-2">8</span> Additional JNI Features</h2>
+<div class="outline-text-2" id="text-8">
+</div>
+<div id="outline-container-org0026383" class="outline-3">
+<h3 id="org0026383"><span class="section-number-3">8.1</span> JNI and Threads</h3>
+<div class="outline-text-3" id="text-8-1">
+<ul class="org-ul">
+<li>MonitorEnter/MonitorExit可以操作monitor.</li>
+<li>对应java里面的synchronized关键字区域 ???</li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-org18894dd" class="outline-3">
+<h3 id="org18894dd"><span class="section-number-3">8.2</span> Registering Native Methods</h3>
+<div class="outline-text-3" id="text-8-2">
+<p>
+允许动态注册native methods.
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgd88390e" class="outline-3">
+<h3 id="orgd88390e"><span class="section-number-3">8.3</span> Load and Unload Handlers</h3>
+<div class="outline-text-3" id="text-8-3">
+<p>
+系统加载和卸载native library回调函数：
+</p>
+<ul class="org-ul">
+<li>JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *jvm, void *reserved); // 返回JNI版本比如 JNI_VERSION_1_6</li>
+<li>JNIEXPORT void JNICALL JNI_OnUnload(JavaVM *jvm, void *reserved)</li>
+</ul>
+
+<p>
+load/unload工作流程是这样的：
+</p>
+<ul class="org-ul">
+<li>The virtual machine associates each native library with the class loader L of the class C that issues the System.loadLibrary call. // 每次加载的时候创建ClassLoader,并且记录这个ClassLoader关联了哪些对象。</li>
+<li>The virtual machine calls the JNI_OnUnload handler and unloads the native library after it determines that the class loader L is no longer a live object. Because a class loader refers to all the classes it defines, this implies that C can be unloaded as well. // 如果ClassLoader里面没有任何live object的话，那么就会被GC</li>
+<li>The JNI_OnUnload handler runs in a finalizer, and is either invoked synchro-niously by java.lang.System.runFinalization or invoked asynchro-nously by the virtual machine. // unload可能会被同步调用也可能会被异步调用。</li>
+<li>因此如果ClassLoader里面包含在global reference的话，那么这个class loader是不会被卸载的</li>
+</ul>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org1354f5d" class="outline-2">
+<h2 id="org1354f5d"><span class="section-number-2">9</span> Leveraging Existing Native Libraries</h2>
+<div class="outline-text-2" id="text-9">
+<p>
+如何使用现有的native library：
+</p>
+<ul class="org-ul">
+<li>one-to-one mapping. 针对每个函数做一个包装，外部做类型转换.</li>
+<li>shared stubs. 做一个dispatcher函数，根据所传参数包装成为合适的C++类型，然后直接传给C++函数。但是调用C++函数这个部分需要自己实现函数调用栈。</li>
+<li>个人觉得one-to-one mapping虽然实现比较麻烦，可是用起来比较简单，而shared stubs则相反。自己完全可以实现一些简单的common library来简化编写过程。</li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-org94480c1" class="outline-2">
+<h2 id="org94480c1"><span class="section-number-2">10</span> Traps and Pitfalls</h2>
+<div class="outline-text-2" id="text-10">
+<ul class="org-ul">
+<li>Error Checking</li>
+<li>Passing Invalid Arguments to JNI Functions</li>
+<li>Confusing jclass with jobject</li>
+<li>Truncating jboolean Arguments</li>
+<li>Boundaries between Java Application and Native Code</li>
+<li>Confusing IDs with References</li>
+<li>Caching Field and Method IDs</li>
+<li>Terminating Unicode Strings</li>
+<li>Violating Access Control Rules</li>
+<li>Disregarding Internationalization</li>
+<li>Retaining Virtual Machine Resources</li>
+<li>Excessive Local Reference Creation</li>
+<li>Using Invalid Local References</li>
+<li>Using the JNIEnv across Threads</li>
+<li>Mismatched Thread Models</li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-org479ace5" class="outline-2">
+<h2 id="org479ace5"><span class="section-number-2">11</span> Overview of the JNI Design</h2>
+<div class="outline-text-2" id="text-11">
+<hr />
+
+<p>
+Locating Native Libraries
+</p>
+<ul class="org-ul">
+<li>System.loadLibrary throws an UnsatisfiedLinkError if it fails to load the named native library. 如果找不到native library就会抛出UnsatisfiedLinkError异常。</li>
+<li>System.loadLibrary completes silently if an earlier call to System.loadLibrary has already loaded the same native library. 如果已经加载的话就不会重复加载。</li>
+<li>If the underly-ing operating system does not support dynamic linking, all native methods must be prelinked with the virtual machine. 如果不支持动态链接的话就只能够预先链接做静态链接。</li>
+<li>ClassLoader.findLibrary 定位library路径</li>
+</ul>
+
+<hr />
+
+<p>
+Linking Native Methods
+</p>
+<ul class="org-ul">
+<li>the native method by concatenating the following components:
+<ul class="org-ul">
+<li>the prefix “Java_”</li>
+<li>an encoded fully qualified class name</li>
+<li>an underscore (“_”) separator</li>
+<li>an encoded method name</li>
+<li>for overloaded native methods, two underscores (“__”) followed by the encoded argument descriptor</li>
+</ul></li>
+<li>If native functions matching an encoded native method name are present in multiple native libraries, the function in the native library that is loaded first is linked with the native method. 如果存在多个定义那么使用找到的第一个使用。</li>
+<li>If no function matches the native method name, an UnsatisfiedLinkError is thrown. 否则抛出异常。</li>
+</ul>
+
+<hr />
+
+<p>
+Passing Data
+</p>
+
+<p>
+使用reference的好处可以使得访问数据更加灵活。
+</p>
+
+
+<div class="figure">
+<p><img src="images/jni-passing-date-in-reference.png" alt="jni-passing-date-in-reference.png" />
+</p>
+</div>
+
+<hr />
+
+<p>
+Accessing Objects
+</p>
+<ul class="org-ul">
+<li>Accessing Primitive Arrays
+<ul class="org-ul">
+<li>One solution introduces a notion of “pinning” so that the native method can ask the virtual machine not to move the contents of an array. 对于原始类型数组访问的话可以考虑使用pinning的方式，这种方式直接返回数据内容而不需要copy</li>
+<li>The garbage collector must support pinning. In many implementations, pin-ning is undesirable because it complicates garbage collection algorithms and leads to memory fragmentation. 支持pinning首先需要GC支持，但是这样会复杂GC算法并且造成内存碎片</li>
+<li>The virtual machine must lay out primitive arrays contiguously in memory. Although this is the natural implementation for most primitive arrays, boolean arrays can be implemented as packed or unpacked. 其次需要VM内部实现的时候就是按照原始类型连续存放的</li>
+<li>GetIntArrayRegion/SetIntArrayRegion 操作的是数组的copy版本</li>
+<li>GetIntArrayElements/ReleaseIntArrayElements VM尽量返回pinning版本</li>
+<li>GetPrimitiveArrayCritical/ReleasePrimitiveArrayCritical 和上面非常类似，但是进入的是一个critical region停止GC算法，所以更有可能返回pinning版本。</li>
+</ul></li>
+<li>Fields and Methods
+<ul class="org-ul">
+<li>A field or method ID remains valid until the virtual machine unloads the class or interface that defines the corresponding field or method. After the class or inter-face is unloaded, the method or field ID becomes invalid. 在class被unload之前field/method ID都是有效的。</li>
+</ul></li>
+</ul>
+</div>
+</div>
+</div>
+</body>
+</html>

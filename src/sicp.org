@@ -1,0 +1,480 @@
+#+title: Structure and Interpretation of Computer Programs
+
+http://mitpress.mit.edu/sicp/
+
+** 序言
+你所知道的有关计算的东西，其他人也都能学到。绝不要认为似乎成功计算的钥匙就掌握在你的手里。你所掌握的，也是我认为并且希望的，也就是智慧：那种看到这一机器比你第一次站在它面前时能够做的更多的能力，这样你才能将它向前推进。
+
+一台计算机就像是把小提琴。你可以想象一个新手试了一个音符并且立刻丢弃它。后来他说，听起来真难听。我们已经从大众和我们的大部分计算机科学家那里反复听到这种说法。他们说，计算机程序对个别具体用途而言确实是好东西，但是他们太缺乏弹性了。一把小提琴或者是一台打字机也能够同样缺乏弹性，那时你学会了如何使用它们之前。
+
+#note: 这本书是我在大四的时候看的。当时只是觉得封面很有神秘感，里面的代码似乎和我以前写过的代码方式差别很大，但是没有完全看懂。直到现在能够隐约记得书里面的一些内容(揭示计算本质的eval+apply，用延迟求值来实现流）但是大部分都忘记了。当时有一点让我印象深刻，就是这么简单的语言能够组合得这么强大并且如此具有表示力。
+
+#note@2014.12.25: revisit :) 略过非确定性计算amb和逻辑程序设计
+
+v1的封面和v2的[[file:images/sicp2x.jpg][封面]]
+
+file:images/sicp.jpg file:images/sicp2.jpg
+
+** 构造抽象过程
+心智的活动除了尽力产生各种简单的认识外，主要表现在(组合，对比，抽象):
+   1. 将若干简单认识组合称为复合认识，由此产生复杂的认识。
+   2. 将两个认识放在一起对照，不管简单还是复杂，由此得到它们之间的相互关系的认识。
+   3. 将有关认识和实际中和它们所在的认识隔离开，就是抽象，所有具有普遍性的认识都是这样得到的。
+
+一个强有力的程序设计语言，不仅是一种指挥计算机执行任务的方式，它还应该成为一种框架，使我们能够在其中组织自己有关计算过程的思想。这样当我们描述一个语言时，就需要将注意力特别放在这一语言提供的，能够将简单的认识组合起来形成更复杂认识的方法方面。每一种强有力的语言为此提供了三种机制：
+   1. 基本表达式，用于表示语言所关心的最简单的个体。
+   2. 组合的方法，通过它们可以从简单的东西出发构造出复合的元素。
+   3. 抽象的方法，通过它们可以为复合对象命名，并将它们当作单元去操作。
+
+求值模型：1) 正则序(normal order)：完全展开而后归约。2) 应用序(apply order)：先求值参数而后应用，这是通常的实现方式。下面这段代码可以检测解释器使用哪种求值模型：
+#+BEGIN_SRC Scheme
+(define loop
+  (lambda () (loop)))
+(define test
+  (lambda (x y)
+    (cond ((zero? x) 0)
+          (else y))))
+(test 0 (loop))
+#+END_SRC
+其实这个例子也解释了为什么(if ...)不能够使用function而必须使用macro来实现。在惰性求值部分会重新回到这个问题上，使用惰性求值来实现正则序。
+
+一般而言，程序设计语言总会对计算元素的可能使用方式强加上某些限制。带有最少限制的元素被成为具有第一级的状态。第一级元素的某些“权利或者特权”包括：#note: aka. first-citizen.
+- 可以用变量命名
+- 可以提供给过程作为参数
+- 可以由过程作为结果返回
+- 可以包含在数据结构中
+Lisp不像其他程序设计语言，它给了过程完全的第一级状态。这就给有效实现提出了挑战，但由此所获得的描述能力却是极其惊人的。
+
+** 构造数据抽象
+现在到了数学抽象中最关键的一步:让我们忘记这些符号所表示的对象。数学家不应该在这里停步，有许多操作可以应用于这些符号，而根本不必考虑它们代表什么。
+
+car = Contents of Address part of Register. cdr = Contents of Decrement part of Register.
+
+我们也对程序设计的另一个关键概念有了一点认识，这就是分层设计的问题。这一概念说的是，一个复杂的系统应该通过一系列的层次构造出来，为了描述这些层次，需要使用一系列的语言。构造这个层次的方式，就是设法组合起作为这一层次中部件的各种基本元素，而这样构造出的部件又可以作为另一个层次里的基本元素。在分层设计中，每个层次上所用的语言都提供了一些基本元素，组合手段，还有对这该层次中的适当细节做抽象的手段。
+
+在最后一个参数之前加上.可以将剩余的参数作为列表赋给最后一个参数。类似C里面的vargs, 用来解决变长参数问题。
+#+BEGIN_SRC Scheme
+(define foo
+  (lambda (x . ls)
+    (+ x (apply max ls))))
+(display (foo 1 2 3 4)) ; 1 + (max 2 3 4) = 5
+#+END_SRC
+
+** 模块化，对象和状态
+延迟求值需要环境提供两个函数delay和force. 其中delay传入函数f返回一个延迟对象，而force作用在这个延迟对象上就可以执行f. 很明显delay需要使用宏来实现
+#+BEGIN_SRC Scheme
+(define-syntax delay
+  (syntax-rules ()
+    ((delay exp)
+      (lambda () exp))))
+(define force
+  (lambda (delayed) (delayed)))
+
+;; an example
+(define x (delay (begin
+                   (display "hello")
+                   (newline))))
+(force x)
+#+END_SRC
+
+使用延迟求值可以很容易地实现无穷流/列表。为了实现无穷流我们还需要重新定义一下列表的基本操作cons, car, cdr. 列表car是一个具体数值，cdr则是一个需要延迟计算的过程
+#+BEGIN_SRC Scheme
+(define-syntax s-cons
+  (syntax-rules ()
+    ((s-cons x y) (cons x (delay y)))))
+(define s-car
+  (lambda (s) (car s)))
+(define s-cdr
+  (lambda (s) (force (cdr s))))
+(define s-map
+  (lambda (f . ss)
+    (s-cons (apply f (map s-car ss))
+            (apply s-map (cons f (map s-cdr ss))))))
+(define s-nth
+  (lambda (n s)
+    (let recur ((n n) (s s))
+      (cond
+        ((zero? n) (s-car s))
+        (else (recur (- n 1) (s-cdr s)))))))
+#+END_SRC
+
+这里我们以fibonacci序列为例
+#+BEGIN_SRC Scheme
+(define fibs
+  (s-cons 1 (s-cons 1 (s-map + fibs (s-cdr fibs)))))
+(display (s-nth 30 fibs))
+#+END_SRC
+输出结果是1346269. 但是在我的guile上面计算非常慢花费近5s.
+
+和之前学习C语言计算fib一样，我们可以将已经计算的结果缓存起来。我们编写memorize函数并且修改delay.
+#+BEGIN_SRC Scheme
+(define memorize
+  (lambda (f)
+    (let ((already? #f) (cache #f))
+      (lambda ()
+        (cond
+         (already? cache)
+         (else (begin
+                 (set! already? #t)
+                 (set! cache (f))
+                 cache)))))))
+(define-syntax delay
+  (syntax-rules ()
+    ((delay exp)
+     (memorize
+      (lambda () exp)))))
+#+END_SRC
+然后我们继续取(s-nth 30 fibs). 计算就非常快速大约0.07s.
+
+在后面一章尝试在求值器里面实现延迟求值，这样我们就不用显示调用delay。可是不幸的是，把延迟求值包含到过程调用中的，将会对我们设计依赖于事件顺序的程序的能力造成极大的伤害，例如使用赋值、变动数据、执行输入输出的程序等。目前所有的人都知道，变动性和延迟求值在程序设计语言里结合得非常不好。这点我们可以看看Haskell：延迟求值，纯函数式。
+
+** 元语言抽象
+真正的魔力在于知道哪个咒语有用，在什么时候，用于做什么，其诀窍就在于学会有关的诀窍。而这些咒语也使用我们的字母表里面的字母拼出来的，这些字母表中不过是几十个可以用笔画话出来的弯弯曲线。这就是最关键的！而这些珍宝也是如此，如果我们能将它们拿到手的话。这就像是说，就像通向珍宝的钥匙是珍宝。
+
+建立新语言是在工程设计中控制复杂性的一种威力强大的工作策略，通常能够采用一种新语言提升处理复杂问题的能力，因为新语言能够使我们以一种完全不同的方式，利用不同原语组合方式和抽象方式去描述(思考)所面临的问题，而这些都可以是为了手头需要处理的问题专门打造的。元语言抽象就是建立新的语言。
+
+-----
+元循环求值器
+
+file:images/sicp-eval-apply.png
+
+语法分析与执行分离的这个改进就好比是，原来我们每次执行函数都要进行语法分析然后执行，分离之后我们可以仅仅做一次语法执行生成AST然后来解释AST。带来的好处就是我们只需要做一遍parse即可。在执行AST的时候我们还需要另外一个参数就是"上下文"(context)或者是"环境"(env). 所以语法分析生成的都是(lambda (env) ...).
+
+但是这个模型还是无法阐释清楚Lisp系统里的控制机制，比如值是如何返回的以及函数是如何调用的。这些细节和具体机器模型相关，所以才引入了后面一章“寄存器机器里的计算：显式控制的求值器”。
+
+-----
+Scheme的变形：惰性求值
+
+实现机制和上一章delay/force类似：在apply处理arguments的时候我们调用delay来延迟处理这些参数，直到必须求解这个值的时候再调用force来实际计算。只不过惰性求值已经进入语言本身，所以delay可以以function而不用macro来实现。一旦惰性求值加入到语言内部之后，那么类似无穷流问题就可以用语言本身来解决了。但是就像上一章说的，惰性求值和变动性数据结合不是特别好，所以将惰性求值引入语言的时候必须考虑变动性的影响，比如像实现惰性求值的Haskell是pure-functional的。
+
+-----
+Scheme的变形：非确定性计算
+
+有一件很有教益的事情，那就是将非确定性求值和流处理中引起的不同时间图景做一个比较。流处理中利用惰性求值，设法去松弛装配出可能回答的流的时间与时间的流元素产生出来的时间的关系。这种求值器支持这样一种错觉，好像所有可能的结果都是以一种无时间顺序的的方式摆在我们面前。对于非确定性的求值，一个表达式表示的是对于一集可能世界的探索，其中每一个都由一集选择所确定。某些可能世界将走入死胡同，而另外一些则保存着有用的值。非确定性程序求值器支持另外一种假象：时间是有分支的，而我们的程序里保存这所有可能的不同执行历史。在遇到一个死胡同时，我们总可以回到以前的某个选择点，并沿着另一个分支继续下去。
+
+自动魔法般地：“自动地，但是以一种由于某些原因（典型的情况是它太复杂，或者太丑陋，或者甚至太简单），而使说话者并不喜欢去解释的方式。”
+
+-----
+逻辑程序设计
+
+** 寄存器机器里的计算
+我的目的是想说明，这一天空机器并不是一种天赐造物或者生命体，它只不过是钟表一类的机械装置（而那些相信中标有灵魂的人却将这一工作说成是其创造者的荣耀），在很大程度上，这里多种多样的运动都是由最简单的物质力量产生的，就像钟表里所有的活动都是由一个发条产生的一样。
+
+-----
+寄存器机器模拟器
+
+我们为这个机器编写模拟器以及汇编程序。这里汇编程序将机器指令转换成为可执行的函数，然后模拟器为这些函数提供环境并且执行它。模拟器非常简单，只有两个基本寄存器(pc, flag)以及无限大小堆栈，但是却异常灵活允许自己设置外部函数和可用寄存器集合。
+
+*模拟器* #note: object在fp里面常见的实现方式就是dispatch函数。
+
+#+BEGIN_SRC Scheme
+;; ----- registers -----
+(define (make-register name)
+  (let ((content 'nil))
+    (define (dispatch message)
+      (cond
+       ((eq? message 'get) content)
+       ((eq? message 'set) (lambda (value) (set! content value)))
+       (else (error "unknown request on register:" message))))
+    dispatch))
+(define (get-contents register) (register 'get))
+(define (set-contents! register value) ((register 'set) value) 'done)
+
+;; ----- stack -----
+(define (make-stack)
+  (let ((s '()))
+    (define (push x) (set! s (cons x s)) 'done)
+    (define (pop) (if (null? s)
+                      (error "pop stack: empty!")
+                      (let ((top (car s)))
+                        (set! s (cdr s))
+                        top)))
+    (define (init) (set! s '()) 'done)
+    (define (dispatch message)
+      (cond
+       ((eq? message 'push) push)
+       ((eq? message 'pop) pop)
+       ((eq? message 'init) init)
+       (else (error "unknonw request on stack:" message))))
+    dispatch))
+(define (pop stack) (stack 'pop))
+(define (push stack value) ((stack 'push) value))
+
+;;; ----- machine -----
+(define (make-machine)
+  (let ((pc (make-register 'pc))
+        (flag (make-register 'flag))
+        (stack (make-stack))
+        (inst-sequences '()))
+    (let ((ops `((init-stack ,(lambda () (stack 'init)))))
+          (register-table `((pc ,pc) (flag ,flag))))
+      (define (allocate-register name)
+        (if (assoc name register-table)
+            (error "multiple defined register:" name)
+            (set! register-table
+                  (cons (list name (make-register name)) register-table)))
+        'register-allocated)
+      (define (lookup-register name)
+        (let ((val (assoc name register-table)))
+          (if val
+              (cadr val)
+              (error "unknown register:" name))))
+      (define (execute) ;; 开始运行
+        (let ((insts (get-contents pc)))
+          (if (null? insts) 'done
+              (begin
+                ((inst-execute-proc (car insts))) ; update pc internally
+                (execute)))))
+      (define (dispatch message)
+        (cond ((eq? message 'start)
+               (set-contents! pc inst-sequences)
+               (execute))
+              ((eq? message 'install-inst-sequences)
+               (lambda (aseqs) (set! inst-sequences aseqs)))
+              ((eq? message 'install-operations)
+               (lambda (aops) (set! ops (append aops ops))))
+              ((eq? message 'allocate-register) allocate-register)
+              ((eq? message 'get-register) lookup-register)
+              ((eq? message 'stack) stack)
+              ((eq? message 'operations) ops)
+              (else (error "unknown request on machine:" message))))
+      dispatch)))
+
+(define (start machine) (machine 'start))
+(define (get-register machine reg-name) ((machine 'get-register) reg-name))
+(define (get-register-contents machine reg-name) (get-contents (get-register machine reg-name)))
+(define (set-register-contents! machine reg-name value) (set-contents! (get-register machine reg-name) value))
+
+(define (new-machine register-names ops controller-text)
+  (let ((machine (make-machine)))
+    (for-each (lambda (register-name)
+                ((machine 'allocate-register) register-name))
+              register-names)
+    ((machine 'install-operations) ops)
+    ((machine 'install-inst-sequences)
+     ;; 安装汇编程序处理之后的指令
+     (assemble controller-text machine))
+    machine))
+#+END_SRC
+
+*汇编程序* #note: make-inst-execute-proc代码比较直接所以没有给出。这个过程也是将语法分析和过程执行分离。
+
+#+BEGIN_SRC Scheme
+(define (assemble controller-text machine)
+  (extract-labels controller-text
+                  ;; 这里用到了continuation.
+                  ;; 抽取指令和标签
+                  (lambda (insts labels)
+                    (update-insts! insts labels machine)
+                    insts)))
+
+;; 指令格式(text, proc).
+(define (update-insts! insts labels machine)
+  (let ((pc (get-register machine 'pc))
+        (flag (get-register machine 'flag))
+        (stack (machine 'stack))
+        (ops (machine 'operations)))
+    (for-each (lambda (inst)
+                (set-inst-execute-proc!
+                 inst
+                 ;; inst->proc
+                 (make-inst-execute-proc
+                  (inst-text inst) labels machine
+                  pc flag stack ops)))
+              insts)
+    'done))
+(define (make-inst text) (cons text '()))
+(define (inst-text inst) (car inst))
+(define (inst-execute-proc inst) (cdr inst))
+(define (set-inst-execute-proc! inst proc) (set-cdr! inst proc) 'done)
+(define (advance-pc pc)
+  ;; 这里(get-contents pc) = inst-sequences.
+  (set-contents! pc (cdr (get-contents pc))))
+
+;; 标签和指令对应关系
+(define (make-label-entry label-name insts) (cons label-name insts))
+(define (lookup-label labels label-name)
+  (let ((val (assoc label-name labels)))
+    (if val (cdr val) (error "undefined label:" label-name))))
+
+(define (extract-labels text cont)
+  (if ((null? text) (cont '() '()))
+      (extract-labels
+       (cdr text)
+       (lambda (insts labels)
+         (let ((next-inst (car text)))
+           (if (symbol? next-inst)
+               ;; 如果是branch的话，那么将branch和下面一条指令关联起来
+               (cont insts (cons (make-label-entry next-inst insts) labels))
+               (cont (cons (make-inst next-inst) insts) labels)))))))
+#+END_SRC
+
+
+-----
+存储分配和废料收集
+
+使用机器指令给出了一个停止-复制GC实现。感觉使用机器指令来描述这个过程就有点琐碎了，所以在这里就用C语言来描述一下。我们假设在老内存区域使用的内存都可以使用root追踪到。
+#+BEGIN_SRC C++
+typedef struct memory_cell {
+    char mark; // if it's already moved.
+    struct memory_cell* back; // if moved, what's the new cell.
+    T value;
+    struct memory_cell* refs[10]; // references.
+} memory_cell_t;
+
+typedef struct memory {
+    int free;
+    int scan;
+    memory_cell_t array[10000];
+} memory_t;
+
+memory_cell_t* do_copy(memory_t* mem, memory_cell_t* mc) {
+    memory_cell_t* av = mem->array + mem->free;
+    mempcy(av, mc, sizeof(*mc));
+    mc->mark = 1; // mark moved already.
+    mc->back = av; // store new memory cell.
+    mem->free += 1; // increase free pointer.
+    return av;
+}
+
+void stop_and_copy(memory_t* new_mem, memory_cell_t* root) {
+    new_mem->free = new_mem->scan = 0;
+    do_copy(new_mem, root);
+
+    while (new_mem->scan < new_mem->free) {
+        memory_cell_t* mc = new_mem->array + mew_mem->scan;
+        // mc is in new arena, but we are not sure if its references are.
+        for(int i = 0; i < 10; i++) {
+            memory_cell_t* ref = mc->refs[i];
+            if (!ref) break;
+            memory_cell_t* nref = 0;
+            if (ref->mark == 1) { // already copied.
+                nref = ref->back;
+            } else {
+                nref = do_copy(new_mem, ref);
+            }
+            mc->refs[i] = nref;
+        }
+        scan += 1;
+    }
+}
+#+END_SRC
+
+-----
+显式控制的求值器
+
+尝试将第三章eval+apply的求值器实现映射到寄存器机器上，用以说明求值过程中所用的过程调用的参数传递的基础机制，说明如何基于寄存器和堆栈操作描述这种机制。这个求值器可以在寄存器机器模拟器上运行，换一个看法，它也可以用作构造一个机器语言的Scheme求值器实现的出发点，或者甚至作为一个求值Scheme表达式的特殊机器的出发点。下图就是这样一个硬件实现：一片作为Scheme求值器的硅芯片。
+
+file:images/sicp-scheme-chip.png
+
+-----
+编译
+
+这节内容比较多也比较有意思。这里我只记录两个对编译器编写比较有启发意义的点：一个是指令序列的组合，一个则是如何使用target和linkage. 指令序列带上可能使用的寄存器集合和可能修改的寄存器集合，这样在连接过个指令序列的时候可以有效地保存寄存器。编译过程框架是这样的(compile-??? exp target linkage). 每个表达式被编译称为一个指令序列。表达式计算结果和之后跳转都由外部过程来决定，这样可以容易生成更加紧凑的代码。比如我们不提供target信息的话，那么指令序列可能是将exp结果存储在(reg val)，之后在外部函数(assign (reg target) (reg val))，这样浪费了一条指令。或者如果我们不提供linkage信息的话，对于exp是(if pred c-clause a-clause)的话，c-clause最后会跳转到类似end-if这样的标签，而如果我们提供linkage信息的话那么c-clause可以直接跳到我们指定的linkage.
+
+与解释方式相比，采用编译方式可以大大提高程序执行的效率。在另外一方面，解释器则为程序开发和排除错误提供了一个更强大的环境，因为被执行的源代码在运行期间都是可用的，可用去检查和修改。此外，由于整个基本操作的库都在哪里，我们可以在排除错误的过程中构造新程序，随时把它们加入系统。由于看到了编译和解释的互补优势，现代程序开发环境很推崇一种混合策略：解释性程序和编译性程序相互调用。程序员可以编译那些自己认为已经排除了错误的程序部分，从而取得编译方式的效率优势。而让那些和正在进行交互式开发和排错的，还在不断变化的程序部分的执行仍然维持在解释模式中。
+
+Scheme允许在构造列表的时候使用非常简单的方法对元素求值，形式大致是`(a b ,c d). 这样c表达式就会进行求值，而其他几个都是symbol.
+#+BEGIN_SRC Scheme
+scheme@(guile-user)> `(a b ,(+ 1 2) d)
+$1 = (a b 3 d)
+scheme@(guile-user)> `(a b (+ 1 2) d)
+$2 = (a b (+ 1 2) d)
+#+END_SRC
+
+我们假设机器存在这些寄存器：（也是我们要使用到的寄存器）
+- env # 执行环境
+- argl # 实际参数表
+- proc # 被应用的过程
+- val # 过程返回值
+- continue # 过程返回地址
+
+编译过程有三个参数exp, target, linkage
+- exp # 被编译表达式
+- target # 表达式结果存放位置
+- linkage # 表达式之后应该如何继续.
+
+*指令序列的组合* 因为我们需要生成的是一个指令序列，但是在指令序列之间我们可能需要保存寄存器来确保结果正确。所以我们可以引入一个preserving操作(lambda (list-preserved-regs seq1 seq2) ...). 其中list-preserved-regs表示寄存器集合，而seq1,seq2则表示指令序列。preserving操作是生成save/restore指令来保存寄存器reg, 这些寄存器 1) 出现在list-preserved-regs 2) 被seq1修改 3) 被seq2需要。其中list-preserved-regs就是这些寄存器：希望这些寄存器内容被seq1和seq2看到是相同的。
+
+OK. 很明显我们现在还需要拓展一下指令的表示：我们需要在指令上带上标记，哪些寄存器是我们需要的，以及我们会修改哪些寄存器。
+#+BEGIN_SRC Scheme
+(define make-inst-sequence
+  (lambda (needs modifies statements)
+    (list needs modifies statements)))
+(define (empty-inst-sequence)
+  (make-inst-sequence '() '() '()))
+;; symbol? 来处理<branch>这样的指令序列
+(define (registers-needed s) (if (symbol? s) '() (car s)))
+(define (registers-modified s) (if (symbol? s) '() (cadr s)))
+(define (statements s) (if (symbol? s) (list s) (caddr s)))
+(define (needs-register? s reg) (memq reg (registers-needed s)))
+(define (modifies-register? s reg) (memq reg (registers-modified s)))
+#+END_SRC
+
+然后是preserving的实现以及如何将指令序列组合起来
+#+BEGIN_SRC Scheme
+(define (list-union s1 s2)
+  (cond
+   ((null? s1) s2)
+   ((memq (car s1) s2) (list-union (cdr s1) s2))
+   (else (cons (car s1) (list-union (cdr s1) s2)))))
+(define (list-diff s1 s2)
+  (cond
+   ((null? s1) '())
+   ((memq (car s1) s2) (list-diff (cdr s1) s2))
+   (else (cons (car s1) (list-diff (cdr s1) s2)))))
+
+(define (append-inst-sequences . seqs)
+  (define (append-2-sequences seq1 seq2)
+    (make-inst-sequence
+     ;; seq1 needed + (seq2 needed - seq1 modified)
+     (list-union (registers-needed seq1)
+                 (list-diff (registers-needed seq2)
+                            (registers-modified seq1)))
+     ;; seq1 modified + seq2 modified
+     (list-union (registers-modified seq1)
+                 (registers-modified seq2))
+     (append (statements seq1) (statements seq2))))
+  (define (append-seq-list seqs)
+    (if (null? seqs) (empty-inst-sequence)
+        (append-2-sequences (car seqs) (append-seq-list (cdr seqs)))))
+  (append-seq-list seqs))
+
+(define (preserving regs seq1 seq2)
+  (if (null? regs)
+      (append-inst-sequences seq1 seq2)
+      (let ((first-reg (car regs)))
+        (if (and (needs-register? seq2 first-reg)
+                 (modifies-register? seq1 first-reg))
+            (preserving
+             (cdr regs)
+             (make-inst-sequence
+              ;; 为什么生成这个指令序列？可以看看这个指令序列的statements部分
+              (list-union (list first-reg)
+                          (registers-needed seq1))
+              (list-diff (registers-modified seq1)
+                         (list first-reg))
+              (append `((save ,first-reg))
+                      (statements seq1)
+                      `((restore ,first-reg))))
+             seq2)
+            (preserving (cdr regs) seq1 seq2)))))
+#+END_SRC
+
+*连接代码的编译* linkage称为链接描述符，可以有这三种选项
+- next # 表示下面还有指令
+- return # 过程返回
+- <branch> # 跳转到某个<branch>
+
+#+BEGIN_SRC Scheme
+(define (compile-linkage linkage)
+  (cond ((eq? linkage 'return)
+         (make-inst-sequence
+          '(continue) '() '((goto (reg continue)))))
+        ((eq? linkage 'next) (empty-inst-sequence))
+        (else (make-inst-sequence '() '() `((goto (label ,linkage)))))))
+(define (end-with-linkage linkage inst-sequences)
+  (preserving '(continue)
+              inst-sequences
+              (compile-linkage linkage)))
+#+END_SRC

@@ -1,0 +1,154 @@
+#+title: Erlang程序设计
+
+** 如何启动
+通常erlang源代码会保存为.erl文件，但是也有.hrl文件（和C的header文件类似），erlang编译器也使用了宏和预处理机制来处理代码。
+
+编译器 =erlc= 将.erl文件编译成为.beam文件，然后由运行器 =erl= 来执行。如果我们有一个hello.erl, 我们想执行里面start函数的话，可以运行 =erl -noshell -s hello start -s init stop=
+
+除了编译/运行方式外，还可以以script方式执行，比如下面
+#+BEGIN_EXAMPLE
+#!/usr/bin/env escript
+
+main(Args) ->
+    io:format("Hello world~n")
+#+END_EXAMPLE
+
+此外我们还可以在erl里面执行某个模块的函数. c(test).用来编译这个模块，test:my_func().来运行这个函数。erlang里面使用.表示结束。
+#+BEGIN_EXAMPLE
+3> c(test).
+{ok,test}
+4> test:my_func().
+P = 1, Q = 2ok
+6> halt().
+#+END_EXAMPLE
+
+** 数据类型
+首先erlang里面需要恰当使用逗号(,), 分号(;) 和句号(;). 大致逻辑是这样的
+- 逗号(,)用于分隔多个表达式的顺序执行。
+- 分号(;)用于分隔多种cases, 比如一个函数的多个匹配模式等。
+- 句号(.)用来表示整个结构结束。
+如果使用英语类比的话，逗号(,)是分隔一个句子里面的多个短句, 分号(;)则用来分隔一个段落里面的多条句子, 句号(.)则表示整个段落的结束。
+
+注释(comment). % 开头一行都是注释，不过在emacs下面 %% 注释会高亮。
+
+符号(symbol). 和许多函数式编程语言一样，erlang里面也有符号，在这里叫做原子。符号必须小写开头，如果有空格的话可以使用''包括进来。如果想动态创建符号的话可以用 =erlang:make_ref=
+
+变量(variable). 变量必须大写开头，并且所有变量都是Immutable的。赋值本质上可以认为是模式匹配 =X=1.= . 如果某个变量可能不使用的话（比如包含在一个debug分支中），那么可以使用_开头，这个和python的匿名变量类似，但是不同的是你依然可以使用这个变量 =(P, _Q) = (1, 2).=
+
+字符串(string). 字符串本质上可以认为是数组，如果将字符串放在模式匹配中可以匹配到数组上面，比如 =[H|T] = "hello".=, 那么H="h", T则是"ello". 反过来你也可以 =io:format("print string ~s~n", [[104, 101, 108, 108, 111]]).= ，又或者是 "X = [104, 101, 108, 108, 111]" 都是可以的。另外也允许使用 "X = [$h, $e]" 来赋值。其中 $h = 104, 这个是数字的另外一种表示方式
+
+数字(number). 除了常规的数字表示方法外，还有\x{cdef}主要用于表示unicode字符， $a则表示'a'对应的数值，而2#1111开头的2表示二进制后面则是数值内容。
+
+元组(tuple). {hello, world, 123, "aaa"}, 和其他编程语言比如python里面的元组差不多。元组没有办法灵活匹配，而列表则很容易。
+
+列表(list). [hello, world, 123, "aaa"]. 匹配起来非常简单，比如[A, B | T] = [1,2,3,4]. 的话，那么A = 1, B = 2, T = [3,4]. 和模式匹配相对应的是，可以使用相同的办法来组合列表。列表也支持列表解析(list compreshension). 这个会在后面提到。
+
+记录(record). 记录和元组非常类似，但是好处是可以部分匹配。定义方式是 =-record(person, {name, age, k3})= , 之后可以使用 X=#person{name = "yan"} 来创建，修改的话可以使用 X#person{name = "zhang"}. 匹配的话可以用 #person{name = Name, age = Age} = Z. 当然也能用Z#person.name来提取字段。记录(record)的定义不能在erl里面完成，需要定义.hrl, 然后使用 rr("test.hrl"). 读进来。
+
+映射(map). 映射和匿名记录有点像，#{ a => 1, b => 2} 来构造. 修改用 X#{a => 2} 或者是 X#{b : =  3}. 有些差别是 => 是如果原来没有key的话会添加，否则就更新。但是 : = 是如果没有key的话就直接报错。
+
+二进制(binary). 和C的struct有点类似，<<a, b, c>>表示有三个字段顺序排列，当然也可以为里面每个字段设置bit size, 以及type还有endian等。erlang的二进制比较强大的地方是，可以很容易地充分利用模式匹配这个功能。
+
+** 控制结构
+函数定义. 可以看到函数定义也有点类似模式匹配，可以列举各种模式来决定执行行为
+#+BEGIN_EXAMPLE
+myfunc(Pattern1) -> Expression1;
+myfunc(Pattern3) when Predicate1 -> Expression3;
+myfunc(Pattern2) -> Expression2.
+#+END_EXAMPLE
+其中when是一个关卡(guard). 关卡可以同样使用在其他匹配结构中，比如 =case=, =if= 等
+
+匿名函数结构是 =fun (Pattern) -> Expression end= , 注意匿名函数只是一个表达式所以没有句号(.)结尾。看上去匿名函数模式匹配是有限的。fun 这个关键字还有一个使用地方，就是引用外部函数 =TimeFunc = fun erlang:time/0.= 可以得到函数对象。
+
+块表达式 begin exp1, exp2, ... end. 整个结构返回最后一个表达式值。
+
+case和if表达式的结构如下，两者其实挺像的
+#+BEGIN_EXAMPLE
+case Expression of
+  Pattern1 [when Guard1] -> Expression1;
+  Pattern2 [when Guard2] -> Expression2;
+ ...
+end
+
+if
+   Guard1 -> Expression1;
+   Guard2 -> Expression2;
+   ...
+end
+#+END_EXAMPLE
+
+通过try/catch表达式可以用来捕获异常，但是注意它仍然是一个表达式。可以使用如下三种方式抛出异常，以及对应接住异常方式
+- exit(Why). 匹配方式 exit:X -> Expression. 通过信号（类似消息的方式）来广播，消息是{'EXIT', Pid, Why}
+- throw(Why). 匹配方式 throw:X -> Expression. 这个是调用者能够遇见到的异常。
+- error(Why). 匹配方式 error:X -> Expression. 这个是调用者不能够预期到的错误（“崩溃性错误”）
+try/catch的结构如下
+#+BEGIN_EXAMPLE
+try Expression of
+  Pattern1 [when Guard1] -> Expression1;
+  ...
+catch
+  ExceptionType1: Exception1 [ when ExGuard1 ] -> ExExpression1;
+  ...
+after
+  AfterExpression
+end
+#+END_EXAMPLE
+注意这个AfterExpression最后面无论如何都会执行，但是却不会作为表达式结果。
+
+模式匹配里面有一个实用的小trick, 就是可以多次匹配。书中的例子是
+#+BEGIN_EXAMPLE
+func1([{tag, {one, A}, B} | T]) ->
+    ...
+    func2(... {tag, {one, A}, B} ...)
+#+END_EXAMPLE
+就是其实{tag... B}这个里面匹配了一次，但是在func2的时候又要重新构造一次元组。如果使用多次匹配的话，就可以避免这个问题
+#+BEGIN_EXAMPLE
+func1([{tag, {one, A} = Z1, B} = Z2 | T]) ->
+    ...
+    func2(... Z2 ...)
+#+END_EXAMPLE
+
+** 文件属性
+属性语法类似于 -SomeTag(...) , 分为预定义属性和自定义属性。预定义的属性有
+- module(unity) 那么这个文件必须存为unity.erl. 这样代码加载才能找到
+- import/export([funcA/0, funcB/2])
+- compile(Options):   =- compile(export_all)= 可以导出所有函数方便测试.
+- vsn(Version) 模块版本号
+- define(Func(Var1, Var2), ...) 宏，这个和C的宏很像，不过引用的时候需要带上?Func
+- include/include_lib. 两个差别是用来区分库和自定义的头文件(.hrl文件)
+每个模块编译之后，都会带上module_info/0和module_info/1两个函数，可以获取这些属性信息。
+
+** 并发编程
+通过spawn函数来创建线程，返回一个线程句柄（通常命名为Pid），之后可以往这个线程投递消息，比如 =Pid ! hello= 。这个线程句柄的传递有两种方式：
+- 如果在一个erlang进程里面传递，可以直接放在消息里面；
+- 如果需要在不同进程/机器之间传递的话，可以将这个句柄和一个atom/name绑定起来 =register(serviceA, Pid)=, 然后在另外进程里面调用 =rpc:call(host, serviceA, params)=
+
+erlang自己提供了消息/Term的序列化和反序列化实现。
+
+容错方面的话，可以将多个线程之间关联起来，支持单向和双向两种。一旦某个线程退出的，所有与之关联的线程都会收到通知。收到通知的格式是元组 ={'EXIT', From, Reason}=.
+
+** 其他特性
+- 类型推断和类型检查。用户可以提供spec来帮助erlang来检查类型错误，两个程序分别是dialyzer和typer.
+- ETS/DETS/Mnesia. ETS全称是Erlang Term Storage, DETS则是Disk ETS. Mnesia是内置的数据库(DBMS)
+- 性能分析，调试和跟踪工具。
+- 动态代码载入。在任一时刻，Erlang允许一个模块的两个版本同时运行，重新编译某个模块代码，当前版成为旧版本。两个版本的代码可以同时运行。
+
+** 错误处理哲学
+
+如果你来自c这样的语言，这听起来会非常奇怪。在c里我们被教导要编写预防性代码，程序应当检查它们的参数以避免崩溃。在c里这么做很有必要：编写多进程代码极其困难，而且绝大多数应用程序只有一个进程，所以如果这个进程让整个应用程序崩溃，麻烦可就大了。这意味着需要大量的错误检查代码，他们会和非错误检查代码交织在一起。
+
+在erlang，我们所做的恰恰相反。我们会把应用程序构建成两个部分：一部分负责解决问题，另外一部分负责在错误时纠正他们。负责解决问题的部分会尽可能的少用防御性代码，并假设函数的所有参数都是正确的，程序也会正常运行。纠正错误的部分往往是通用的，因此同一段错误纠正代码可以用在许多不同的应用程序里。举一个例子，如果数据库的某个事物出了错，就应当简单地中止该事务，让系统把数据库恢复到出错之前的状态。如果操作系统里某个进程崩溃了，就让操作系统关闭所有打开的文件或套接字，然后让系统恢复到某个稳定状态。
+
+这么做让任务有了清楚的区分，编写解决问题的代码和错误修复的代码，让两者不会交织在一起，代码的体积可能会因此显著变小。
+
+让程序在出错时立即崩溃，通常是一个很好的主意，事实上他有不少优点：
+1. 不必编写防御性代码来防止错误，直接崩溃就好。
+2. 不必思考应对措施，而是选择直接崩溃，别人会来修复这个错误。
+3. 不会使错误恶化，因为无需在知道出错后进行额外的计算。
+4. 如果在错误发生后，第一时间举旗示意，就能得到非常好的错误诊断，在错误发生后继续运行，经常会导致更多错误发生，让调试变得更加困难。
+5. 并且错误恢复代码时，不用担心崩溃的原因，只需要把注意力放在事后清理上。
+6. 它简化了系统架构，这样我们就能把应用程序和错误恢复当成两个独立的问题来思考，而不是一个交叉的问题。
+
+*找其他人修复：*
+
+别人来修复某个错误，而不是自己动手，是个不错的主意，它能够促进专业化。如果我需要做手术，就会去找大夫，而不是尝试自己操作。如果我的汽车出了点小问题，车上的控制电脑会尝试修复它，如果修复失败，问题会变得更加棘手，就必须把车拉到修理厂，让其他的人来修理。如果erlang进程出了点小问题，可以尝试用try/catch来修复它，但如果修复失败，就应该直接崩溃，让其他进程来修复这个错误。

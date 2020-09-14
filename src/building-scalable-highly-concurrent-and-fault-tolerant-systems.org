@@ -1,0 +1,107 @@
+#+title: Building Scalable, Highly Concurrent & Fault-Tolerant Systems: Lessons Learned
+
+** It's All Trade-offs
+- How do I know if I have a performance problem? *If your system is slow for a single user*
+- How do I know if I have a scalability problem? *If your system is fast for a single user but slow under heavy load*
+- Latency vs Throughput *You should strive for maximal throughput with acceptable latency*
+- Availability vs Consistency
+
+** Go Concurrent
+ - Shared mutable state Together with threads 线程使用共享可修改状态使得代码不稳定
+   - code that is totally INDETERMINISTIC
+   - and the root of all EVIL
+ - The problem with locks 锁带来的问题
+   - Locks do not compose 锁不能够进行组合
+   - Locks breaks encapsulation 破坏封装
+   - Taking too few locks
+   - Taking too many locks
+   - Taking the wrong locks
+   - Taking locks in the wrong order 错误顺序 
+   - Error recovery is hard 错误恢复处理
+ - You deserve better tools *高并发更好的工具和做法*
+   - Dataflow Concurrency *基于数据流的并发*
+     - Deterministic
+     - Declarative
+     - Data-driven
+- Threads are suspended until data is available 
+- Lazy & On-demand
+    - No difference between 
+      - Concurrent &
+      - Sequential code
+   - Actors *轻量线程模式，传递消息方式进行通信*
+     - Share NOTHING
+     - Isolated lightweight event-based processes
+     - Each actor has a mailbox (message queue)
+     - Communicates through asynchronous and non-blocking message passing
+     - Examples: Akka, Erlang
+   - Software Transactional Memory (STM) *软件事务内存，更新内存是原子操作，类似DB的transaction实现*
+     - See the memory as a transactional dataset
+     - Similar to a database
+     - Transactions are retried automatically upon collision
+     - Rolls back the memory on abort
+   - Agents *相当于worker角色，做一些异步操作的工作* 
+
+** Go Fault-Tolerant
+- Failure management in Java/C/C# etc *在独立的线程里面必须进行错误处理，否则外部没有办法发现错误。这样在线程里面整个错误处理贯穿于逻辑本身* 
+  - You are given a SINGLE thread of control
+  - If this thread blows up you are screwed
+  - So you need to do all explicit error handling WITHIN this single thread
+  - To make things worse - errors do not propagate between threads so there is NO WAY OF EVEN FINDING OUT that something have failed
+  - This leads to DEFENSIVE programming with:
+    - Error handling TANGLED with business logic
+    - SCATTERED all over the code base
+- The right way *正确的方式是每个线程都有独立的监控线程，所有的错误都会发送到这个监控线程，然后由这个监控线程进行处理。在语义上来说remote和local是一样的，这点可能更容易做错误控制*
+  - Isolated Processes (Units of Computation)
+  - Process Supervision
+    - Each running process has a supervising process 
+    - Errors are sent to the supervisor
+    - Supervisor manages the failure
+  - Same semantics local as remote
+  - For example the Actor Model solves it nicely 
+
+** Go Faster & Go More
+- Never block
+  - ...unless you really have to
+  - Blocking kills scalability (and performance) 
+  - Never sit on resources you don’t use
+  - Use non-blocking IO
+- Go Async
+  - Use asynchronous message passing
+  - Design reactive event-driven systems
+  - Use push not pull or poll  #note: 可靠性是个问题
+  - Don’t use explicit thread management
+- How fast is fast enough?
+  - Measure, measure and measure 
+  - Start with a baseline
+  - Define “good enough” 
+  - Beware of micro-benchmarks
+
+** Go Distributed
+Werner Vogels’ Misconceptions about Reliable Distributed Computing
+   1. Transparency is the ultimate goal
+   2. Automatic object replication is desirable 
+   3. All replicas are equal and deterministic
+
+*Worth keeping an eye on*
+- The CALM Conjecture
+- Could be the future of Distributed Computing 
+- Declarative
+- Deterministic
+- Removes TIME, i.e. the need for ordering
+- Check out the *BLOOM* language
+
+** Go Big
+*** Data
+- Imperative OO programming (a la Hadoop) doesn't cut it
+  - Object-Mathematics Impedance Mismatch
+  - We need functional processing, transformations etc.
+  - Examples:Crunch/Scrunch,Cascading,Cascalog, Scalding, Scala Parallel Collections
+  - Is the assembly language of MapReduce programming
+  - Watch “Why Big Data Needs To Be Functional” by Dean Wampler
+- Batch processing (a la Hadoop) doesn't cut it
+  - We need real-time data processing
+  - Examples:Spark,Storm,GridGain,Akkaetc.
+*** DB
+- Scaling reads to a RDBMS is hard
+- Scaling writes to a RDBMS is impossible
+

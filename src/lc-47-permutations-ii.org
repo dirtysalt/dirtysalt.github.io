@@ -1,0 +1,144 @@
+#+title: 47. Permutations II
+
+https://leetcode.com/problems/permutations-ii/
+
+我过去写全排列使用的是递归算法，但是这种算法似乎不太能够很好地用于去重。
+另外一个全排列算法其实是DFS算法，每次从剩余的数字集合里面选出一个，直到全部选完。
+这种算法比较适合这题。
+
+这里我先贴一下两种全排列的算法。dfs版本的好处在于，每次可以根据之前的状态进行数字挑选，但是不如递归版本那么紧凑和高效。
+
+#+BEGIN_SRC python
+# 递归版本
+    def permute(self, nums):
+        """
+        :type nums: List[int]
+        :rtype: List[List[int]]
+        """
+
+        nums.sort()
+        res = []
+
+        def f(nums, idx):
+            if idx == len(nums):
+                res.append(list(nums))
+                return
+            for i in range(idx, len(nums)):
+                nums[idx], nums[i] = nums[i], nums[idx]
+                f(nums, idx + 1)
+                nums[idx], nums[i] = nums[i], nums[idx]
+
+        f(nums, 0)
+        return res
+
+# DFS版本
+    def permute(self, nums: List[int]) -> List[List[int]]:
+        ans = []
+        nums.sort()
+        n = len(nums)
+        used = [False] * n
+
+        def dfs(path):
+            if len(path) == n:
+                ans.append(path.copy())
+                return
+
+            for j in range(n):
+                if not used[j]:
+                    used[j] = True
+                    path.append(nums[j])
+                    dfs(path)
+                    path.pop()
+                    used[j] = False
+
+        dfs([])
+        return ans
+#+END_SRC
+
+----------
+
+说回这题，无论如何都需要先对整个数组排序，拿到排序之后的数组，考虑 [1,1,1,2,2]
+- 如果是1开头的话，那么只能是1, 11, 111三种
+- 如果我们从1展开，那么下一个选择肯定不能是1，其余都可以
+- 始终这种算法得到的排列是不重复的
+
+所以算法逻辑是，在DFS算法的基础上：
+- 每次将所有可选择的数进行归类，然后遍历它们。假设数k出现了v次。
+- 那么前缀可以是k, kk, kkk, ... v个k
+- 下次选择的时候不能和前缀相同
+
+直白地翻译成为代码就是下面这样的。我这里维护了一个字典用于统计每个数出现的次数。
+
+#+BEGIN_SRC python
+class Solution:
+    def permuteUnique(self, nums: List[int]) -> List[List[int]]:
+        n = len(nums)
+
+        ans = []
+        from collections import defaultdict
+
+        def dfs(opts, path):
+            # print(opts, path)
+            if len(opts) == 0:
+                ans.append(path.copy())
+                return
+
+            items = list(opts.items())
+            for x, v in items:
+                if path and path[-1] == x:
+                    continue
+
+                sz = len(path)
+                for i in range(v):
+                    opts[x] -= 1
+                    if opts[x] == 0:
+                        del opts[x]
+                    path.extend([x] * (i + 1))
+                    dfs(opts, path)
+                    path = path[:sz]
+
+                opts[x] = v
+
+        opts = defaultdict(int)
+        for x in nums:
+            opts[x] += 1
+        dfs(opts, [])
+        ans.sort()
+        return ans
+#+END_SRC
+
+----------
+
+和上面一样的思路，但是很明显官方给的 [[https://leetcode-cn.com/problems/permutations-ii/solution/hui-su-suan-fa-python-dai-ma-java-dai-ma-by-liwe-2/][解答]] 实现更加精简高效。相当于给相同元素做了一个定序
+- 比如[1,1,1], 它们下标0,1,2
+- 1[1]只能在1[0]被选择的前提下才选择，这就避免了1[1], 1[0]这样的重复排列
+
+#+BEGIN_SRC python
+class Solution:
+    def permuteUnique(self, nums: List[int]) -> List[List[int]]:
+        n = len(nums)
+        nums.sort()
+
+        used = [0] * n
+        ans = []
+
+        def dfs(path):
+            if len(path) == n:
+                ans.append(path.copy())
+                return
+
+            for i in range(n):
+                if used[i]:
+                    continue
+                if i > 0 and nums[i - 1] == nums[i] and not used[i - 1]:
+                    continue
+
+                used[i] = 1
+                path.append(nums[i])
+                dfs(path)
+                path.pop()
+                used[i] = 0
+
+        dfs([])
+        return ans
+#+END_SRC

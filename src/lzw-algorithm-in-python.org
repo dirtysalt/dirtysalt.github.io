@@ -1,0 +1,40 @@
+#+title: LZW算法的Python实现
+
+为什么想到要实现一下lzw, 还是因为最近看到云风的一篇文章 [[https://blog.codingnow.com/2006/01/tcp_stream_compress.html][云风的 BLOG: 基于TCP数据流的压缩]]，觉得这个很有意思。
+
+TCP和流式压缩，这么相得益彰的东西，不知道会不会纳入到内核层，纳入到某个网络框架可能还是可行的吧。作为一个可选的特性还是不错的，但如果网络数据大小真的是瓶颈的话，我觉得还是手工优化会比较好。
+
+很早之前看过几个压缩算法：snappy/lzf, 据说都是lz77/lz78算法变体。基本思想就是维护字典找到公共前缀来做压缩, lzw算法应该也是类似。
+
+lzw算法相比snappy/lzf更加简单，我参考了这篇文章 [[https://www.geeksforgeeks.org/lzw-lempel-ziv-welch-compression-technique/][LZW (Lempel–Ziv–Welch) Compression technique - GeeksforGeeks]] 做了实现。
+
+压缩逻辑好比较好理解，解压逻辑有个地方我卡了一阵子壳，为什么需要判断NEW不在string table的情况
+
+#+BEGIN_EXAMPLE
+#    PSEUDOCODE
+1    Initialize table with single character strings
+2    OLD = first input code
+3    output translation of OLD
+4    WHILE not end of input stream
+5        NEW = next input code
+6        IF NEW is not in the string table # ????
+7               S = translation of OLD
+8               S = S + C
+9       ELSE
+10              S = translation of NEW
+11       output S
+12       C = first character of S
+13       OLD + C to the string table # 模拟压缩阶段的行为，将OLD+C建立映射
+14       OLD = NEW
+15   END WHILE
+#+END_EXAMPLE
+
+后来从另外一篇文章中想到可能会出现这样的例子：
+- 假设输入串是 abcdabcdax
+- 我们处理完第一个abcd输出(假设code=100), 并且将abcda加入到string table(假设code=300)
+- 接着在下次处理找到了 abcda, 输出code=300.
+- 而在加压缩阶段，我们先处理code=100之后，并没有将abcda添加到string table.
+- 然后处理code=300的时候，就没有办法找到对应的字符串了
+但是这个问题也好解决，出现这种情况只有一种可能，就是这个对应的字符串是 OLD + OLD[0](abcd + a).
+
+我的实现代码在 [[file:codes/py/misc/simple_lzw.py][这里]]，没有太考虑性能和压缩比。

@@ -1,0 +1,147 @@
+#+title: Love Your Bugs
+
+http://akaptur.com/blog/2017/11/12/love-your-bugs/
+
+作者很声动地描述了两个他在DropBox遇到的bugs。首先Bugs非常有趣，但是更重要的是，作者认为Bugs可以帮助开发者更好地深入了解系统。在第二个Bug里面也提到了 `server-side flag`的重要性。
+
+-----
+Bug #1
+
+这个Bug是DropBox Client产生的问题。Client会针对4MB block做签名，然后将签名序列同步给服务端。服务端根据签名序列决定哪些blocks发生变化，客户端再上传变化的blocks.
+#+BEGIN_EXAMPLE
+        +--------------+     +---------------+
+        |              |     |               |
+        |  METASERVER  |     |  BLOCKSERVER  |
+        |              |     |               |
+        +-+--+---------+     +---------+-----+
+          ^  |                         ^
+          |  |                         |
+          |  |     +----------+        |
+          |  +---> |          |        |
+          |        |  CLIENT  +--------+
+          +--------+          |
+                   +----------+
+#+END_EXAMPLE
+
+下图是一次交互的图示。每个签名是4个字节，使用,分隔开，服务端也会按照,进行分隔然后来对比。
+
+#+BEGIN_EXAMPLE
+                +--------------+     +---------------+
+                |              |     |               |
+                |  METASERVER  |     |  BLOCKSERVER  |
+                |              |     |               |
+                +-+--+---------+     +---------+-----+
+                  ^  |                         ^
+                  |  | 'ok, ok, need'          |
+'abcd,deef,efgh'  |  |     +----------+        | efgh: [contents]
+                  |  +---> |          |        |
+                  |        |  CLIENT  +--------+
+                  +--------+          |
+                           +----------+
+#+END_EXAMPLE
+
+可是有次服务端收到了如下请求，签名不是4个字节而是9个字节。原来是,成为了l.
+
+#+BEGIN_EXAMPLE
+                +--------------+
+                |              |
+                |  METASERVER  |
+                |              |
+                +-+--+---------+
+                  ^  |
+                  |  |   '???'
+'abcdldeef,efgh'  |  |     +----------+
+     ^            |  +---> |          |
+     ^            |        |  CLIENT  +
+                  +--------+          |
+                           +----------+
+#+END_EXAMPLE
+
+调查最后发现原来是memory出现bitflip，而且,也有概率成为其他和它相差一个bit的字符。
+#+BEGIN_EXAMPLE
+bin(ord(',')): 0101100
+bin(ord('l')): 1101100
+,    : 0101100
+l    : 1101100
+\x0c : 0001100
+<    : 0111100
+$    : 0100100
+(    : 0101000
+.    : 0101110
+-    : 0101101
+#+END_EXAMPLE
+
+这个非常有趣。ECC memory现在来说应该是非常普及了，但是DropBox User Spectrum非常广，有很多人还在使用low-end pc/laptop和old hw，所以才出现这个问题。当然memory bit出现错误的情况还会出现在 [[file:code-in-space.org][太空环境]] 下。这个问题最后并没有去刻意修复，只能提示用户退出然后重启客户端，强制从盘上面读取block计算签名。
+
+-----
+Bug #2
+
+第二个Bug是出现在client上传log阶段。客户端不断地产生log，切分压缩加密然后写盘，最后将每个log分片上传到服务器。服务器解密这些log分片然后以200响应，如果服务器没有以200响应的话，那么log分片会不断地堆积，不过客户端也会做retention.
+
+#+BEGIN_EXAMPLE
+                                   +--------------+
+                                   |              |
+               +---+  +----------> |  LOG SERVER  |
+               |log|  |            |              |
+               +---+  |            +------+-------+
+                      |                   |
+                +-----+----+              |  200 ok
+                |          |              |
+                |  CLIENT  |  <-----------+
+                |          |
+                +-----+----+
+                      ^
+                      +--------+--------+--------+
+                      |        ^        ^        |
+                   +--+--+  +--+--+  +--+--+  +--+--+
+                   | log |  | log |  | log |  | log |
+                   |     |  |     |  |     |  |     |
+                   |     |  |     |  |     |  |     |
+                   +-----+  +-----+  +-----+  +-----+
+#+END_EXAMPLE
+
+这个流程上面同时出现了下面几个bugs，但是看上去问题都不是很大：
+1. log分片上传顺序是old -> new.（不太合理）
+2. 客户端retention的话，选择log分片顺序是 new -> old. （不太合理）
+3. 服务器解密失败的话，返回500。一旦返回500，那么客户端就不在上传log分片，等待下轮尝试，期待服务器恢复。
+
+其中3是非常值得讨论的。
+- 返回500的话，客户端认为server down, 可是实际上服务器是好的。
+- 如果返回400（bad request），但是客户端其实没有特别好的办法来fix，所以没有什么意义。
+- 如果返回200的话，服务端则可以接受后续log分片，虽然当前分片没有办法处理。
+所以看起来返回200是可以接收的，客户端收到200后就删除当前log分片了。
+
+1，2也放在client修复了，但是等到用户完全升级完成，需要一段时间。服务端修改很快，当时就完成了。但是服务端马上就收到很多日志上传请求。为什么呢？因为之前版本，服务器返回500的时候， 客户端每次都是使用old/corrupted log分片上传的，即便是log满了删除的也是new分片而不是old分片，所以可以认为客户端就停止上传log分片了。可是一旦服务器返回200，那么原来失败的client突然将积攒已久的日志全部上传上来，所以服务器出现了过载的情况。
+
+修复过程也是一波三折：
+1. 没有办法rollback代码，因为corrupted files已经删除了，很多都是normal files，所以即便是rollback压力也会存在。
+2. 对logging cluster扩容，这个在短期内没有办法实现，而且这个级别的DDOS扩容看上去也不太现实。
+3. load shedding. 负载降级处理，可是问题是没有办法区分good/bad traffic. （这里我倒是觉得服务器可以随机返回200/500这样的请求）
+
+最后发现客户端设计初期增加了一个 `chillout` 标记，客户端看到这个标记，会停止响应的秒数，这样避免意外情况。这个就引申出下面一个话题。
+
+-----
+Feature flags & server-side gating
+
+虽然会让你的服务端逻辑复杂一些，但是真正需要它的时候，它能帮很大的忙。
+
+#+BEGIN_QUOTE
+The third lesson is for you if you’re writing a mobile or a desktop application: You need server-side feature gating and server-side flags. When you discover a problem and you don’t have server-side controls, the resolution might take days or weeks as you push out a new release or submit a new version to the app store. That’s a bad situation to be in. The Dropbox desktop client isn’t going through an app store review process, but just pushing out a build to tens of millions of clients takes time. Compare that to hitting a problem in your feature and flipping a switch on the server: ten minutes later your problem is resolved.
+
+This strategy is not without its costs. Having a bunch of feature flags in your code adds to the complexity dramatically. You get a combinatoric problem with your testing: what if feature A is enabled and feature B, or just one, or neither – multiplied across N features. It’s extremely difficult to get engineers to clean up their feature flags after the fact (and I was also guilty of this). Then for the desktop client there’s multiple versions in the wild at the same time, so it gets pretty hard to reason about.
+
+But the benefit – man, when you need it, you really need it.
+#+END_QUOTE
+
+-----
+Deliberate Practice
+
+这里为什么会提到刻意练习呢？首先刻意练习是快速提高的技艺的不二法门，所以它非常重要。但是刻意练习的一个难点是，如何坚持下来，尤其是在没有快速反馈的情况下。对于编程来说，尝试不同的语言框架，可能会有一段周期才有反馈，不利于刻意练习（当然如果你有足够的意志力，那就是另外一回事了）。可是debugging反馈非常迅速，所以debugging也是一种刻意练习的好选择。
+
+#+BEGIN_QUOTE
+Deliberate practice is pretty narrow in their definition: it’s not work for pay, and it’s not playing for fun. You have to be operating on the edge of your ability, doing a project appropriate for your skill level (not so easy that you don’t learn anything and not so hard that you don’t make any progress). You also have to get immediate feedback on whether or not you’ve done the thing correctly.
+
+This is really exciting, because it’s a framework for how to build expertise. But the challenge is that as programmers this is really hard advice to apply. It’s hard to know whether you’re operating at the edge of your ability. Immediate corrective feedback is very rare – in some cases you’re lucky to get feedback ever, and in other cases maybe it takes months. You can get quick feedback on small things in the REPL and so on, but if you’re making a design decision or picking a technology, you’re not going to get feedback on those things for quite a long time.
+
+But one category of programming where deliberate practice is a useful model is debugging. If you wrote code, then you had a mental model of how it worked when you wrote it. But your code has a bug, so your mental model isn’t quite right. By definition you’re on the boundary of your understanding – so, great! You’re about to learn something new. And if you can reproduce the bug, that’s a rare case where you can get immediate feedback on whether or not your fix is correct.
+#+END_QUOTE

@@ -1,0 +1,103 @@
+#+title: Find 10 digits prime in consecutive digits of e
+
+这是很早的Google面试题目，我是从吴军的《浪潮之巅》里面关于Google公司的章节里面看到的。当时Google将这个题目挂在广告牌上用来招募人才，非常具有创意。我相信这道题目肯定有更加巧妙的数学解法。
+
+file:images/google_eprime_large.jpg
+
+-----
+如何得到e的数字？可以通过泰勒级数加上缩放，获得小数点后面精确的数字。使用f(x) = e^x 函数f(1)=e, 然后在 x0=0 这个点进行展开。
+
+file:images/taylor-series.png
+
+Python的好处就是可以直接操作大数。代码里面有个很重要的问题是，如果控制精度。我的办法是加上 `fac >= fac_thres` 这个判断，可以认为一旦满足这个条件的话，那么小数点前面的部分应该不会变化了。我没有办法证明，只是直觉这么认为。如果希望更加保险的话，可以让 `fac_thres` 这个值再大些。
+
+#+BEGIN_SRC Python
+def compute_exp(scale):
+    scale_10 = 10 ** scale
+    fac = 1
+    fac_thres = scale_10 * 100
+    a = scale_10
+    b = 0
+    i = 0
+    while True:
+        i += 1
+        fac *= i
+        if fac >= fac_thres:
+            break
+        a += scale_10 // fac
+        b += scale_10 % fac
+
+    a += b // scale_10
+    b = b % scale_10
+    return (a, b)
+#+END_SRC
+
+-----
+接下来的问题是如何测试素数。如果构建prime table的话，复杂度是O(n), 其中n是max value. 如果是10 digits的话，那么max value就是10 ** 11，所以时间成本还是蛮高的。有个概率算法可以用来测试是否为素数 [[https://zh.wikipedia.org/zh-cn/%E7%B1%B3%E5%8B%92-%E6%8B%89%E5%AE%BE%E6%A3%80%E9%AA%8C][Miller Rabin Test]].
+
+#+BEGIN_SRC Python
+import random
+def miller_rabin(n, k=10):
+	if n == 2:
+		return True
+	if not n & 1:
+		return False
+
+	def check(a, s, d, n):
+		x = pow(a, d, n)
+		if x == 1:
+			return True
+		for i in range(s - 1):
+			if x == n - 1:
+				return True
+			x = pow(x, 2, n)
+		return x == n - 1
+
+	s = 0
+	d = n - 1
+
+	while d % 2 == 0:
+		d >>= 1
+		s += 1
+
+	for i in range(k):
+		a = random.randrange(2, n - 1)
+		if not check(a, s, d, n):
+			return False
+	return True
+#+END_SRC
+
+-----
+这两个算法运行起来都非常快。
+#+BEGIN_EXAMPLE
+%%time
+exp_a, exp_b = compute_exp(500)
+print(exp_a)
+
+271828182845904523536028747135266249775724709369995957496696762772407663035354759457138217852516642742746639193200305992181741359662904357290033429526059563073813232862794349076323382988075319525101901157383418793070215408914993488416750924476146066808226480016847741185374234544243710753907774499206955170276183860626133138458300075204493382656029760673711320070932870912744374704723069697720931014169283681902551510865746377211125238978442505695369677078544996996794686445490598793163688923009879184
+CPU times: user 1.15 ms, sys: 228 µs, total: 1.38 ms
+Wall time: 1.18 ms
+#+END_EXAMPLE
+
+下面这个函数可以用来找到n-digits prime.
+#+BEGIN_SRC Python
+def find_prime_digits(a, k = 10):
+    a = str(a)
+    for i in range(0, len(a) - k):
+        s = a[i:i+k]
+        v = int(s)
+        if miller_rabin(v):
+            return s
+#+END_SRC
+
+#+BEGIN_EXAMPLE
+%time find_prime_digits(exp_a, 30)
+CPU times: user 544 µs, sys: 182 µs, total: 726 µs
+Wall time: 772 µs
+'182845904523536028747135266249'
+
+%time find_prime_digits(exp_a, 10)
+CPU times: user 831 µs, sys: 2 µs, total: 833 µs
+Wall time: 837 µs
+'7427466391'
+#+END_EXAMPLE

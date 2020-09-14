@@ -1,0 +1,56 @@
+#+title: 正则表达式的Python实现
+
+参考文章 [[https://swtch.com/~rsc/regexp/regexp1.html][Regular Expression Matching Can Be Simple And Fast]], 实现代码在 [[file:codes/py/misc/simple_regexp.py][这里]]
+
+基本上就是移植rsc写的C程序, 但是python写起来比C更容易且好调试。为了验证创建的NFA是正确的，将NFA输出成为dot绘制成图。
+
+rsc的C程序里面有一点不太好移植到python上，就是连接两个state A和B的时候，需要将A的出口连接到B上。C语言里面可以很方便地将这个出口地址保存起来，然后直接修改出口内容，python没有办法做到。
+但是好在python有闭包啊，我直接给出修改出口的回调函数，然后在连接A和B的时候，直接遍历A上的回调函数列表逐个调用。
+
+写完这个程序，让我想到了很久以前做个leetcode上一个 [[https://leetcode.com/problems/wildcard-matching/][wildcard题目]]，大致就是实现一个简单的正则表达式。这个题目很容易就映射到我的程序实现上，但是需要做细微的修改：
+- ? 字符是匹配任意字符，所以我引入了一个字符类型 'CH_ANY'
+- * 字符的含义是匹配任意多个字符串，它对应这里的正则表达式是 '?*'
+
+使用NFA匹配实现正则表达式，相比backtracking实现，在效率上有巨大的优势。对于有N个状态的NFA来说，去匹配长度m的字符串，backtracking最差情况下时间复杂度是O(2^n * m), 而NFA匹配最差情况下时间复杂度是O(n * m).
+像a?^n a^n 这样的正则表达式去匹配a^n, NFA匹配实现效率是backtracking的几百倍.
+
+下面是n=25的结果，此时re模块已经吃不消了，但是NFA却是飞快的。后面两次的时间变短了，是因为对NFA匹配的状态做了缓存，相当于实现了DFA的效果。
+
+#+BEGIN_EXAMPLE
+===== NFA =====
+round #1 takes 9.635210037231445 ms
+round #2 takes 2.0449161529541016 ms
+round #3 takes 1.9831657409667969 ms
+===== re module =====
+round #1 takes 4542.184829711914 ms
+round #2 takes 4591.962099075317 ms
+round #3 takes 4617.821931838989 ms
+#+END_EXAMPLE
+
+但是相比backtracking实现，NFA匹配实现在功能上则弱很多，最经典的功能就是使用 '\1', '\2' 进行向前引用(backreference). 所以如果我们不需要这个功能的话，还是选择NFA匹配实现比较好，性能上有保证。
+
+- https://swtch.com/~rsc/regexp/
+- https://github.com/google/re2
+- https://9fans.github.io/plan9port/unix/
+- https://github.com/laurikari/tre/
+
+#+BEGIN_QUOTE
+Al Aho's egrep, which first appeared in the Seventh Edition (1979), was the first Unix tool to provide the full regular expression syntax, using a precomputed DFA. By the Eighth Edition (1985), egrep computed the DFA on the fly, like the implementation given above.
+
+While writing the text editor sam [6] in the early 1980s, Rob Pike wrote a new regular expression implementation, which Dave Presotto extracted into a library that appeared in the Eighth Edition. Pike's implementation incorporated submatch tracking into an efficient NFA simulation but, like the rest of the Eighth Edition source, was not widely distributed. Pike himself did not realize that his technique was anything new. Henry Spencer reimplemented the Eighth Edition library interface from scratch, but using backtracking, and released his implementation into the public domain. It became very widely used, eventually serving as the basis for the slow regular expression implementations mentioned earlier: Perl, PCRE, Python, and so on. (In his defense, Spencer knew the routines could be slow, and he didn't know that a more efficient algorithm existed. He even warned in the documentation, “Many users have found the speed perfectly adequate, although replacing the insides of egrep with this code would be a mistake.”) Pike's regular expression implementation, extended to support Unicode, was made freely available with sam in late 1992, but the particularly efficient regular expression search algorithm went unnoticed. The code is now available in many forms: as part of sam, as Plan 9's regular expression library, or packaged separately for Unix. Ville Laurikari independently discovered Pike's algorithm in 1999, developing a theoretical foundation as well [2].
+
+#+END_QUOTE
+
+----------
+
+继续上面的实现，可以看看n=6时NFA是什么样子
+
+file:images/regexp_nfa.png
+
+看样子是没有什么问题。然后我们把n=1000看看运行时间多少. 第一次20s，后面两次2s就能完成。
+
+#+BEGIN_EXAMPLE
+round #1 takes 13707.84616470337 ms
+round #2 takes 2787.191867828369 ms
+round #3 takes 2815.87815284729 ms
+#+END_EXAMPLE

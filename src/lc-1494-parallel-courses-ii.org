@@ -1,0 +1,100 @@
+#+title: 1494. Parallel Courses II
+
+https://leetcode.com/problems/parallel-courses-ii/
+
+https://leetcode-cn.com/contest/biweekly-contest-29/problems/parallel-courses-ii/
+
+这是一道DP题目，状态转移方程是
+- dp[s|t] = min(dp[s|t], dp[s] + 1)
+- s 表示已经完成的课程
+- t 表示将要开始的课程
+- s,t 必须满足拓扑顺序，也就是t里面所有依赖课程都必须在s里面
+- t 中bits的数量必须小于等于k
+
+按照这个思路代码如下，其中：
+- dp[s] 表示完成s状态这些课程需要使用的时间
+- radj 表示反向依赖. =y in radj[x]= 表示必须先学习完成y才能学习x
+
+#+BEGIN_SRC python
+        inf = 999
+        ST = 1 << n
+        dp = [inf] * ST
+        radj = [[] for _ in range(n)]
+        for x, y in dependencies:
+            radj[y - 1].append(x - 1)
+
+        dp[0] = 0
+        for st in range(ST):
+            # find possible courses.
+            cs = []
+            for x in range(n):
+                if st & (1 << x): continue
+                ok = True
+                for y in radj[x]:
+                    if (st & (1 << y)) == 0:
+                        ok = False
+                if ok:
+                    cs.append(x)
+
+            # enumerate possible combinations.
+            for st2 in walk(cs, k):
+                st3 = st | st2
+                dp[st3] = min(dp[st3], dp[st] + 1)
+#+END_SRC
+
+接着就是 =walk(cs, k)= 这个函数了，表示从cs里面选择bits小于等于k的组合。我的代码使用了python自带的 =combinations= 函数
+
+#+BEGIN_SRC python
+        def walk(cs, k):
+            off = len(cs) - k
+            base = 0
+            for x in cs:
+                base = base | (1 << x)
+
+            if off <= 0:
+                yield base
+
+            else:
+                import itertools
+                for xs in itertools.combinations(cs, off):
+                    st = base
+                    for x in xs:
+                        st = st & ~(1 << x)
+                    yield st
+#+END_SRC
+
+这个实现不算糟糕，考虑到了 =len(cs)<=k= 的情况，这样的话就可以直接返回。如果 =len(cs)>k= 的话，那么我们只选择几个需要关闭的bits就行。
+
+但是如果没有 =combinations= 的话(Java/C++)，那就只能通过遍历了。我看比赛中 =liouzhou_101= 的代码比较有参考性。其中：
+- can就是我们上面的base
+- 从can开始遍历, 肯定会在某些bit上出现不应该出现的1
+- 然后在和can做一个and操作，就可以得到正确结果
+- 接着我们直接使用这个正确结果继续遍历
+
+#+BEGIN_SRC C++
+for (int t = can; t; t = (t-1)&can) {
+    if (__builtin_popcount(t) > k) continue;
+    f[s|t] = min(f[s|t], f[s]+1);
+}
+#+END_SRC
+
+python里面没有 __builtin_popcount 这样的高效实现，所以拿去提交都是TLE.
+#+BEGIN_SRC python
+        def walk(cs, k):
+            def bitsoncount(x):
+                c = 0
+                while x:
+                    if x & 1:
+                        c += 1
+                    x = x >> 1
+                return c
+
+            can = 0
+            for x in cs:
+                can = can | (1 << x)
+            t = can
+            while t:
+                if bitsoncount(t) <= k:
+                    yield t
+                t = (t - 1) & can
+#+END_SRC

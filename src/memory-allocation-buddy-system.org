@@ -1,0 +1,101 @@
+#+title: 内存分配之伙伴系统
+
+最近看了云风写的 [[https://blog.codingnow.com/2011/12/buddy_memory_allocation.html][伙伴系统]] 有点启发，把一些值得学习的点记录下来。此外帖子里面还有 @wuwenbin 的 [[https://github.com/wuwenbin/buddy2][实现]]，比云风的 [[https://github.com/cloudwu/buddy][实现]] 更简单高效，也一起记录下来。
+
+--------------------
+
+云风的版本稍微有点复杂，一个复杂在节点的状态管理上，一个复杂在开辟对象的时候可能存在回溯。
+
+节点状态：
+- SPLIT: 该节点内存被切分，只使用两个子节点中的一个。
+- FULL：该节点内存被切分，并且两个子节点部分均被使用。
+- USED：该节点内存被使用，没有被切分。用于被分配连续内存。
+- UNUSED: 该节点内存未被使用。
+
+=_index_offset= 是从树节点编号到连续内存偏移的映射函数。
+- =(1 << level) - 1= 是该层第一个节点的编号
+- =(max_level-level)= 是这层每个节点下面的子节点（包括自己）数量。
+#+BEGIN_SRC c
+static inline int
+_index_offset(int index, int level, int max_level) {
+	return ((index + 1) - (1 << level)) << (max_level - level);
+}
+#+END_SRC
+
+=next_pow_of_2= 函数可以通过观察每个bit的变化来分析：b0[i]表示初始状态，b1[i]表示操作一次之后的状态
+- x | x >> 1 意味着 b1[i] = b0[i+1] | b0[i]
+- x | x >> 2 意味着 b2[i] = b1[i+2] | b1[i]
+这样 b2[i] = b0[i] | b0[i+1] | b0[i+2] | b0[i+3]. 其最终作用就是相当于把每个位都尽可能地置1。然后 x+1 就可以找到最近的2次幂数。
+
+#+BEGIN_SRC c
+static inline uint32_t
+next_pow_of_2(uint32_t x) {
+	if ( is_pow_of_2(x) )
+		return x;
+	x |= x>>1;
+	x |= x>>2;
+	x |= x>>4;
+	x |= x>>8;
+	x |= x>>16;
+	return x+1;
+}
+#+END_SRC
+
+然后 =buddy_alloc= 因为有个回溯过程，最坏情况下的时间复杂度是 O(N)。最坏情况出现在：
+1. 分配最小单元的内存
+2. 内部节点都处于SPLIT状态
+3. 可用单元在最右子树上
+其实这个回溯过程是可以避免的。通过对子节点的状态判断是去左子树还是右子树去要内存，但是内部就会多些判断。
+这个实现在 @wuwenbin 的实现里面就避免了，会判断去左子树还是右子树去要内存。
+
+--------------------
+
+@wuwenbin的实现就特别清爽，节点定义是
+
+#+BEGIN_SRC c
+struct buddy2 {
+  unsigned size;
+  unsigned longest[1]; // 表示这个节点最多允许分配内存大小，必须是2的幂方
+  // 也是存储为logN，这样只需要使用一个字节就行。
+};
+#+END_SRC
+
+在内存分配阶段，会先尝试去看看左子树是否可以分配，然后看右子树。一旦完成分配，会从下往上更新父节点的可用内存大小。
+
+#+BEGIN_SRC c
+
+  for(node_size = self->size; node_size != size; node_size /= 2 ) {
+    if (self->longest[LEFT_LEAF(index)] >= size)
+      index = LEFT_LEAF(index);
+    else
+      index = RIGHT_LEAF(index);
+  }
+
+  self->longest[index] = 0;
+  offset = (index + 1) * node_size - self->size;
+
+  while (index) {
+    index = PARENT(index);
+    self->longest[index] =
+      MAX(self->longest[LEFT_LEAF(index)], self->longest[RIGHT_LEAF(index)]);
+  }
+#+END_SRC
+
+根据偏移查看这个偏移有多少连续可用内存，这个函数实现在 =buddy2_size= 里面。这个实现也远比云风的实现要简单。
+
+#+BEGIN_SRC c
+int buddy2_size(struct buddy2* self, int offset) {
+  unsigned node_size, index = 0;
+
+  assert(self && offset >= 0 && offset < self->size);
+
+  node_size = 1;
+  for (index = offset + self->size - 1; self->longest[index] ; index = PARENT(index))
+    node_size *= 2;
+
+  return node_size;
+}
+#+END_SRC
+
+最让我有点意外的实现是，如何根据内节点index, 找到这个节点对应的内存偏移offset。
+就是一个表达式 =offset = (index + 1) * node_size - self->size;=.

@@ -1,0 +1,53 @@
+#+title: Druid Design Doc
+- https://github.com/metamx/druid
+- https://github.com/metamx/druid/wiki/Design
+
+** Introduction
+Druid currently allows for single-table queries in a similar manner to Dremel and PowerDrill. It adds to the mix （功能介于dremel以及powerdrill之间）
+- columnar storage format for partially nested data structures（对于嵌套数据结构使用列式存储）
+- hierarchical query distribution with intermediate pruning（层级查询的时候会进行剪枝）
+- indexing for quick filtering（使用index进行快速过滤）
+- realtime ingestion (ingested data is immediately available for querying)（能够处理实时的数据）
+- fault-tolerant distributed architecture that doesn’t lose data（容错性）
+As far as a comparison of systems is concerned, Druid sits in between PowerDrill and Dremel on the spectrum of functionality. It implements almost everything Dremel offers (Dremel handles arbitrary nested data structures while Druid only allows for a single level of array-based nesting) and gets into some of the interesting data layout and compression methods from PowerDrill. （druid基本提供了dremel所提到的功能，但是不允许嵌套数据结构只允许数组，而借鉴了一些powerdrill的数据存储方式和压缩算法） #note: druid不支持跨表查询，只是支持单表query，这点和dremel非常类似。cloudera的impala支持跨表join操作
+
+** Architecture
+- The name comes from the Druid class in many role-playing games: it is a shape-shifter, capable of taking many different forms to fulfill various different roles in a group.(druid名字在许多角色游戏里面都有出现，它能够变形以适应各种不同的角色）
+
+The node types that currently exist are:（有下面几种节点类型存在）
+- Compute nodes are the workhorses that handle storage and querying on “historical” data (non-realtime) 处理历史数据
+- Realtime nodes ingest data in real-time, they are in charge of listening to a stream of incoming data and making it available immediately inside the Druid system. As data they have ingested ages, they hand it off to the compute nodes. 处理实时数据，并且能够将实时数据导入到druid系统里面供compute节点使用 #note: 对realtime这个部分的数据处理还是比较好奇的，因为这个部分的数据似乎不像是使用druid描述那些方法来进行query的
+- Master nodes act as coordinators. They look over the grouping of computes and make sure that data is available, replicated and in a generally “optimal” configuration. 作为协调者存在，判断节点是否挂掉，确保数据能够available以及replicated.
+- Broker nodes understand the topology of data across all of the other nodes in the cluster and re-write and route queries accordingly 相当于router的角色存在，知道每个节点上面存在哪些数据，接收query请求并且将query请求改写让realtime和compute节点计算，然后做汇总。
+- Indexer nodes form a cluster of workers to load batch and real-time data into the system as well as allow for alterations to the data stored in the system (as of 11/2012, these nodes are still a work in progress) 对历史数据和realtime数据进行索引。
+工作方式大致是：
+- 请求发送到broker上面
+- broker会改写这个query statement，并且根据route信息将这些sub query发送到compute/realtime节点进行计算
+- compute/realtime返回结果，breoker将结果进行聚合返回。
+
+另外整个系统还需要依赖外部三个组组件：
+- A running ZooKeeper cluster for cluster service discovery and maintenance of current data topology（zookeeper记录topology）
+- A MySQL instance for maintenance of metadata about the data segments that should be served by the system（MySQL存储segment的metadata)
+- A “deep storage” LOB store/file system to hold the stored segments(deep storage用来保存alpha data set以及beta data set)
+
+** Data Storage
+Getting data into the Druid system requires an indexing process. This gives the system a chance to analyze the data, add indexing structures, compress and adjust the layout in an attempt to optimize query speed. (数据进入druid之前会进行一些分析并且进行索引，然后压缩并且调整存储格式来优化查询速度） A quick list of what happens to the data follows.
+- Converted to columnar format
+- Indexed with bitmap indexes
+- Compressed using various algorithms
+    - LZF (switching to Snappy is on the roadmap, not yet implemented)
+    - Dictionary encoding w/ id storage minimization
+    - Bitmap compression
+    - RLE (on the roadmap, but not yet implemented)
+The output of the indexing process is stored in a “deep storage” LOB store/file system (S3 is the currently implemented solution, HDFS is planned). Data is then loaded by compute nodes by first downloading the data to their local disk and then memory mapping it before serving queries.(输出结果保存在LOB里面，现在是使用S3存储接口今后会支持HDFS。数据的话首先会被download到本地然后进行serve）
+
+In order for a segment to exist inside of the cluster, an entry has to be added to a table in a MySQL instance. This entry is a self-describing bit of metadata about the segment, it includes things like the schema of the segment, the size, and the location on deep storage. These entries are what the Master uses to know what data should be available on the cluster. （segment的metadata会保存在MySQL里面。master会用这些信息来判断哪些信息是没有被serve的） #note: 个人觉得实现方式应该，indexer运行不是很频繁，每次indexer对数据进行index的时候会将segment的metadata写入MySQL，完成之后通知Master来读取
+
+** Fault Tolerance
+- Compute As discussed above, if a compute node dies, another compute node can take its place and there is no fear of data loss
+- Master Can be run in a hot fail-over configuration. If no masters are running, then changes to the data topology will stop happening (no new data and no data balancing decisions), but the system will continue to run.（如果master挂掉的话那么不允许进行topology的变化，不允许新增数据以及数据的balance) #note: S3的存储难道没有解决balance以及replication的问题？
+- Broker Can be run in parallel or in hot fail-over.
+- Realtime Depending on the semantics of the delivery stream, multiple of these can be run in parallel processing the exact same stream. They periodically checkpoint to disk and eventually push out to the Computes. Steps are taken to be able to recover from process death, but loss of access to the local disk can result in data loss if this is the only method of adding data to the system.
+- “deep storage” file system If this is not available, new data will not be able to enter the cluster, but the cluster will continue operating as is.
+- MySQL If this is not available, the master will be unable to find out about new segments in the system, but it will continue with its current view of the segments that should exist in the cluster.（不能够知道新的segment加入）
+- ZooKeeper If this is not available, data topology changes will not be able to be made, but the Brokers will maintain their most recent view of the data topology and continue serving requests accordingly.（如果compute节点挂掉的话那么检测不到。对于路由信息broker本身会保存一份副本）

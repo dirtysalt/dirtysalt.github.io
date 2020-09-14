@@ -1,0 +1,60 @@
+#+title: Linux System and Performance Monitoring
+http://www.ufsdump.org/papers/oscon2009-linux-monitoring.pdf
+
+a.k.a "Extreme Linux Performance Monitoring and Tuning"
+
+** Performance Monitoring Introduction
+- sub-systems: CPU, Memory, IO, Network
+- application types: IO-bound or CPU-bound ?
+
+** Installing Monitoring Tools
+file:images/performance-monitoring-tools.png
+
+** Introducing the CPU
+The following list outlines the priorities from highest to lowest: # 调度优先级别，从高到低
+- Hard Interrupts – Devices tell the kernel that they are done  processing. For example, a NIC delivers a packet or a hard drive provides an IO request（硬中断）
+- Soft Interrupts – These are kernel software interrupts that have to do with maintenance of the kernel. For example, the kernel clock tick thread is a soft interrupt. It checks to make sure a process has not passed its allotted time on a processor.（软中断）
+- Real Time Processes – Real time processes have more priority than the kernel itself. A real time process may come on the CPU and preempt (or “kick off”) the kernel. The Linux 2.4 kernel is NOT a fully preemptable kernel, making it not ideal for real time application programming.（实时进程，会抢占其他非实时进程时间片）
+- Kernel (System) Processes – All kernel processing is handled at this level of priority. （内核进程）
+- User Processes – This space is often referred to as “userland”. All software applications run in the user space. This space has the lowest priority in the kernel scheduling mechanism.（用户进程）
+
+3 indicators
+- Context Switches
+- The Run Queue
+- CPU Utiilization
+
+Most performance monitoring tools categorize CPU utilization into the following categories: # CPU利用率下面这些指标
+- User Time – The percentage of time a CPU spends executing process threads in the user space.
+- System Time – The percentage of time the CPU spends executing kernel threads and interrupts.
+- Wait IO – The percentage of time a CPU spends idle because ALL process threads are blocked waiting for IO requests to complete.
+- Idle – The percentage of time a processor spends in a completely idle state.
+
+Case Study
+- Sustained CPU Utilization: There are a high amount of interrupts (in) and a low amount of context switches. It appears that a single process is making requests to hardware devices.（触发中断次数很多但是cs很少，说明在某个进程内有很多硬件设备请求）
+- Overloaded Scheduler: The amount of context switches is higher than interrupts, suggesting that the kernel has to spend a considerable amount of time context switching threads.（cs次数远比中断次数高很多，说明内核花费了大量时间在线程切换上）
+
+** Introducing Virtual Memory
+Kernel Memory Paging. Memory paging is a normal activity not to be confused with memory swapping. Memory paging is the process of synching memory back to disk at normal intervals. Over time, applications will grow to consume all of memory. At some point, the kernel must scan memory and reclaim unused pages to be allocated to other applications. # memory paging和memory swapping不同的是, paging是系统的正常行为. 系统会定时将部分内存刷到磁盘上, 释放这部分内存出来分配给其他进程, 确保所有进程都把所有内存都用上
+
+The Page Frame Reclaim Algorithm (PFRA). The PFRA is responsible for freeing memory. The PFRA selects which memory pages to free by page type. Page types are listed below: # 释放内存算法将pages分为下面几类
+- Unreclaimable – locked, kernel, reserved pages（保留内存）
+- Swappable – anonymous memory pages（匿名内存）
+- Syncable – pages backed by a disk file（从磁盘文件读取并且发生修改，需要写回到文件）
+- Discardable – static pages, discarded pages（内容可以直接从磁盘文件读取）
+All but the “unreclaimable” pages may be reclaimed by the PFRA. There are two main functions in the PFRA. These include the kswapd kernel thread and the “Low On Memory Reclaiming”(LMR) function. # kswapd和pdflush两个进程协作完成
+
+The kswapd daemon is responsible for ensuring that memory stays free. It monitors the pages_high and pages_low watermarks in the kernel. If the amount of free memory is below pages_low, the kswapd process starts a scan to attempt to free 32 pages at a time. It repeats this process until the amount of free memory is above the pages_high watermark. The kswapd thread performs the following actions: # kswapd是一个守护进程，监控两个内核变量pages_high和pages_low. 如果当前可用内存低于pages_low的话，那么会以32pages为单位进行释放直到内存高于pages_high.
+- If the page is unmodified, it places the page on the free list.
+- If the page is modified and backed by a filesystem, it writes the contents of the page to disk.
+- If the page is modified and not backed up by any filesystem (anonymous), it writes the contents of the page to the swap device.
+
+The pdflush daemon is responsible for synchronizing any pages associated with a file on a filesystem back to disk. In other words, when a file is modified in memory, the pdflush daemon writes it back to disk. The pdflush daemon starts synchronizing dirty pages back to the filesystem when 10% of the pages in memory are dirty. This is due to a kernel tuning parameter called vm.dirty_background_ratio. The pdflush daemon works independently of the PFRA under most circumstances. When the kernel invokes the LMR algorithm, the LMR specifically forces pdflush to flush dirty pages in addition to other page freeing routines. # pdflush定期将脏页刷入到文件系统上, 确保脏页比例低于一定阈值. 但是内核也会主动出发pdflush.
+
+** Introducing I/O Monitoring
+There are 3 types of memory pages in the Linux kernel. These pages are described below:
+- Read Pages – These are pages of data read in via disk (MPF)  that are read only and backed on disk. These pages exist in the Buffer Cache and include static files, binaries, and libraries that do not change. The Kernel will continue to page these into memory as it needs them. If memory becomes short, the kernel will "steal" these pages and put them back on the free list causing an application to have to MPF to bring them back in.
+- Dirty Pages – These are pages of data that have been modified by the kernel while in memory. These pages need to be synced back to disk at some point using the pdflush daemon. In the event of a memory shortage, kswapd (along with pdflush) will write these pages to disk in order to make more room in memory.
+- Anonymous Pages – These are pages of data that do belong to a process, but do not have any file or backing store associated with them. They can't be synchronized back to disk. In the event of a memory shortage, kswapd writes these to the swap device as temporary storage until more RAM is free ("swapping" pages).
+
+** Monitoring I/O
+** Introducing Network Monitoring

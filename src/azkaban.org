@@ -1,0 +1,42 @@
+#+title: Azkaban
+http://azkaban.github.io/azkaban2/
+
+** Overview
+Azkaban consists of 3 key components:
+- Relational Database (MySQL)
+  - How does AzkabanWebServer use the DB?
+    - Project Management - The projects, the permissions on the projects as well as the uploaded files.
+    - Executing Flow State - Keep track of executing flows and which Executor is running them.
+    - Previous Flow/Jobs - Search through previous executions of jobs and flows as well as access their log files.
+    - Scheduler - Keeps the state of the scheduled jobs.
+    - SLA - Keeps all the sla rules
+  - How does the AzkabanExecutorServer use the DB?
+    - Access the project - Retrieves project files from the db.
+    - Executing Flows/Jobs - Retrieves and updates data for flows and that are executing
+    - Logs - Stores the output logs for jobs and flows into the db.（存储输出日志）
+    - Interflow dependency - If a flow is running on a different executor, it will take state from the DB.
+  - There is no reason why MySQL was chosen except that it is a widely used DB. We are looking to implement compatibility with other DB’s, although the search requirement on historically running jobs benefits from a relational data store.（关系数据库可以比较方便地来做查询。对于这种工作流系统数据量不大但是对于各种形式的query比较多的系统，关系数据库确实是比较合适的选择）
+- AzkabanWebServer
+  - The AzkabanWebServer is the main manager to all of Azkaban. It handles project management, authentication, scheduler, and monitoring of executions. It also serves as the web user interface.
+  - Using Azkaban is easy. Azkaban uses *.job key-value property files to define individual tasks in a work flow, and the dependencies property to define the dependency chain of the jobs. These job files and associated code can be archived into a *.zip and uploaded through the web server through the Azkaban UI or through curl.（单个zip描述的是project，下面可以有许多jobs，它们之间存在dependencies.每个job有对应的.job key-value文件来描）
+- AzkabanExecutorServer
+  - Previous versions of Azkaban had both the AzkabanWebServer and the AzkabanExecutorServer features in a single server. The Executor has since been separated into its own server. There were several reasons for splitting these services:
+  - we will soon be able to scale the number of executions and fall back on operating Executors if one fails. （扩展性）
+   - Also, we are able to roll our upgrades of Azkaban with minimal impact on the users. As Azkaban’s usage grew, we found that upgrading Azkaban became increasingly more difficult as all times of the day became ‘peak’.（升级维护）
+
+file:images/azkaban2overviewdesign.png
+
+** Getting Started
+http://azkaban.github.io/azkaban2/documents/2.1/ 文档描述的还是比较详细的
+
+- 配置SSL的时候，最好使用 http://docs.codehaus.org/display/JETTY/How+to+configure+SSL 链接里面keytool工具，一步到位
+- default.timezone.id=Asia/Shanghai
+- Setup Azkaban Plugins.
+  - 没有正确加载Pig和Hive插件。因为暂时没有必要使用，所以索性删除对应的目录。
+  - plugins/jobtypes/common.properties 填写hadoop.home
+- 启动webserver/executorserver脚本.
+  - 头部添加#!/bin/bash（似乎没有办法在zsh下面工作）
+  - basedir=$1 --> basedir=.（不然就需要使用start.sh . 这样的方式启动）
+  - tmpdir= --> tmpdir=./temp（不然会因为缺少tmpdir变量报错）
+- zip -r project.zip project # 将project打包成为.zip文件
+- PDT比CST慢16个小时，UTC比CST慢8个小时。这个在填写Schedule时候可能需要换算。

@@ -1,0 +1,47 @@
+#+title: backblaze-storage-pod
+- [[http://blog.backblaze.com/2009/09/01/petabytes-on-a-budget-how-to-build-cheap-cloud-storage/][Petabytes on a budget: How to build cheap cloud storage]] 1.0, 4U, 67TB, 7867$
+- [[http://blog.backblaze.com/2011/07/20/petabytes-on-a-budget-v2-0revealing-more-secrets/][Petabytes on a Budget v2.0:Revealing More Secrets]] 2.0, 4U, 135TB, 7394$
+- [[http://blog.backblaze.com/2013/02/20/180tb-of-good-vibrations-storage-pod-3-0/][180TB of Good Vibrations – Storage Pod 3.0]] 3.0, 4U, 180TB, ???$
+
+** Pod 1.0
+*** No One Sells Cheap Storage, so We Designed It
+Before realizing that we had to solve this storage problem ourselves, we considered Amazon S3, Dell or Sun Servers, NetApp Filers, EMC SAN, etc. As we investigated these traditional off-the-shelf solutions, we became increasingly disillusioned by the expense. When you strip away the marketing terms and fancy logos from any storage solution, data ends up on a hard drive. But when we priced various off-the-shelf solutions, the cost was 10 times as much (or more) than the raw hard drives. Here’s a comparison chart of the price for one petabyte from various venders:（其他厂商服务器除去存储之外附加费用非常高，甚至超过存储本身10倍以上）
+
+file:images/cost-of-a-petabyte-chart.jpg
+
+Based on the expense, we decided to build our own Backblaze Storage Pods. We had two primary goals: Keep upfront costs low by using consumer-grade drives and readily available commodity components and be as power and space efficient as possible by using green components and squeezing a lot of storage into a small box.（使用消费级别和廉价磁盘来减少附加费用，使用绿色组件降低能耗和空间使用）
+
+The result is a 4U rack-mounted Linux-based server that contains 67 terabytes at a material cost of $7,867, the bulk of which goes to purchase the drives themselves. This translates to just three-tenths of one penny per gigabyte per month over the course of three years. Even including the surrounding costs—such as electricity, bandwidth, space rental, and IT administrators’ salaries—Backblaze spends one-tenth of the price in comparison to using Amazon S3, Dell Servers, NetApp Filers, or an EMC SAN. （事实上费用仅仅是这些大厂商服务器的十分之一）
+
+*** What Makes a Backblaze Storage Pod
+A Backblaze Storage Pod is a self-contained unit that puts storage online. It’s made up of a custom metal case with commodity hardware inside. Specifically, one pod contains one Intel Motherboard with four SATA cards plugged into it. The nine SATA cables run from the cards to nine port multiplier backplanes that each have five hard drives plugged directly into them (45 hard drives in total).（45块硬盘，每个硬盘空间大约在1.5TB左右）
+
+file:images/backblaze-storage-pod-main-components.jpg
+
+
+*** A Backblaze Storage Pod Runs Free Software
+A Backblaze Storage Pod isn’t a complete building block until it boots and is on the network. The pods boot 64-bit Debian 4 Linux and the JFS file system, and they are self-contained appliances, where all access to and from the pods is through HTTPS. Below is a layer cake diagram.
+
+file:images/backblaze-storage-pod-software-layer-cake-diagram.jpg
+
+Starting at the bottom, there are 45 hard drives exposed through the SATA controllers. We then use the fdisk tool on Linux to create one partition per drive. On top of that, we cluster 15 hard drives into a single RAID6 volume with two parity drives (out of the 15). The RAID6 is created with the mdadm utility. On top of that is the JFS file system, and the only access we then allow to this totally self-contained storage building block is through HTTPS running custom Backblaze application layer logic in Apache Tomcat 5.5. After taking all this into account, the formatted (useable) space is 87 percent of the raw hard drive totals. One of the most important concepts here is that to store or retrieve data with a Backblaze Storage Pod, it is always through HTTPS. There is no iSCSI, no NFS, no SQL, no Fibre Channel. None of those technologies scales as cheaply, reliably, goes as big, nor can be managed as easily as stand-alone pods with their own IP address waiting for requests on HTTPS. （除去系统和其他软件之外，可应用的磁盘空间比例大约在87%左右）
+
+** Pod 2.0
+*** Density Matters – Double the Storage in the Same Enclosure
+We upgraded the hard drives inside the 4U sheet metal pod enclosure to store twice as much data in the same space. After the cost of filling a rack with pods, one datacenter rack containing 10 pods costs Backblaze about $2,100 per month to operate, roughly divided equally into thirds for physical space rental, bandwidth, and electricity. Doubling the density saves us half of the money spent on both physical space and electricity. The picture below is from our datacenter, showing 15 petabytes racked in a single row of cabinets. The newest cabinets squeeze one petabyte into three-quarters of a single cabinet for $56,696.（相同空间的服务器存储容量翻倍。一个rack里面可以存放10台pods，每个月大约2100$维护费用，这些费用分为大致相等的三个部分，场地租用，带宽和电。容量范围意味着可以使用更少的rack，这样2100$可以在场地和电上面节省2/3）
+
+file:images/pod20-datacenter-cabinet.jpg
+
+We are constantly looking at new hard drives, evaluating them for reliability and power consumption. The Hitachi 3TB drive (Hitachi Deskstar 5K3000 HDS5C3030ALA630) is our current favorite for both its low power demand and astounding reliability. The Western Digital and Seagate equivalents we tested saw much higher rates of popping out of RAID arrays and drive failure. Even the Western Digital Enterprise Hard Drives had the same high failure rates. The Hitachi drives, on the other hand, perform wonderfully.（通过使用高容量的磁盘来提高存储密度的，从1.5TB升级到3TB）
+
+*** Twice as Fast
+We’ve made several improvements to the design that have doubled the performance of the storage pod. Most of the improvements were straightforward and helped by Moore’s Law. We bumped the CPU up from the Intel dual core CPU to the Intel i3 540 and upgraded the motherboard from one Gigabit Ethernet port to a Supermicro motherboard with two Gigabit Ethernet ports. RAM dropped in price, so we doubled it to 8 GB in the new pod. More RAM enables our custom Backblaze software layer to create larger disk caches that can really speed up certain types of disk I/O.（CPU，RAM以及网卡都进行了升级。更大的RAM能够更好地用作disk cache来提高disk IO使用效率）
+
+We upgraded the Linux 64-bit OS from Debian 4 to Debian 5, but we no longer use JFS as the file system. We selected JFS years ago for its ability to accommodate large volumes and low CPU usage, and it worked well. However, ext4 has since matured in both reliability and performance, and we realized that with a little additional effort we could get all the benefits and live within the unfortunate 16 terabyte volume limitation of ext4. One of the required changes to work around ext4’s constraints was to add LVM (Logical Volume Manager) above the RAID 6 but below the file system. In our particular application (which features more writes than reads), ext4’s performance was a clear winner over ext3, JFS, and XFS.（Debian从4.0到了5.0，没有继续使用JFS而改用ext4)
+
+With these performance improvements, we see the new storage pods in our datacenter accepting customer data more than twice as fast as the older generation pods. It takes approximately 25 days to fill a new pod with 135 terabytes of data. The chart below shows the measured fill rates of an old Pod versus a new Pod, both under real-world maximum load in our datacenter.
+
+file:images/pod20-performance.jpg
+
+** Pod 3.0
+相比2.0而言，似乎最重要的升级就是单块磁盘从3TB升级到了4TB，当然也有很多其他设备有升级。

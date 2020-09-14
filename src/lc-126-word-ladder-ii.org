@@ -1,0 +1,137 @@
+#+title: 126. Word Ladder II
+
+https://leetcode.com/problems/word-ladder-ii/
+
+我觉得这题很有意思，是里面涉及到了两个点： 如何判断两个字符串之间只相差一个字符，以及如何枚举所有的最短路径。
+
+----------
+
+先说第一个问题，如何判断两个字符串之间只相差一个字符。比如 "hot"和"hit"就差一个字符，而"hot"和"hig"则相差两个字符。
+假设所有字符串长度是K，共有N个字符串。
+
+一种办法是枚举每个位置的所有字符，创建字典然后去查询。以上面例子说明：
+- 在位置0, hot可以产生这些字符串 aot, bot, cot, ...zot
+- 在位置1上，hot可以产生 hat, hbt .. hzt
+- 可以看到在枚举位置1的时候，就会和 "hit" 字符串重合
+
+时间复杂度是O(26 * N * K^2), 空间复杂度是O(26 * N * K)
+
+#+BEGIN_SRC python
+        for i in range(k):
+            subwords = defaultdict(list)
+            for idx, w in enumerate(wordList):
+                for c in range(26):
+                    x = chr(ord('a') + c)
+                    if x == w[i]:
+                        continue
+                    s = w[:i] + x + w[i + 1:]
+                    subwords[s].append(idx)
+            for idx, w in enumerate(wordList):
+                xs = subwords[w]
+                for x in xs:
+                    adj[idx].append(x)
+#+END_SRC
+
+这里还有另外一个办法，同样我们还是枚举所有的位置
+- 但那是在这些位置上不是枚举字符，而是直接删除
+- 在位置0上, hot->ot, hit->it, hig->ig
+- 在位置1上, hot->ht, hit->ht, hig->hg
+- 可以看到在位置1上出现了重合
+
+这样做时间复杂度是O(N * K^2). 空间复杂度是O(N * K). 不要小看这个常数项，提交之后时间可以从1400ms缩减到200ms.
+
+#+BEGIN_SRC python
+        for i in range(k):
+            wl = [(x[:i] + x[i + 1:], idx) for (idx, x) in enumerate(wordlist)]
+            from collections import defaultdict
+            groups = defaultdict(list)
+            for w, idx in wl:
+                groups[w].append(idx)
+            for w, xs in groups.items():
+                for j in range(len(xs)):
+                    for k in range(j + 1, len(xs)):
+                        x, y = xs[j], xs[k]
+                        G[x].append(y)
+                        G[y].append(x)
+#+END_SRC
+
+--------------------
+
+第二个问题就是如何枚举所有最短的路径。经典的最短路径比如BFS或者是Dijkstra算法，只给出其中一条最短路径。但是这些算法基础上稍微扩展一些，其实就可以得到所有最短路径。
+
+以BFS最短路径为例（如果扩展到dijkstra应该也是适用的）
+- 如果从u->v点，到达v点的长度是d
+- 还存在u'->v点，到达v点的长度也是d
+- 但是如果u2->v点，到达v点的长度>=d的话，那么可以舍弃
+- 记录方式可以有两种，按照前向和候向记录
+  - 前向是 forward[u].append(v)
+  - 后向是 backward[v].append(u)
+
+将这些前向/后向集合记录下来之后，就可以使用dfs的办法来获取所有的最短路径了。
+
+在代码实现上，我们还是使用BFS算法。
+- depth[v]表示到达v这个节点的最短路径长度是多少
+- fwd_links 和 back_links 分别表示前向后向（其实只需要保存一个就行）
+#+BEGIN_SRC python
+        from collections import deque
+        dq = deque()
+        depth = [0] * n
+        depth[begin] = 1
+        dq.append(begin)
+
+        fwd_links = [[] for _ in range(n)]
+        back_links = [[] for _ in range(n)]
+        while dq:
+            s = dq.popleft()
+            if s == end:
+                break
+
+            for t in adj[s]:
+                if depth[t] == 0:
+                    depth[t] = depth[s] + 1
+                    dq.append(t)
+
+                if depth[t] == (depth[s] + 1):
+                    fwd_links[s].append(t)
+                    back_links[t].append(s)
+#+END_SRC
+
+至于dfs得到所有最短路径，可以使用迭代也可以使用递归。我这里给出前向迭代和后向递归的代码。
+
+#+BEGIN_SRC python
+# ==============================
+        if fwd_iter:
+            ans = [[begin]]
+            for i in range(1, depth[end]):
+                tmp = []
+                for path in ans:
+                    e = path[-1]
+                    d = len(path) + 1
+                    for v in fwd_links[e]:
+                        assert depth[v] == d
+                        tmp.append(path + [v])
+                ans = tmp
+
+            ans = [[wordList[i] for i in path] for path in ans if path[-1] == end]
+            return ans
+
+# ====================
+        if back_rec:
+            ans = []
+
+            def dfs(v, path, d):
+                if depth[v] > d:
+                    return
+
+                if v == begin:
+                    ans.append([wordList[i] for i in reversed(path)])
+                    return
+
+                for t in back_links[v]:
+                    path.append(t)
+                    dfs(t, path, d - 1)
+                    path.pop()
+
+            dfs(end, [end], depth[end])
+            return ans
+#+END_SRC

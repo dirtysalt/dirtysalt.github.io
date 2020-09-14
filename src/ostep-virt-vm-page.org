@@ -1,0 +1,50 @@
+#+title: OSTEP / Virt-页式系统
+
+[OSTEP](http://pages.cs.wisc.edu/~remzi/OSTEP/)
+
+*页式存储*
+
+内核为每个进程都维护一个page table, 作用是将VPN(virtual page number)翻译到PFN(physical frame number), 这个数据结构支持按照VPN进行查找. 查找到的对象叫做PTE(page table entry)里面除了PFN之外还有一些额外信息比如protection bit, valid bit. dirty bit等. 这里有个x86处理器PTE示例
+
+file:images/ostep-x86-pte.png
+
+如果我们仔细分析整个步骤的话, 会发现即使翻译一次都会非常耗时:
+- VPN = (virtual address & mask1) >> shift_bit
+- PTE = page_table.find(VPN)
+- PFN = PTE & mask2
+- page = fetch_page_by_frame_number(PFN)
+- data = page + (virtual_address & mask3)
+
+大部分时间花费在1-3上, 也就是VPN->PFN. 如果硬件可以缓存这个对应关系的话, 那么整个翻译过程就可以加快很多. 我们就需要TLB(translation-lookaside buffer). 这个功能通常也集成在MMU中.
+
+*TLB*
+
+数据结构大小会影响到TLB hit rate. 举个例子, 假设TLB只有一个buffer, page size = 4KB. 如果我们遍历 int a[1K] = 4KB 和 double b[1K]  = 8KB. 同样访问1K次. a只有a(0)造成TLB miss, 之后所有查找都被缓存. 而b分别在b(0)和b(512)两个位置触发TLB miss.
+
+如果出现TLB miss的话, 谁来处理翻译过程? 一种方式是硬件处理(hardware-managed TLB), 通常CISC处理器会这样搞. 处理器自己来维护这个page table结构, OS只需要告诉处理器当前进程page table base register. 这种方式有效但是却不灵活. `Intel x86 architecture, which uses a fixed multi-level page table ; the current page table is pointed to by the CR3 register`. 英特尔x86架构使用multi-level page table结构, page table base register是CR3. 另外一种方式则是软件处理(software-managed TLB), 自己维护数据结构来做翻译, 优点则是更加灵活.
+
+TLB在实现上是fully-associative, 简单地说就是所有entry都可以使用. entry中出了VPN/PFN用于匹配外, 还有一些额外字段. 为了方便叙述, 这样使用MIPS TLB Entry分析
+
+file:images/ostep-mips-tlb-entry.png
+
+- G(Global) 可以被多进程共享
+- C(Coherence) cpu cache coherency(maybe?)
+- ASID(address space identifier)
+- D(ditry) 页是否被写
+- V(valid)
+
+比较有意思的是ASID和V. 这两个字段都和context switch有关. 如果发生上下文切换, 那么上一个进程cache的虚拟地址其实是不可用的. 一种办法就是flush将valid标记为0. 但是这种办法显然比较粗鲁对性能有很大影响. 解决办法就是为每个进程分配一个ASID, 这个ID类似PID但是比PID短, 8个bit. 这样我们就可以区分, 某一个VPN到底是哪一个进程产生的而不至于混淆. 那么如果当前进程数量>=2^8怎么办? 如果是这种情况就只能flush TLB了.
+
+如何选择eviction策略? 通常使用LRU都是正确选择. LRU在一些极端情况下会出现最差情况. 假设我们不断地做循环访问1-50, 1-50. 但是TLB cache szie只有49. 那么实际上每次都会出现TLB miss. 
+
+*Page Table*
+
+在优化page table实现之前, 曾经有段时间大家考虑将segment和paging接合起来: segment可以排除一些没有使用的虚拟地址空间来解决外部碎片, paging则可以解决内部碎片问题. 这就是段页式分配. 但是实际效果并不好, 主要原因是实现上过于复杂.
+
+之前提到了Intel使用multi-level page table结构. multi-level是相对linear这种single-level而言的. 考虑了32bit虚拟地址空间, page-size = 4KB, 那么VPN就占用20bits. 如果使用linear/array方式来做page table的话, 那么entry数量就在1<<20 = 4MB, 每个entry如果使用8bytes的话, 一个进程就使用32MB的page table, 开销非常大. 
+
+但是实际上大部分page都是没有分配的. 所以我们可以利用这个特性来优化. 首先我们建立一个page directory array类似linear page table, 但是其中每个page directory标识一个粗粒度的page range(比如说VPN从0-15这些pages)使用情况而不是page table使用情况. 每个Page Directory大小是page size, 里面多少个entries取决于PDE(page directory entry)大小. 下图里面PDBR = page directory base register.
+
+file:images/ostep-linear-vs-multi-level-pt.png
+
+使用Multi-level page table好处是减少memory footprint支持更大的虚拟地址空间.  图中是2-level, 对于更大地址范围可能到3-level. 缺点是因此indirect次数增加而导致address translation时间更长.

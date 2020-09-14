@@ -1,0 +1,88 @@
+#+title: 利用Ford-Fulkerson算法求解网络流问题
+
+[[file:codes/contest/misc/test_network_flow.py][code on github]] 这个算法我是从 《[数据结构与算法分析_Java语言描述(第2版)].韦斯》这本书里面学习的。
+
+与其说是一个算法，不如说是一个框架。这个框架的思想很简单：
+1. 维护一个残余图(residual graph).
+2. 在残余图上寻找增广路径(augmenting path).
+3. 将增广路径信息更新到残余图上，继续步骤2直到找不出任何一条路径。
+
+如何将增广路径更新到残余图上呢？假设选择了一条边(x, y, v), 那么
+1. graph[x][y] -= v. 在x->y这条边上减去v
+2. graph[y][x] += v. 同时增加一条反向边
+
+这个框架的灵活之处就在于如何寻找增广路径，这些方法都是启发式的算法。启发效果好可以显著减少运行时间。
+一种办法是使用类似Dijkstra的方法，每次从当前已知有最大流量的点进行扩展。书里面说可以证明，使用这种算法运行O(E * log(cap-max))次增广路径算法可以找到最大流，其中cap-max是边的最大容量。
+如果每次不是寻找最大流量的点进行扩展，而只是使用普通的DFS找一条可行路径的话，那么最坏情况需要使用O(E*cap-max)次才能找到最大流。
+
+如果增广算法的时间复杂度是O(E * lgV)的话，那么这个算法的时间复杂度就是O(E^2 * lgV * log(cap-max)).
+不过我的代码里面时间复杂度是O(VE)而不是O(ElgV), 所以最终时间复杂度是O(VE^2 * log(cap-max)).
+
+
+#+BEGIN_SRC python
+def find_augmenting_path(G: Graph, s, t):
+    n = len(G)
+    inf = 1 << 30
+
+    flow = [0] * n
+    flow[s] = inf
+    visit = [0] * n
+    parent = [-1] * n  # 如果选取这个节点的话，那么从哪个点流向这个点
+
+    mat = G.mat
+    # 类似Dijkstra算法，不过选择最大的一个flow做扩展
+    while True:
+        max_flow = 0
+        max_node = None
+        for x in range(n):
+            # 选择一个点做扩展
+            if flow[x] > max_flow and not visit[x]:
+                max_flow = flow[x]
+                max_node = x
+
+        if max_node is None:
+            break
+
+        x = max_node
+        visit[x] = 1
+        for y, edge_value in enumerate(mat[x]):
+            if not visit[y]:
+                # 更新到达这个点的最大流
+                value = min(max_flow, edge_value)
+                if value > flow[y]:
+                    flow[y] = value
+                    parent[y] = x
+
+    # 回溯求出增广通路
+    edges = []
+    if flow[t] != 0:
+        x = t
+        while x != s:
+            edges.append((parent[x], x, flow[x]))
+            x = parent[x]
+        edges = edges[::-1]
+
+    # 返回所选择的边和这条边上的最大流
+    return edges, flow[t]
+
+def update_redisual_graph(G, edges):
+    mat = G.mat
+
+    # 更新正向边权重，并且增加一条反向边
+    for (x, y, v) in edges:
+        mat[x][y] -= v
+        mat[y][x] += v
+
+    return G
+
+def find_network_flow(G, s, t):
+    res = 0
+    while True:
+        edges, flow = find_augmenting_path(G, s, t)
+        if flow == 0:
+            break
+        res += flow
+        print(G.readable_edges(edges), flow)
+        update_redisual_graph(G, edges)
+    return res
+#+END_SRC

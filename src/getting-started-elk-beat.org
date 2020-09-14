@@ -1,0 +1,79 @@
+#+title: 本地跑跑ELK + Beat(日志收集和指标收集)
+
+之前接触到ELK这套架构，觉得可以找个时间在本地run看看效果。Beat是ELK的外围组件，可以让ELK这套以存储数据+检索数据+分析数据的架构找到更多可以落地的场景。Beat的作用就是尽可能地收集人们感兴趣的数据，然后将这些数据灌入ELK，通过libbeat这个库来和ELK交互。
+
+现在Beat有下面这些实现：
+1. packet beat 监听网络上面的数据包。不同端口对应不同的协议，使用对应的协议解析数据，然后打到ELK上。
+2. file beat 主要用于汇集日志，工作原理类似不断地tail file
+3. metric beat 这个和collectd很像，不断地去pull系统的指标
+4. winlog beat 主要是观察windows events
+5. heart beat 定时去检测某些服务的心跳
+我觉得数据系统自身很重要，但是如果没有外围好的应用来辅助，价值还是会打折扣的。
+
+Beat可以即可以输出到logstash（可以用来做parse & transform) 然后输出给es, 也可以直接输出到es上。logstash支持很多种 [[https://www.elastic.co/guide/en/logstash/5.6/output-plugins.html][output plugins]], 这样就不用被锁定在es上了。
+
+-----
+
+安装完成es和kibana之后，如果立刻访问kibana的话看不到任何数据，所以这个时候最好先把metricbeat run起来，这样kibana上就可以看到比较美观的数据了。
+
+file:images/elk_beat_dashboard.png
+
+metric beat的输出数据放到了类似“metricbeat-6.2.3-2018.04.10”这样的index下面了，其中6.2.3是metric beat的版本号。这点非常重要，因为如果一旦metric beat不是直接输出到es而是logstash的话，logstash默认输出的索引是”logstash-2018.04.10”这样的。所以logstash配置应该略作改动，下面的配置文件作为参考
+#+BEGIN_SRC Ruby
+# The # character at the beginning of a line indicates a comment. Use
+# comments to describe your configuration.
+input {
+  beats {
+    port => "5044"
+    # type => "metricbeat"
+  }
+}
+
+# The filter part of this file is commented out to indicate that it is
+# optional.
+filter {
+   # grok {
+   #      match => { "message" => "%{COMBINEDAPACHELOG}"}
+   #  }
+}
+output {
+  # stdout {
+  #   codec => rubydebug
+  # }
+  if [fields][type] == "metricbeat" or [type] == "metricbeat" {
+       elasticsearch {
+         hosts => ["http://localhost:9200"]
+         index => "%{[@metadata][beat]}-%{[@metadata][version]}-%{+YYYY.MM.dd}"
+       }
+   } else {
+       elasticsearch {
+         hosts => ["localhost:9200"]
+         index => "logstash-%{+YYYY.MM.dd}"
+      }
+   }
+}
+#+END_SRC
+
+在output不断可以通过fields.type或者是type判断是不是metricbeat. 如果希望通过fields.type判断的话，为此我们需要在metric beat配置里面增加下面配置片段
+#+BEGIN_EXAMPLE
+fields:
+  type: metricbeat
+#+END_EXAMPLE
+又或者是我们可以将input开辟多个端口，比如5044就默认接收metricbeat的输出，但是这样限制比较多。所以最好还是在fields里面添加type字段。
+
+file beat相比就更容易配置一些。file beat会记录所有文件最后读取的偏移，存储到本地的data/registry里面。所以如果希望重新灌文件的话，可以将这个文件删除掉
+
+#+BEGIN_EXAMPLE
+➜  data ls
+meta.json registry
+➜  data cat registry
+[{"source":"/Users/dirlt/workspace/test_nginx.log","offset":6300,"timestamp":"2018-04-10T19:45:10.439636+08:00","ttl":-1,"type":"log","FileStateOS":{"inode":8604457650,"device":16777220}}]
+➜  data cat meta.json
+{"uuid":"728d9653-e843-457b-92eb-9ec7cc18f080"}
+#+END_EXAMPLE
+
+在Kibana里面还可以在”Discover”这块对日志数据进行查询
+
+file:images/elk_beat_discovery.png
+
+总的来说，ELK对于指标数据可以美观地展现出来，对于日志数据可以很容易地检索出来，而且安装也相对简单，值得试试。

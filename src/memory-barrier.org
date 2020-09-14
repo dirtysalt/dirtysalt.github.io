@@ -1,0 +1,107 @@
+#+title: Memory Barrier
+- [[http://groups.google.com/group/linux.kernel/browse_thread/thread/18a59e3c9d8f6310/cdfbcb70e9c48cd0#cdfbcb70e9c48cd0][Document Linux's memory barriers]]
+- [[http://www.linuxjournal.com/article/8211][Memory Ordering in Modern Microprocessors, Part I（推荐阅读）]]
+- [[http://www.linuxjournal.com/article/8212][Memory Ordering in Modern Microprocessors, Part II（推荐阅读）]]
+- [[http://highscalability.com/blog/2013/6/6/paper-memory-barriers-a-hardware-view-for-software-hackers.html][Memory Barriers: A Hardware View For Software Hackers]]
+- [[http://mechanical-sympathy.blogspot.com/2011/07/memory-barriersfences.html][Memory Barriers/Fences]] ([[http://hugozhu.myalert.info/2013/03/28/22-memory-barriers-or-fences.html][中文]])
+- [[http://lwn.net/Articles/576486/][Memory barriers for TSO architectures]]
+
+很早之前一直不理解内存屏障到底要解决什么问题，直到第一次编写lock-free queue的时候才稍微意识到。内存屏障这个问题在编写多线程和编写设备驱动时候是需要考虑的，只是通常我们使用已经封装之后的同步机制比如lock, mutex来解决多线程数据共享问题，所以不需要考虑内存屏障这件事情。内存屏障有两种，一种是关于和编译器相关的内存屏障，一种是和CPU相关的内存屏障。
+
+** 编译器内存屏障
+#+BEGIN_SRC C++
+// #define mfence_c() __asm__ __volatile__("": : :"memory")
+#define barrier() __asm__ __volatile__("": : :"memory")
+
+#+END_SRC
+
+这个内存屏障的意思是:在这个操作之后，所有的原来分配在寄存器里面的变量全部失效，需要重新进行一次寄存器的分配（相当于变量需要全部重新载入）。之所以需要有这个操作，可以考虑这么一个情况。假设有两个值a,分配的内存地址分别是0x12345.我们有下面这样的代码
+#+BEGIN_SRC C++
+#include <cstdio>
+int a=0;
+int main() {
+  printf("%p,%d\n",&a,a);
+  *(int*)(0x5009ac)=1; // 我们知道&a的地址就是0x5009ac
+  printf("%p,%d\n",&a,a);
+  return 0;
+}
+#+END_SRC
+
+如果使用-O2编译的话，那么可能会发现a没有修改。问题就在这里了，编译器在生成代码的时候，将a存放在寄存器里面。而在进行赋值操作的时候，gcc并没有认为修改了a而只是写了一个随机的地址，下次再读取的时候依然是读寄存器的内容，而不是我们填写的内容。所以我们必须显式地告诉gcc，我这个操作可能会修改变量内容，之后你需要重新从内存读取。这条语句实际上不生成任何代码，但可使gcc在barrier()之后刷新寄存器对变量的分配。这个和关键字volatile是存在差别的，volatile只是告诉编译器说：我的状态不要存放在寄存器，所有对于我的读写都是直接操作内存。
+
+事实上上面这种情况是可以通过volatile来解决的。volatile意思就是易挥发，也就是说这个变量可能以某种compiler未知的方式被修改掉，虽然编译器可以进行alias分析。比如编译器编译模块A,A使用了IO Controller标志寄存器映射到了某个固定内存上面的话，可能system其他模块B修改了这个内存。而编译器仅仅是为这个模块生成代码，是没有办法预知这件事情会发生的，很可能就将这个内存映射到了寄存器里面，这样每次从寄存器内部读取就没有办法检测到发生变化。另外一种更加简单的情形就是多线程）。个人感觉volatile这个关键字纯粹是为了编译器优化而存在的，编译器优化将内存操作映射到寄存器操作为了加快速度，但是某些情况下面我们就是希望真切地读取内存而非寄存器。正是因为存在优化编译器，所以我们需要volatile.
+
+barrier除了上面功能（强迫编译器刷新寄存器分配）之外，wyz还告诉我可能会阻止gcc进行instruction reorder.指令重排会出现很多问题。曾经在编写infpack遇到过这个问题，现在这段代码在compress.h这里，compress_uint64里面使用了mfence_c.加这个内存障碍是jjp告诉我的，当时这段代码除了问题加了这个barrier就好了，但是凭的是直觉也不太清楚为什么。
+
+** CPU内存屏障
+#+BEGIN_SRC C++
+// #define mfence_x86() __asm__ __volatile__("mfence":::"memory")
+#define rmb() __asm__ __volatile__("lfence":::"memory")
+#define wmb() __asm__ __volatile__("sfence":::"memory")
+#define mb() __asm__ __volatile__("mfence":::"memory")
+
+#+END_SRC
+
+首先声明我对于CPU内存屏障还不是很了解，只是有一个感性认识。x86是有乱序写OOS(Out of Order Store)的。假设我们有两个操作A=1,B=1.对于单核情况下面一切都很好，因为所有线程都是在一个核上面这个核可以保证一个线程的写顺序和另外一个线程所看到的顺序是一致的。但是在多核下面就会存在问题。我们会假设如果执行到了B=1的话，那么这个时候必然A=1.但是因为存在OOS，所以可能这个核执行顺序是B=1,A=1所以B=1的时候，不一定A=1.（但是我也不知道A=1,B=1中间是应该加上rmb还是wmb.所以理解还不是特备深入。）另外需要注意的是，这个层面上没有必要考虑多核Cache一致性问题，因为多核Cache一致性是由MESI协议来保证的。
+
+#note@20140606: 实际上这个问题对于x86来说是不存在的，因为x86内存模型保证writes before writes http://lwn.net/Articles/576486/ （没有乱序写OOS的问题）. 对于非x86而言，那么必须在两条语句之间添加wmb()确保两条store语句顺序。
+
+引用链接里面Document Linux's memory barriers的文章，来解释rmb和wmb的语义是这样的。需要注意的是这个仅仅是定义发生的顺序而不是完成的顺序
+#+BEGIN_QUOTE
+    +General memory barriers make a guarantee that all memory accesses specified
+    +before the barrier will happen before all memory accesses specified after the
+    +barrier.
+    +
+    +Read memory barriers make a guarantee that all memory reads specified before
+    +the barrier will happen before all memory reads specified after the barrier.
+    +
+    +Write memory barriers make a guarantee that all memory writes specified before
+    +the barrier will happen before all memory writes specified after the barrier.
+    +
+    +There is no guarantee that any of the memory accesses specified before a memory
+    +barrier will be complete by the completion of a memory barrier; the barrier can
+    +be considered to draw a line in the access queue that accesses of the
+    +appropriate type may not cross.
+#+END_QUOTE
+
+举个例子:
+- 线程1: a = 3; wmb(); b = 4; # 如果没有wmb()的话, 那么b=4执行可能在a=3之前完成. 另外一个线程可能看到的就是b=4但是a!=3情况.
+- 线程2: c = b; rmb(); d = a; # 如果没有rmb()的话, 那么读取a可能在读取b之前完成, 那么有可能看到a=3但是b!=4情况.
+
+关于多核Cache一致性问题的话对于programmer这一层似乎没有必要考虑。好比线程A,B（分摊在两个core和两个cpu cache上）共同操作同一个volatile bool flag.如果A将flag置为true的话，如果CPU底层不做好一致性协议的话，那么线程B可能就永远没有办法感知到这个值了（因为线程B每次都是从所在的CPU Cache来读取的，而从线程B所在CPU Cache每次读取的都是旧值）。而且如果是这样的话，对programmer负担很大，就是写完一次多核变量的话必须显示地调用Cache一致性函数。 +但是为了高效的话，搞不好会存在这样的CPU要求programmer显示地来控制CPU Cache以便提高效率。但是现在所接触到的Intel CPU底层都是会保证这点的。+  #notet@20140606: 实际上这才是CPU内存屏障的初衷。不是因为CPU乱序执行问题，而是因为SMP Cache一致性问题. CPU乱序执行对用户是完全透明的, 但是SMP Cache一致性却不是.
+
+** 再谈内存屏障
+最近又有同事(wangyuanzheng)问起这个问题，提出了一些不同的看法。所以我重新看了一下以前文章里面留下的链接，并且大致地阅读了一下链接里面给出的文章，叫做《Memory Barriers a Hardware View for Software Hackers》。
+
+内存模型是在是一个非常深的坑：
+- "Memory Consistency Models For Shared-Memory Multiprocessors" 368pages
+- "What Every Programmer Should Know About Memory" 114pages
+身边同学对于这个问题的理解，就好像对Paxos算法的理解一样，大家各执一词理解不同。
+
+这篇文章从CPU Cache开始说起，然后谈到了SMP Cache一致性问题使用MESI协议来解决。然后为了提高MESI效率的话减少不必要的停顿，添加了两个设施store buffer和invalidate queue（看个一知半解吧），但是却让我明白了一个问题。 *所谓CPU上面的内存屏障，并不是为了解决CPU乱序执行出现的问题，而是因为SMP Cache一致性问题不完善的解决方案而导致每个CPU对于memory perspective/visibility不同* 。对于代码来说，会出现三种order:
+   1. program order.这个就是我们programmer认为代码应该执行的顺序。
+   2. executive order.这个是在compiler进行instruction reorder之后，代码应该执行的顺序。在这里CPU乱序执行是无关的，对我们来说是透明的。
+   3. perspective order.这个是以user来说所看到的执行顺序。
+
+#note@20140606: SMP Cache通过MESI协议可以解决一致性问题。MESI协议默认是实现强一致性，这对于性能影响是不可接受的。所以各种CPU想出各种办法来提高效率的同时来尽可能接近强一致性，导致这些CPU并不是在所有情况下都满足强一致性，在某些情况下面是最终一致性。可是最终一致性就会带来很多问题，好比CPU 1对A写入一个值CPU2不一定能够立刻看到，这样就导致看上去CPU乱序执行（准确的说是存储顺序发生变化）
+
+#note@20140606: 虽然问题最终并不是因为CPU乱序执行而产生的，实际上CPU乱序执行是对外不可见的，但是我们在分析的时候可以从CPU乱序执行（存储顺序）考虑，相当于参考坐标系变化. 举上面例子而言，线程1执行A=1,B=1造成在线程2看到效果是B=1,A=1, 虽然造成线程2看到这个效果原因是因为cache一致性问题，但是我们在分析问题时，却可以从CPU乱序执行出发认为，实际上线程1在执行时候因为CPU乱序所以线程1执行顺序是B=1，A=1. 这样我们才能比较容易考虑如何添加内存屏障来解决这个问题。
+
+对于perspective order这里想说一个哲学问题。其实对于user也不知道最终执行顺序是什么，而是根据内存的状态来推测最终执行顺序是什么。就好比下面这段代码，假设a=b=0
+#+BEGIN_EXAMPLE
+CPU0 a=1
+CPU1 b=a+1
+#+END_EXAMPLE
+如果结果a=1,b=2的话，那我们会想当然地认为CPU0先执行而CPU1后执行。如果a=1,b=1的话，那么我们会想当然地认为CPU1先执行而CPU0后执行。对于user来说不关注CPU是怎么来执行的，而是通过外部状态的表现（File,Disk,Memory,Log）等来判断程序是否按照我所认为的program order执行。
+
+这里引用"Memory Barriers a Hardware View for Software Hackers"的一段话作为结尾：
+#+BEGIN_QUOTE
+Many CPU architectures therefore provide weaker memory-barrier instructions that do only one or the other of these two. Roughly speaking, a "read mem-ory barrier" marks only the invalidate queue and a "write memory barrier" marks only the store buffer. while a full-fledged memory barrier does both.
+
+The effect of this is that a read memory barrier orders only loads on the CPU that executes it, so that all loads preceding the read memory barrier will appear to have completed before any load following the read memory barrier. Similarly, a write memory barrier orders only stores, again on the CPU that executes it, and again so that all stores preceding the write memory barrier will appear to have com-pleted before any store following the write memory barrier. A full-fledged memory barrier orders both loads and stores, but again only on the CPU execut-ing the memory barrier.
+#+END_QUOTE
+
+** C++11内存模型
+- http://wilburding.github.io/blog/2013/04/07/c-plus-plus-11-atomic-and-memory-model/
+- http://en.cppreference.com/w/cpp/atomic/memory_order
+- http://lwn.net/Articles/586838/

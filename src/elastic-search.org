@@ -1,0 +1,43 @@
+#+title: ElasticSearch
+
+- https://www.elastic.co/
+- [[https://www.gitbook.com/book/looly/elasticsearch-the-definitive-guide-cn/details][Elasticsearch 权威指南（中文版）]]
+
+已经有网友整理出了一个cheatsheet http://elasticsearch-cheatsheet.jolicode.com
+
+了解当前集群健康状态 http://localhost:9200/_cat/health?v
+
+了解各个index-shard状态 http://localhost:9200/_cat/shards/
+
+查看是因为什么原因导致某个shard出于unassigned状态(?help查看有哪些可选字段)  http://localhost:9200/_cat/shards/?h=share,index,unassigned.reason
+
+如果只有一台机器serve的话，可以将replication number设置为0
+#+BEGIN_EXAMPLE
+curl -XPUT http://localhost:9200/_settings -d '{ "number_of_replicas" :0 }'
+#+END_EXAMPLE
+
+如果shard处于unassigned状态，并且是primary shard的话，可以使用下面这个脚本强制assigned.
+- https://gist.github.com/ianblenke/6422bed17090bb4f1712.
+- http://stackoverflow.com/questions/23656458/elasticsearch-what-to-do-with-unassigned-shards
+#+BEGIN_EXAMPLE
+curl -XPUT localhost:9200/_cluster/settings -d '{
+                "transient" : {
+                    "cluster.routing.allocation.enable" : "all"
+                }
+        }'
+
+curl -s localhost:9200/_cat/shards | grep UNASS | while read line ; do \
+  read -a fields <<<"$line" ;
+  curl -XPOST -d '{
+    "commands" : [
+      {
+        "allocate" : {
+          "index" : "'${fields[0]}'",
+          "shard" : '${fields[1]}',
+          "node" : "elasticsearch-'$(hostname)'",
+          "allow_primary": "true"
+        }
+      }
+    ]
+  }' http://localhost:9200/_cluster/reroute?pretty ; done
+#+END_EXAMPLE

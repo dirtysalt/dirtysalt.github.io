@@ -1,0 +1,22 @@
+#+title: Time, Clocks, and Ordering of Events in a Distributed System
+
+http://www.stanford.edu/class/cs240/readings/lamport.pdf
+
+http://duanple.blog.163.com/blog/static/709717672012920101343237/
+
+Most people would probably say that an event a happened before an event b if a happened at an earlier time than b. They might justify this definition in terms of physical theories of time. However, if a system is to meet a specification correctly, then that specification must be given in terms of events observable within the system. If the specification is in terms of physical time,then the system must contain real clocks. Even if it does contain real clocks, there is still the problem that such clocks are not perfectly accurate and do not keep precise physical time. We will therefore define the "happened before" relation without using physical clocks.（直觉上我们可以使用物理时钟比较来定义事件顺序，但是获得和保持精确物理时钟非常困难。所以这里不使用物理时钟来定义事件顺序）
+
+我们使用符号a->b来说明事件a发生在事件b之前。通常系统会存在下面两种情况要求规定a->b.
+- if a and b are events in the same process, and a comes before b, then a->b. （在同一进程里面，事件a在事件b之前产生）
+- If a is the sending of a message by one process and b is the receipt of the same message by another process, then a -> b.（在不同进程里，发送者发送a事件给接收者，而接收者返回一个回执事件b给发送者）
+对于第一个情况来说比较好处理，通过给事件分配递增序列即可，所以要解决的是第二个情况。论文给出的方法非常优雅，如果发送者发送消息msg(seq = 100), 接收者在接收到这个消息之后，将自己的seq更新到100(如果自己的seq < 100). 这样接收者之后发送消息的话可以保证msg'(seq > 100)。我们只需要通过比较每个消息seq就可以给消息定序。
+
+实现上可以让每个进程维护一个表格T, T[x]=s表示接收到进程x的消息最高编号为s, 也意味着"我已经接收到了进程x编号从[0,s]所有消息". 进程一旦发送消息之后，除非确保其他所有进程的消息最高编号都不小于这条消息编号，否则不能够交给上层处理，因为有可能其他进程有更小编号的消息还没有到达。比如进程A发送msg(100), 但是如果T[B]=98, 那么进程A不能够将这个消息交给上层处理，因为这时候进程B有编号99的消息还没有到达。如果这个时候进程A将消息交给上层处理的话，当进程B的编号99的消息到达再给上层处理的话，就会破坏全局顺序。另外不要在接收到msg(x)之后就将自己的seq跳变到x, 而是可以通过发送编号从[seq,x]的ack消息让自己的seq递增到x.
+
+上面实现存在两个问题，一个是消息丢失，一个是进程挂掉。可以通过定时重传消息来解决问题一，而问题二需要通过引入membership management来解决。所谓的membership就是整个系统有多少进程存在以及每个进程状态如何。如果某个进程挂掉的话，说明membership已经发生变化，那么需要通过引入协议(keyword: group communication, virtual synchrony)来协调这种变化。
+
+-----
+
+Lamport在本论文里面定义的这种顺序，在论文 [[http://www.csie.fju.edu.tw/~yeh/research/papers/os-reading-list/amir-tocs95-totem.pdf][The Totem Single-Ring Ordering and Membership Protocol]] 里面被称为agreed-order. 在这篇论文里面还有一种safe-order. safe-order相对与agreed-order来说，还必须确保某条消息被所有的进程全部拿到之后，才能够向上传递给应用层处理。agreed-order是不能够保证这点。
+
+基于agreed-order实现safe-order并不困难。这里我们定义agreed_seq = min{T[x]}, 那么agreed-order规定就是"如果消息seq <= agreed_seq的话就可以传递给应用层"。我们可以在进程每次发送消息的时候附带上改进程的agreed_seq，而每次接收到消息的时候更新自己的safe_seq=min{agreed_seq}，那么safe-order规定就是"如果消息seq <= safe_seq的话那么就可以传递给应用层". 因为如果seq <= safe_seq的话，那么这个seq必然低于所有节点的agreed_seq, 说明这个seq可以在所有进程里面都传递给应用层，也就说明这个seq必然被所有进程全部拿到。

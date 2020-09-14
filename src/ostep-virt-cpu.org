@@ -1,0 +1,17 @@
+#+title: OSTEP / Virt-CPU
+
+[OSTEP](http://pages.cs.wisc.edu/~remzi/OSTEP/)
+
+The Multi-Level Feedback Queue(MLFQ)是一个完全公平(complete fair)的scheduler. 多个不同优先级别队列(FIFO), 每个队列里面按照RR来做调度. 假设一共有4个队列, Q0优先级最高, 但是分得时间片最少比如20ms. Q1时间片40ms, Q2 80ms, Q3 160ms
+- 所有新提交任务放在Q0队列中. 为了方便最RR, 可以按照LRU队列管理
+- 依次从Q0->Q3查找可调度进程P. 运行一个时间片比如5ms. 然后将5ms累加到在P运行时间上.
+- 如果P总体运行时间超过20ms, 那么移动到Q1队列. 超过60ms, 移动到Q2队列. 超过140ms放在Q3队列. 之后一直就在Q3队列上带着.
+- 然后定期比如1000ms将所有队列中任务移动到Q0. (boost). 比如P进入Q3时间是t0, 那么在t0 + 1时刻将P放回Q0队列.
+
+对于interactive/io-intensive任务来说, 占用CPU时间片通常短, 因此大部分时间处于Q0队列. 而对于batch/cpu-internsive任务来说, 有大部分时间都是在Q3队列上, 1000ms内仅有(20 + 40 + 80 = 140ms)在非Q3队列上.
+
+而proportional-share scheduling是按照资源使用比例来调度的. 每个job对某种资源占有一定的比例, 比如JobA使用30% CPU, JobB使用70% CPU, 或者JobA占用10cores, 而JobB有20cores. 这种应用场景像是共享集群资源分配. 两种实现思想昂 1. lottery scheduling 2. stride scheduling. 
+
+lottery scheduling思想是为每个job在[0-1]范围内分配区间, 然后产生随机数观察这个随机数落在那个job区间内. 比如jobA/jobB使用CPU比例是1:2, 那么jobA随机数是[0-0.33], 而jobB是[0.33-1]. jobB被调度的几率是jobA的2倍. 
+
+stride scheduling则是将这个比例转换成为虚拟时间, 然后按照完全公平调度器调度. 比如A/B/C使用比例是2:3:5, 那么A/B/C每次运行虚拟运行时间可以换算为30/2, 30 / 3, 30/5 = 15, 10, 6. 每次执行相同time slice, A算执行15 units, B算执行10 units, C算执行6 units. 这个算法潜在问题是, 如果新来了一个任务的话, 怎么算这个任务的虚拟运行时间. 使用0是显然不合适的, 一个可行办法是, 将min(A, B,C)赋给这个任务.

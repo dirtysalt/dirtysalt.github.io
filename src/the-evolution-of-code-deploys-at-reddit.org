@@ -1,0 +1,109 @@
+#+title: The Evolution of Code Deploys at Reddit
+
+[[https://redditblog.com/2017/06/02/the-evolution-of-code-deploys-at-reddit/]]
+
+Reddit的代码部署演化过程
+
+We’re constantly deploying code at Reddit. Every engineer writes code, gets it reviewed, checks it in, and rolls it out to production regularly. This happens as often as 200 times each week and a deploy usually takes fewer than 10 minutes end-to-end. # 每周有200次部署，每次花费时间<10min.
+
+** Where this story starts: consistent and repeatable deploys (2007-2010)
+
+- 最开始的部署程序叫做 `push`, perl编写的.
+- 整个应用程序是一个monolithic app, `r2`, python编写的.
+- 服务器还没有部署在ec2上，并且数量非常固定
+- 整个工程师团队非常少，能够坐在一个会议室里面
+
+整个app是按照功能进行路由的，不同的路由被分配在不同的服务器池里面
+
+file:images/reddit-pools.png
+
+每个路由对应的服务器列表是代码写死的，重启只需要ssh上去搞一把就行.
+#+BEGIN_SRC Shell
+# build the static files and put them on the static server
+`make -C /home/reddit/reddit static`
+`rsync /home/reddit/reddit/static public:/var/www/`
+
+# iterate through the app servers and update their copy
+# of the code, restarting once done.
+foreach $h (@hostlist) {
+    `git push $h:/home/reddit/reddit master`
+    `ssh $h make -C /home/reddit/reddit`
+    `ssh $h /bin/restart-reddit.sh`
+}
+#+END_SRC
+这种部署代码的方式还有个好处就是可以做金丝雀测试（现部署一台看看有没有什么问题），如果有问题的话可以马上回滚
+
+** A bunch of new people (2011)
+
+- 团队的人员增加，但是依然可以在一件比较大的会议室
+- 为了协调大家的工作，push开始部署和完成都会在IRC里面吼一声
+- 新的服务器不断地加入，但是服务器列表依然是人工维护
+- 部署服务的顺序按照固定顺序遍历服务器（服务器列表顺序是固定的）
+- 随着服务器的增加，遍历时间会不断地增加
+  - 使用uWSGI做webserver
+  - 重启过程是kill old process, 然后spawn new process
+  - 为了避免kill同时发生，重启是顺序完成的
+
+file:images/reddit-unshuffled.png
+
+
+** A reworked deploy tool (2012)
+
+部署脚本 `push `使用python重写了，做了下面这些改进
+- 从DNS上获取hosts列表而不是hard coded
+- 不再顺序地遍历服务器部署，而是打乱列表顺序。这样可以更加安全地加快部署速度。
+- 打乱列表顺序可以使用某个seed. 这样如果修复的时候也是按照同样的顺序回滚
+- 不再使用master而是使用revision code
+- 将部署逻辑和部署实现代码上相分离
+
+file:images/reddit-shuffled.png
+
+
+** The autoscaler (2013)
+
+开始往cloud/ec2上面迁移了，也开始使用autoscaler
+- 迁移到云上节省了不少开销，并且可以自动扩容处理突发情况
+- 得益于之前的push的重构，从DNS上获取hosts这个过程非常适合autoscaler
+- autoscaler也对push提出一些挑战和需求，比如正在部署期间某台机器自动下线该如何处理
+- 把uWSGI切换到了gunicorn
+
+** Too many servers (2014)
+
+服务器不断地增加，也导致部署时间不断延长。最坏的情况下面能到1个小时左右。为了加快部署速度，必须并行部署。
+
+file:images/reddit-parallel.png
+
+为此reddit开发了 [[https://github.com/reddit/rollingpin][rollingpin]] 工具, 整个过程又重新减少到了5分钟. rollingpin并不是简单地对server list做shuffle，而不是将影响减少到最小.
+同时rollingpin工具开始做成了C/S架构，在部署过程中可以很清楚地看到每个机器上正在执行什么操作
+
+file:images/reddit-rollout.png
+
+
+** Too many people (2015)
+
+- 为了协调大家的部署过程，增加了deploy queue/lock
+- 将整个deploy过程的一些 [[https://codeascraft.com/2010/12/08/track-every-release/][信息收集]] 起来发送到了Graphite上用于展示
+
+** Two (many) services (2015 also)
+
+reddit mobile上线，但是看上去现在deploy system工作得非常好
+
+** 25 many services (2016)
+
+虽然team和service数量都增加了，但是deploy system依然工作很好。reddit 自己搞了一个python service framework [[https://github.com/reddit/baseplate][baseplate]]
+
+** The safety net (2017)
+
+- gunicorn/uwsgi会重启所有的worker, 但是我们需要更加平滑的方式
+- einhorn可以解决这个问题，reddit在上面做了个[[https://github.com/reddit/reddit/blob/master/r2/r2/lib/einhorn.py][einhorn worker]](依然使用gunicorn/wsgi模型)
+- 为了确保安全，重启时候回去查询einhorn的状态，确保成功才会进行后续的重启。一旦失败则立刻停止
+- 因为增加了等待的时间，为了不让整个deploy时间增加太久，所以增加了parallelism
+- 现阶段的部署可以做到7分钟内部署800台服务器
+
+** In retrospect
+
+** The future
+
+一个好的部署系统要做到下面两点：
+- 每个工程师都可以上来进行部署
+- 部署过程要快并且有安全保证

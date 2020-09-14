@@ -1,0 +1,357 @@
+#+title: Hadoop
+** CDH3u3搭建单节点集群
+搭建单节点集群允许我们在单机做一些模拟或者是测试，还是非常有意义的。如何操作的话可以参考链接 http://localhost/utils/hadoop-0.20.2-cdh3u3/docs/single_node_setup.html
+
+这里稍微总结一下：
+- 首先安装ssh和rsync # sudo apt-get install ssh &&  sudo apt-get install rsync
+- 本机建立好信任关系 # cat ~/.ssh/id_dsa.pub >> ~/.ssh/authorized_keys
+- 将{hadoop-package}/conf配置文件修改如下：
+- conf/core-site.xml
+#+BEGIN_SRC XML
+<configuration>
+     <property>
+         <name>fs.default.name</name>
+         <value>hdfs://localhost:9000</value>
+     </property>
+</configuration>
+#+END_SRC
+- conf/hdfs-site.xml
+#+BEGIN_SRC XML
+<configuration>
+     <property>
+         <name>dfs.replication</name>
+         <value>1</value>
+     </property>
+</configuration>
+#+END_SRC
+
+- conf/mapred-site.xml
+#+BEGIN_SRC XML
+<configuration>
+     <property>
+         <name>mapred.job.tracker</name>
+         <value>localhost:9001</value>
+     </property>
+</configuration>
+#+END_SRC
+- 格式化namenode # bin/hadoop namenode -format
+- 启动hadoop集群 # bin/start-all.sh
+- 停止hadoop集群 # bin/stop-all.sh
+- webconsole
+  -  NameNode - http://localhost:50070/
+  -  JobTracker - http://localhost:50030/
+
+** CDH4.2.0搭建单节点集群
+基本流程和CDH3u3是相同的，但是有一些差异我记录下来。
+- 配置文件
+  - 配置文件在etc/hadoop，包括环境配置脚本比如hadoop-env.sh
+  - bin/sbin目录下面有hadoop集群启动停止工具 #note: 不要使用它们
+  - libexec目录下面是公用的配置脚本
+  - mapred-site.xml中jobtracker地址配置key修改为 mapred.jobtracker.address #note: for yarn.如果是mr1那么不用修改,依然是mapred.job.tracker
+  - +hadoop-daemons.sh会使用/sbin/slaves.sh来在各个节点启动，但是 *不知道什么原因，很多环境变量没有设置* ，所以在slaves.sh执行ssh命令部分最开始增加了 source ~/.shrc; 来强制设置我的环境变量+
+  - #note: 不要使用shell脚本来启动，而是直接使用类似hadoop namenode这种方式来启动单个机器上的实例
+- 公共组件
+  - CDH4.2.0 native-library都放在了目录lib/native下面，而不是CDH3u3的lib/native/Linux-amd64-64下面，这点需要注意。
+  - CDH4.2.0 没有自带libhadoop.so, 所以启动的时候都会出现 ”Unable to load native-hadoop library for your platform... using builtin-java classes where applicable“ 这个警告。需要自己编译放到lib/native目录下面。
+  - CDH4.2.0 lib下面没有任何文件，所有的lib都在share/hadoop/*/lib下面，比如share/hadoop/common/lib. 这点和CDH3有差别，CDH3所有的jar都放在lib目录下面。使用 hadoop classpath 命令可以察看
+- 环境变量
+  - JAVA_LIBRARY_PATH用来设置native library path
+  - HADOOP_CLASSPATH可以用来设置hadoop相关的classpath（比如使用hadoop-lzo等）
+- 准备工作
+  - 使用hdfs namenode -format来做格式化 *注意如果使用sudo apt-get来安装的话，是其他用户比如hdfs,impala,mapred,yarn来启动的，所以必须确保目录对于这些用户是可写的*
+  - 使用命令 hadoop org/apache/hadoop/examples/QuasiMonteCarlo 1 1 确定集群是否可以正常运行。
+
+** CDH4.3.0搭建单节点集群
+基本流程和CDH4.2.0是相同的，但是存在一些差异我记录下来的。从4.3.0开始将mr1和mr2分开存放，还是一个比较大的区别的。这里我以使用mr1为例。
+- +在libexec/hadoop-config.sh添加source ~/.shrc 来强制设置环境变量。+
+- mr1和mr2分开存放主要有
+  - etc目录，hadoop and hadoop-mapreduce1
+  - bin目录，bin and bin-mapreduce1
+  - lib目录。如果需要使用mr1的话，那么cp -r share/hadoop/mapreduce1/ . #note: 不要用软链接
+    - #note：似乎只需要最顶层的一些jar文件即可
+    - #note: 似乎只需要hadoop-core-.jar文件即可
+  - webapps目录。如果需要使用mr1的话，那么cp -r share/hadoop/mapreduce1/webapps . 不然不能够访问JobTracker WebUI
+- +在bin/hadoop-config.sh添加source ~/.shrc 来强制设置环境变量。+
+- #note: 不要使用start-dfs.sh这些脚本启动，似乎这些脚本会去读取master,slaves这些文件然后逐个上去ssh启动。直接使用hadoop namenode这种方式可以只启动单个机器上的实例
+
+** Configuration Files
+*** core-site.xml
+#+BEGIN_SRC XML
+<configuration>
+  <property>
+    <name>fs.default.name</name>
+    <value>hdfs://umengds1.mob.cm3:8020</value>
+  </property>
+
+  <property>
+    <name>fs.trash.interval</name>
+    <value>1440</value>
+  </property>
+</configuration>
+
+#+END_SRC
+
+*** hdfs-site.xml
+#+BEGIN_SRC XML
+<configuration>
+  <property>
+    <name>dfs.name.dir</name>
+    <value>/home/dirlt/hadoop/dfs/nn</value>
+  </property>
+
+  <property>
+    <name>dfs.data.dir</name>
+    <value>/home/dirlt/hadoop/dfs/dn</value>
+  </property>
+
+  <property>
+    <name>fs.checkpoint.dir</name>
+    <value>/home/dirlt/hadoop/dfs/snn</value>
+  </property>
+
+  <property>
+    <name>dfs.replication</name>
+    <value>1</value>
+  </property>
+</configuration>
+#+END_SRC
+
+-----
+
+#+BEGIN_SRC XML
+<configuration>
+  <property>
+    <name>dfs.name.dir</name>
+    <value>/disk1/data/dfs/nn</value>
+  </property>
+
+  <property>
+    <name>dfs.data.dir</name>
+    <value>/disk1/data/dfs/dn</value>
+  </property>
+
+  <property>
+    <name>fs.checkpoint.dir</name>
+    <value>/disk1/data/dfs/snn</value>
+  </property>
+
+  <property>
+    <name>dfs.replication</name>
+    <value>3</value>
+  </property>
+
+  <property>
+    <name>dfs.block.size</name>
+    <value>134217728</value>
+  </property>
+
+  <property>
+    <name>dfs.datanode.max.xcievers</name>
+    <value>8192</value>
+  </property>
+
+  <property>
+    <name>dfs.datanode.du.reserved</name>
+    <value>21474836480</value>
+  </property>
+
+  <property>
+    <name>dfs.namenode.handler.count</name>
+    <value>64</value>
+  </property>
+
+  <property>
+    <name>dfs.datanode.handler.count</name>
+    <value>32</value>
+  </property>
+
+  <property>
+    <name>dfs.client.read.shortcircuit</name>
+    <value>true</value>
+  </property>
+</configuration>
+
+#+END_SRC
+
+*** mapred-site.xml
+#+BEGIN_SRC XML
+<configuration>
+  <property>
+    <name>mapred.job.tracker</name>
+    <value>localhost:8021</value>
+  </property>
+</configuration>
+#+END_SRC
+
+-----
+
+#+BEGIN_SRC XML
+<configuration>
+  <property>
+    <name>mapred.job.tracker</name>
+    <value>umengds2.mob.cm3:8021</value>
+  </property>
+
+  <property>
+    <name>mapred.system.dir</name>
+    <value>/tmp/mapred/system</value>
+  </property>
+
+  <property>
+    <name>mapreduce.jobtracker.staging.root.dir</name>
+    <value>/user</value>
+  </property>
+
+  <property>
+    <name>mapred.local.dir</name>
+    <value>/disk1/data/mapred/local</value>
+  </property>
+
+  <property>
+    <name>mapred.submit.replication</name>
+    <value>3</value>
+    <final>true</final>
+  </property>
+
+  <property>
+    <name>mapred.tasktracker.map.tasks.maximum</name>
+    <value>6</value>
+  </property>
+  <property>
+    <name>mapred.tasktracker.reduce.tasks.maximum</name>
+    <value>8</value>
+  </property>
+
+  <property>
+    <name>mapred.child.java.opts</name>
+    <value> -Xmx2048M -XX:-UseGCOverheadLimit</value>
+  </property>
+
+  <property>
+    <name>mapred.job.tracker.handler.count</name>
+    <value>64</value>
+  </property>
+
+  <property>
+    <name>io.sort.mb</name>
+    <value>256</value>
+  </property>
+
+  <property>
+    <name>io.sort.factor</name>
+    <value>64</value>
+  </property>
+</configuration>
+
+#+END_SRC
+
+*** hadoop-env.sh
+#+BEGIN_SRC Shell
+# The maximum amount of heap to use, in MB. Default is 1000.
+export HADOOP_HEAPSIZE=6000
+
+# Extra Java runtime options. Empty by default.
+# if [ "$HADOOP_OPTS" == "" ]; then export HADOOP_OPTS=-server; else HADOOP_OPTS+=" -server"; fi
+
+# Command specific options appended to HADOOP_OPTS when specified
+export HADOOP_NAMENODE_OPTS="-Xmx12000m $HADOOP_NAMENODE_OPTS"
+export HADOOP_SECONDARYNAMENODE_OPTS="-Xmx12000m $HADOOP_SECONDARYNAMENODE_OPTS"
+export HADOOP_DATANODE_OPTS="-Xmx6000m $HADOOP_DATANODE_OPTS"
+export HADOOP_BALANCER_OPTS="-Xmx3000m $HADOOP_BALANCER_OPTS"
+export HADOOP_JOBTRACKER_OPTS="-Xmx12000m $HADOOP_JOBTRACKER_OPTS"
+#+END_SRC
+
+*** hbase-site.xml
+#+BEGIN_SRC XML
+<configuration>
+  <property>
+    <name>hbase.cluster.distributed</name>
+    <value>true</value>
+  </property>
+
+  <property>
+    <name>hbase.rootdir</name>
+    <value>hdfs://umengds1.mob.cm3:8020/hbase</value>
+  </property>
+
+  <property>
+    <name>hbase.zookeeper.quorum</name>
+    <value>umengds1.mob.cm3,umengds2.mob.cm3</value>
+  </property>
+
+  <property>
+    <name>hbase.hregion.memstore.mslab.enabled</name>
+    <value>true</value>
+  </property>
+
+  <property>
+    <name>hbase.regionserver.handler.count</name>
+    <value>128</value>
+  </property>
+
+  <property>
+    <name>hbase.client.write.buffer</name>
+    <value>4194304</value>
+  </property>
+
+  <property>
+    <name>hbase.hregion.memstore.block.multiplier</name>
+    <value>8</value>
+  </property>
+
+  <property>
+    <name>hbase.server.thread.wakefrequency</name>
+    <value>1000</value>
+  </property>
+
+  <property>
+    <name>hbase.regionserver.lease.period</name>
+    <value>600000</value>
+  </property>
+
+  <property>
+    <name>hbase.hstore.blockingStoreFiles</name>
+    <value>15</value>
+  </property>
+
+  <property>
+    <name>hbase.hregion.max.filesize</name>
+    <value>2147483648</value>
+  </property>
+
+  <property>
+    <name>hbase.ipc.client.tcpnodelay</name>
+    <value>true</value>
+  </property>
+
+  <property>
+    <name>ipc.ping.interval</name>
+    <value>10000</value>
+  </property>
+
+  <property>
+    <name>hbase.hregion.majorcompaction</name>
+    <value>0</value>
+  </property>
+
+  <property>
+    <name>hbase.regionserver.checksum.verify</name>
+    <value>true</value>
+  </property>
+</configuration>
+
+#+END_SRC
+
+*** hbase-env.sh
+#+BEGIN_SRC Shell
+# The maximum amount of heap to use, in MB. Default is 1000.
+export HBASE_HEAPSIZE=14000
+
+# Extra Java runtime options.
+# Below are what we set by default. May only work with SUN JVM.
+# For more on why as well as other possible settings,
+# see http://wiki.apache.org/hadoop/PerformanceTuning
+# export HBASE_OPTS="-ea -XX:+UseConcMarkSweepGC -XX:+CMSIncrementalMode"
+export HBASE_OPTS="-ea -XX:+UseParNewGC -XX:+UseConcMarkSweepGC -XX:+UseCMSCompactAtFullCollection -XX:CMSInitiatingOccupancyFraction=90"
+
+#+END_SRC

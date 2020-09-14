@@ -1,0 +1,118 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>利用Ford-Fulkerson算法求解网络流问题</title>
+<meta name="generator" content="Org mode" />
+<meta name="author" content="dirtysalt" />
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content">
+<h1 class="title">利用Ford-Fulkerson算法求解网络流问题</h1>
+<p>
+<a href="https://github.com/dirtysalt/codes/tree/master/contest/misc/test_network_flow.py">code on github</a> 这个算法我是从 《[数据结构与算法分析_Java语言描述(第2版)].韦斯》这本书里面学习的。
+</p>
+
+<p>
+与其说是一个算法，不如说是一个框架。这个框架的思想很简单：
+</p>
+<ol class="org-ol">
+<li>维护一个残余图(residual graph).</li>
+<li>在残余图上寻找增广路径(augmenting path).</li>
+<li>将增广路径信息更新到残余图上，继续步骤2直到找不出任何一条路径。</li>
+</ol>
+
+<p>
+如何将增广路径更新到残余图上呢？假设选择了一条边(x, y, v), 那么
+</p>
+<ol class="org-ol">
+<li>graph[x][y] -= v. 在x-&gt;y这条边上减去v</li>
+<li>graph[y][x] += v. 同时增加一条反向边</li>
+</ol>
+
+<p>
+这个框架的灵活之处就在于如何寻找增广路径，这些方法都是启发式的算法。启发效果好可以显著减少运行时间。
+一种办法是使用类似Dijkstra的方法，每次从当前已知有最大流量的点进行扩展。书里面说可以证明，使用这种算法运行O(E * log(cap-max))次增广路径算法可以找到最大流，其中cap-max是边的最大容量。
+如果每次不是寻找最大流量的点进行扩展，而只是使用普通的DFS找一条可行路径的话，那么最坏情况需要使用O(E*cap-max)次才能找到最大流。
+</p>
+
+<p>
+如果增广算法的时间复杂度是O(E * lgV)的话，那么这个算法的时间复杂度就是O(E^2 * lgV * log(cap-max)).
+不过我的代码里面时间复杂度是O(VE)而不是O(ElgV), 所以最终时间复杂度是O(VE^2 * log(cap-max)).
+</p>
+
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-py-def-class">def</span> <span class="org-function-name">find_augmenting_path</span>(G: Graph, s, t):
+    <span class="org-py-variable-name">n</span> = <span class="org-py-builtins">len</span>(G)
+    <span class="org-py-variable-name">inf</span> = <span class="org-py-number">1</span> &lt;&lt; <span class="org-py-number">30</span>
+
+    <span class="org-py-variable-name">flow</span> = [<span class="org-py-number">0</span>] * n
+    <span class="org-py-variable-name">flow</span>[s] = inf
+    <span class="org-py-variable-name">visit</span> = [<span class="org-py-number">0</span>] * n
+    <span class="org-py-variable-name">parent</span> = [-<span class="org-py-number">1</span>] * n  <span class="org-comment"># &#22914;&#26524;&#36873;&#21462;&#36825;&#20010;&#33410;&#28857;&#30340;&#35805;&#65292;&#37027;&#20040;&#20174;&#21738;&#20010;&#28857;&#27969;&#21521;&#36825;&#20010;&#28857;</span>
+
+    <span class="org-py-variable-name">mat</span> = G.mat
+    <span class="org-comment"># &#31867;&#20284;Dijkstra&#31639;&#27861;&#65292;&#19981;&#36807;&#36873;&#25321;&#26368;&#22823;&#30340;&#19968;&#20010;flow&#20570;&#25193;&#23637;</span>
+    <span class="org-keyword">while</span> <span class="org-py-pseudo-keyword">True</span>:
+        <span class="org-py-variable-name">max_flow</span> = <span class="org-py-number">0</span>
+        <span class="org-py-variable-name">max_node</span> = <span class="org-py-pseudo-keyword">None</span>
+        <span class="org-keyword">for</span> x <span class="org-keyword">in</span> <span class="org-py-builtins">range</span>(n):
+            <span class="org-comment"># &#36873;&#25321;&#19968;&#20010;&#28857;&#20570;&#25193;&#23637;</span>
+            <span class="org-keyword">if</span> flow[x] &gt; max_flow <span class="org-keyword">and</span> <span class="org-keyword">not</span> visit[x]:
+                <span class="org-py-variable-name">max_flow</span> = flow[x]
+                <span class="org-py-variable-name">max_node</span> = x
+
+        <span class="org-keyword">if</span> max_node <span class="org-keyword">is</span> <span class="org-py-pseudo-keyword">None</span>:
+            <span class="org-keyword">break</span>
+
+        <span class="org-py-variable-name">x</span> = max_node
+        <span class="org-py-variable-name">visit</span>[x] = <span class="org-py-number">1</span>
+        <span class="org-keyword">for</span> y, edge_value <span class="org-keyword">in</span> <span class="org-py-builtins">enumerate</span>(mat[x]):
+            <span class="org-keyword">if</span> <span class="org-keyword">not</span> visit[y]:
+                <span class="org-comment"># &#26356;&#26032;&#21040;&#36798;&#36825;&#20010;&#28857;&#30340;&#26368;&#22823;&#27969;</span>
+                <span class="org-py-variable-name">value</span> = <span class="org-py-builtins">min</span>(max_flow, edge_value)
+                <span class="org-keyword">if</span> value &gt; flow[y]:
+                    <span class="org-py-variable-name">flow</span>[y] = value
+                    <span class="org-py-variable-name">parent</span>[y] = x
+
+    <span class="org-comment"># &#22238;&#28335;&#27714;&#20986;&#22686;&#24191;&#36890;&#36335;</span>
+    <span class="org-py-variable-name">edges</span> = []
+    <span class="org-keyword">if</span> flow[t] != <span class="org-py-number">0</span>:
+        <span class="org-py-variable-name">x</span> = t
+        <span class="org-keyword">while</span> x != s:
+            edges.append((parent[x], x, flow[x]))
+            <span class="org-py-variable-name">x</span> = parent[x]
+        <span class="org-py-variable-name">edges</span> = edges[::-<span class="org-py-number">1</span>]
+
+    <span class="org-comment"># &#36820;&#22238;&#25152;&#36873;&#25321;&#30340;&#36793;&#21644;&#36825;&#26465;&#36793;&#19978;&#30340;&#26368;&#22823;&#27969;</span>
+    <span class="org-keyword">return</span> edges, flow[t]
+
+<span class="org-py-def-class">def</span> <span class="org-function-name">update_redisual_graph</span>(G, edges):
+    <span class="org-py-variable-name">mat</span> = G.mat
+
+    <span class="org-comment"># &#26356;&#26032;&#27491;&#21521;&#36793;&#26435;&#37325;&#65292;&#24182;&#19988;&#22686;&#21152;&#19968;&#26465;&#21453;&#21521;&#36793;</span>
+    <span class="org-keyword">for</span> (x, y, v) <span class="org-keyword">in</span> edges:
+        mat[x][y] -= v
+        mat[y][x] += v
+
+    <span class="org-keyword">return</span> G
+
+<span class="org-py-def-class">def</span> <span class="org-function-name">find_network_flow</span>(G, s, t):
+    <span class="org-py-variable-name">res</span> = <span class="org-py-number">0</span>
+    <span class="org-keyword">while</span> <span class="org-py-pseudo-keyword">True</span>:
+        <span class="org-py-variable-name">edges</span>, <span class="org-py-variable-name">flow</span> = find_augmenting_path(G, s, t)
+        <span class="org-keyword">if</span> <span class="org-py-variable-name">flow</span> == <span class="org-py-number">0</span>:
+            <span class="org-keyword">break</span>
+        <span class="org-py-variable-name">res</span> += flow
+        <span class="org-keyword">print</span>(G.readable_edges(edges), flow)
+        update_redisual_graph(G, edges)
+    <span class="org-keyword">return</span> res
+</pre>
+</div>
+</div>
+</body>
+</html>

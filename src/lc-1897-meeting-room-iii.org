@@ -1,0 +1,98 @@
+#+title: 1897. Meeting Room III
+
+https://www.lintcode.com/problem/meeting-room-iii/description
+
+这题目其实有三个问题，其实要回答的都是一个问题：至少需要几个会议室能满足彼此重叠的开会时间。
+- [[https://www.lintcode.com/problem/meeting-rooms/description][版本1]] 这题直接排序然后判断时间是否重叠，相当于问“如果只有一个会议室是否可以满足要求”
+- [[https://www.lintcode.com/problem/meeting-rooms-ii/description][版本2]] 这题是个关键问题，“需要几个会议室能满足要求”
+- [[https://www.lintcode.com/problem/meeting-room-iii/description][版本3]] 在解决版本2的时候，在几个关键的时间段，判断query是否和这些关键时间段重合
+
+版本2的解法是：
+1. 对每个[s, e]，在s点记录进入，在e+1点记录出来
+2. 需要最多的会议室的时刻，肯定是在这些时间点上
+3. 然后顺序遍历这些时间点，看每个时间点上需要的最多会议室
+
+这题的解法非常具有启发性，值得好好学习。
+
+#+BEGIN_SRC python
+class Solution:
+    """
+    @param intervals: an array of meeting time intervals
+    @return: the minimum number of conference rooms required
+    """
+    def minMeetingRooms(self, intervals):
+        # Write your code here
+        from collections import Counter
+        cnt = Counter()
+        for t in intervals:
+            s, e = t.start, t.end
+            cnt[s] += 1
+            cnt[e+1] -= 1
+
+        ts = sorted(cnt.keys())
+        ans = 0
+        room = 0
+        for t in ts:
+            room += cnt[t]
+            ans = max(ans, room)
+        return ans
+#+END_SRC
+
+版本3的解法是在版本2上扩展的，我们挑选出关键的时间范围。所谓关键的时间范围是，这些时间范围占据会议室的数量已经到了临界值，只要在增加一个就会不满足条件。然后二分查找query可能重合的时间范围，判断是否真的重合。
+另外一个思路是，查找query重合的时间范围，然后看这些时间范围内最大占用的会议室数量。应该可以使用区间树来做，就是稍微有点麻烦。
+
+#+BEGIN_SRC python
+class Solution:
+    """
+    @param intervals: the intervals
+    @param rooms: the sum of rooms
+    @param ask: the ask
+    @return: true or false of each meeting
+    """
+
+    def meetingRoomIII(self, intervals, rooms, ask):
+        # Write your code here.
+        from collections import Counter
+        cnt = Counter()
+        for s, e in intervals:
+            cnt[s] += 1
+            cnt[e] -= 1
+
+        ts = sorted(cnt.keys())
+        rs = []
+        acc = 0
+        start = 0
+        for t in ts:
+            rs.append((start, t, acc))
+            acc += cnt[t]
+            start = t
+
+        rs = [(x, y, t) for (x, y, t) in rs if t == rooms]
+        ans = []
+
+        def overlap(r, q):
+            (x, y, t) = r
+            (s, e) = q
+            if x >= e or y <= s:
+                return False
+            return True
+
+        for q in ask:
+            s, e = 0, len(rs) - 1
+            while s <= e:
+                m = (s + e) // 2
+                if rs[m][0] >= q[0]:
+                    e = m - 1
+                else:
+                    s = m + 1
+            # check e and e + 1 overlap with q
+            opts = [e, e + 1]
+            ok = True
+            for i in opts:
+                if 0 <= i < len(rs):
+                    if overlap(rs[i], q):
+                        ok = False
+                        break
+            ans.append(ok)
+        return ans
+#+END_SRC

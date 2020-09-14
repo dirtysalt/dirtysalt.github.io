@@ -1,0 +1,38 @@
+#+title: Retry-After字段带来的问题
+
+前段时间我发现公司的爬虫程序出了一些问题，会莫名地挂起。因为爬虫程序是使用worker方式起来的，从taskQ里面获取要抓取的URL，所以现象就是taskQ的size一直增长。
+
+为了复现这个问题，我停止了集群上的爬虫，只在一台机器上启动一个线程的爬虫，方便调试。很快线程就挂起了，挂在处理这个 [[http://audioboom.com/posts/1042381-aging-but-dangerous-11-03-12.mp3?source=rss&stitched=1][URL]] 上。
+
+我的第一个反应就是在本地创建相同的请求来复现一下
+#+BEGIN_EXAMPLE
+headers = {'headers': {u'If-None-Match': u'"ee2e5450c5668d34a4bfe54e1bcfe3a5"', u'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_10_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/54.0.2840.71 Safari/537.36', u'If-Modified-Since': u'Wed, 13 Feb 2013 19:38:22 GMT'}, 'allow_redirects': True, 'timeout': (1.0, 2.0)}
+
+proxies = {'http': 'http://localhost:64441', 'https': 'http://localhost:64441'}
+
+url = 'http://audioboom.com/posts/1042381-aging-but-dangerous-11-03-12.mp3?source=rss&stitched=1'
+import requests
+ss = requests.session()
+ss.proxies = proxies
+print ss.request('HEAD', url, headers)
+#+END_EXAMPLE
+这个proxy是我在本地启动的squid进程，开在64441端口上。奇怪地是，本地没有任何问题，返回200.
+
+*然后我怀疑是不是squid的问题* ，是不是卡在了squid返回上面呢？ 在开发机器上重新运行一遍上面代码。从squid的访问日志上来看应该不是，并且实际上这个响应非常快。
+#+BEGIN_EXAMPLE
+1494239934.434    520 127.0.0.1 TCP_MISS/429 585 HEAD http://audioboom.com/posts/1042381-aging-but-dangerous-11-03-12.mp3? - ROUNDROBIN_PARENT/ec2-52-192-206-119.ap-northeast-1.compute.amazonaws.com text/plain
+#+END_EXAMPLE
+不过返回结果是429(Too Many Requests), 看来从这个代理上访问这个URL的次数有点多了。我对这个429倒是没有特别放在心上，虽然是被屏蔽了，但是不至于整个都block住。
+
+最后面实在没有办法，只能修改requests/urllib3的代码，在里面增加print语句来做调试了。看到下面这个地方(urllib3.connectionpool)的时候，感觉是找到了问题。之前一直没有遇到过retry-after这个字段，所以完全没有概念。
+
+file:images/issue-of-retry-after.png
+
+如果存在这个字段的话，那么客户端就会休眠'Retry-After'秒。并且urllib3在处理这个字段的时候有一个feature, 就是如果设置了retries的话这个字段才会生效，否则不会。也就是说，之前所以得到429这个响应，完全是因为我没有设置retry. 回头在来看看429这个响应，里面Retry-After的值是86400，这个挂起时间真是够长的。
+
+#+BEGIN_EXAMPLE
+HTTPHeaderDict({'X-Request-Id': '9e703b03-ec08-4ea3-bce4-ed8583af038f', 'Via': '1.0 proxy (squid/3.1.23), 1.0 idx1 (squid/3.1.23)', 'X-Cache': 'MISS from proxy, MISS from idx1', 'Content-Encoding': 'gzip', 'X-Suggestion': 'Contact support@audioboom.com', 'X-Cache-Lookup': 'MISS from proxy:64441, MISS from idx1:64441', 'Vary': 'Accept-Encoding', 'Connection': 'keep-alive', 'Server': 'nginx/1.9.12', 'Retry-After': '86400', 'X-Runtime': '0.003284', 'Cache-Control': 'no-cache', 'Date': 'Mon, 08 May 2017 10:37:06 GMT', 'X-Cache-Info': 'not cacheable; response code not cacheable', 'Content-Type': 'text/plain'})
+#+END_EXAMPLE
+
+应对Retry-After这个问题也非常好解决，只需要在外部请求的时候增加一个定时器就行。之所以会出现Retry-After，基本上还是因为访问次数太多了，换一批代理或者是改进一下负载策略才能根本地解决问题。
+

@@ -1,0 +1,123 @@
+#+title: 862. Shortest Subarray with Sum at Least K
+
+https://leetcode.com/problems/shortest-subarray-with-sum-at-least-k/
+
+这题我最开始也想到了使用双指针，但是始终没有观察到数据规律，所以最终作罢。先说说最优的解法，然后在写我最开始的解法。
+
+--------------------
+
+对于数组A[0..n-1]. 我们定义B[i] = sum(A[0..i-1])的话，那么sum(A[i..j+1]) = B[j] - B[i].
+如果我们遍历数组A的时候，如果发现(B[j] - B[i])>=K的话，我们在使用B[i]之后，其实我们就可以立刻舍弃B[i]了。
+因为对于后面的j'来说， (j'-i)>(j-i). 我们可以将B维护成为一个最小堆，那么这种解法时间复杂度是O(nlgn).
+
+#+BEGIN_SRC python
+class Solution:
+    def shortestSubarray(self, A: List[int], K: int) -> int:
+        hp = []
+        hp.append((0, -1))
+        import heapq
+
+        acc = 0
+        n = len(A)
+        ans = n + 1
+        for i in range(n):
+            x = A[i]
+            acc += x
+
+            while hp and (acc - hp[0][0]) >= K:
+                (_, j) = heapq.heappop(hp)
+                ans = min(ans, i - j)
+            heapq.heappush(hp, (acc, i))
+
+        if ans == (n + 1):
+            ans = -1
+        return ans
+
+#+END_SRC
+
+但是如果把B维护成为一个有序数组的话，那么这个时间复杂度还可以降低为O(n). B的顺序是这样的(x, i)，x是从低到高，而i也是从低到高。
+
+#+BEGIN_SRC python
+class Solution:
+    def shortestSubarray(self, A: List[int], K: int) -> int:
+        from collections import deque
+
+        dq = deque()
+        dq.append((0, -1))
+
+        n = len(A)
+        ans = n + 1
+        acc = 0
+        for i in range(n):
+            acc += A[i]
+
+            while dq and (acc - dq[0][0]) >= K:
+                ans = min(ans, i - dq[0][1])
+                dq.popleft()
+
+            while dq and acc <= dq[-1][0]:
+                dq.pop()
+            dq.append((acc, i))
+
+        if ans == (n + 1):
+            ans = -1
+        return ans
+#+END_SRC
+
+--------------------
+
+没有使用双指针，我考虑使用二分搜索：“假设最大长度sz的连续串，是否有可能和是>=K”的。为了能够计算到，
+最大长度sz的连续串的最大和，还需要使用一个“循环”最小堆。所以最终时间复杂度是O(n * lgn * lgn)
+因为要自己手写一个最小堆，所以代码量就上去了。
+
+#+BEGIN_SRC python
+class Heap:
+    def __init__(self, n):
+        sz = 1
+        while sz < n:
+            sz = sz * 2
+        self.sz = sz
+        self.data = [(1 << 30)] * (2 * sz)
+
+    def update(self, i, v):
+        p = i + self.sz
+        self.data[p] = v
+        p = p // 2
+        while p >= 1:
+            x, y = 2 * p, 2 * p + 1
+            self.data[p] = min(self.data[x], self.data[y])
+            p = p // 2
+
+    def top(self):
+        return self.data[1]
+
+
+class Solution:
+    def shortestSubarray(self, A: List[int], K: int) -> int:
+
+        def test(sz):
+            heap = Heap(sz)
+            acc = 0
+            ans = 0
+            for i in range(len(A)):
+                # 这个性质非常好，每次只需要更新就行
+                heap.update(i % sz, acc)
+                acc += A[i]
+                ans = max(ans, acc - heap.top())
+            return ans >= K, ans
+
+        s, e = 1, len(A)
+        while s <= e:
+            # print(s, e)
+            sz = (s + e) // 2
+            ok, ans = test(sz)
+            # print(sz, ans, ok)
+            if ok:
+                e = sz - 1
+            else:
+                s = sz + 1
+        ans = s
+        if ans == (len(A) + 1):
+            ans = -1
+        return ans
+#+END_SRC

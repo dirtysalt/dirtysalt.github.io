@@ -1,0 +1,46 @@
+#+title: PyPy实现方式
+
+关于PyPy的实现晚上看了一个帖子，觉得PyPy这个东西挺有意思的。
+- https://www.zhihu.com/question/19588346
+- https://stackoverflow.com/questions/2591879/pypy-how-can-it-possibly-beat-cpython
+
+** 开始
+使用CPython运行方式是：CPython.run(user-code)
+
+而PyPy的运行方式是: CPython.run(Python.run(user-code))
+
+相当于还用Python再实现了一个Python解释器来run用户的代码
+
+可是如果仅仅是这样的话，那么PyPy的代码明显就要比直接运行CPython要慢。为了提高效率，他们做了两件事情。
+
+** 优化
+#+BEGIN_VERSE
+CPython(2).run(Python(1).run(user-code))
+#+END_VERSE
+
+1. 使用的是一个Python的语言子集RPython. 最突出的特点就是所有对象类型都是不可变的，所以可以很容易编译成为native code以及被优化
+2. CPython因为知道(1)是RPython，所以可以得实现特别高效，这里姑且称为PyPyC
+
+然后我们就得到了PyPy的运行方式
+
+#+BEGIN_VERSE
+PyPyC.run(RPython.run(user-code))
+#+END_VERSE
+
+可是即便是以这种方式来运行user-code, 也没有比直接运行CPython要快。（帖子里面说大约35~50%的速度把，但是不算是数量级上的差距）。为了进一步提高性能PyPyC需要实现JIT，但是这个JIT和普通的JIT还有点区别。
+
+** JIT
+普通的JIT编译器是根据user-code来做优化。用户代码那个部分比较热并且耗时，那么就把这个部分的代码编译成为native code. 而PyPyC的JIT编译器不是直接去JIT编译用户的代码，而是JIT编译 *RPython解释器* 的热代码。根据RPython解释器在运行user-code时候得到的profile数据，直接对RPython解释器某个部分（结合user-code）编译成为native code.
+
+知乎贴过来的：使用PyPy来运行程序的时候包含3个部分:
+1. 用户编写的Python代码
+2. RPython编写的Python解释器
+3. RPython编写的实现了meta-tracing的JIT编译器
+
+** 后续
+如果细看的话，PyPyC这个部分的代码是固定的，之和RPython的解释以及JIT编译有关，这个组件是可以复用的。所以理论上我们只要用RPython编写一个语言的解释器，就可以得到这个语言的高效的解释器附带JIT编译器的实现。PHP, Ruby都有这类实现。
+
+** 使用
+使用起来还是蛮方便的，整个Python环境放在一个目录下面就行。因为使用virutalenv来管理packages, 所以只要使用pypy安装好了pip, virtualenv之后，进入了virtual env下面，就还是按照CPython使用方式来搞就行。
+
+安装requirements.txt的时候除了一些问题，是在pycrypto上面，网上说法是不支持fastmath, 所以需要使用 `with_gmp=no pip install pycrypt` 命令来安装。一切没有问题之后，发现PyPy可能不支持pth这种路径文件方式，只要先作罢，看看后面有没有什么其他工程可以用上PyPy的。

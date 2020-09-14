@@ -1,0 +1,287 @@
+#+title: The Little Schemer
+
+http://www.ccs.neu.edu/home/matthias/BTLS/
+
+- The Ten Commandments
+- The Five Rules
+- Chapter1-7 # 基本内容. recognize the patterns.
+- Chapter8 # high-order function, currying, continuation
+- Chapter9 # [[http://en.wikipedia.org/wiki/Partial_function][partial]]/total function, halting problem, Y combinator
+- Chapter10 # interpreter
+
+** ten commandments
+file:images/the-little-schemer-ten-commandments.jpg
+
+** 自然语言，数学语言和编程语言
+
+The goal of this book is to teach the reader to think recursively. Our first task is to decide which language to use to communicate this concept. There are three obvious choices: a natural language, such as English; formal mathematics; or a programming language. Natural languages are ambiguous, imprecise, and sometimes awkwardly verbose. These are all virtues for general communication, but something of a drawback for communicating concisely as precise a concept a s recursion. The language of mathematics is the opposite of natural language: it can express powerful formal ideas with only a few symbols. Unfortunately, the language of mathematics is often cryptic and barely accessible without special training. The marriage of technology and mathematics presents us with a third, almost ideal choice: a programming language. We believe that programming languages are the best way to convey the concept of recursion. They share with mathematics the ability to give a formal meaning to a set of symbols. But unlike mathematics, programming languages can be directly experienced-you can take the programs in this book, observe their behavior, modify them, and experience the effect of these modifications.
+
+** continuation
+
+书中给出的continuation例子大致如下. 假设这个函数是从一个list中移除满足test-f?的元素.
+#+BEGIN_SRC Scheme
+(define rm
+  (lambda (xs test? co)
+    (cond
+     ((null? xs) (co '()))
+     ((test? (car xs))
+      (rm (cdr xs) test?
+          (lambda (nxs) (co nxs))))
+     (else
+      (rm (cdr xs) test?
+          (lambda (nxs) (co (cons (car xs) nxs))))))))
+
+(define cont
+  (lambda (xs) xs))
+
+(display
+ (rm '(hello world hello justice)
+     (lambda (x) (eq? x 'hello))
+     cont))
+
+#+END_SRC
+
+函数rm里面的co就是continuation. 这里可能比较难懂的地方就是每次递归时都创建了一个新lambda. 这个lambda参数nxs实际上是下一次迭代返回结果, 然后做一些处理比如cons, 之后再交回给上层的continuation.
+
+这个continuation工作起来像是一个collector，把所有数据/状态不断保存起来，在结束状态的时候调用，然后不断沿着创建continuation路径反方向返回。
+
+和普通函数直接返回结果不同，这里每次返回结果都会被上一层continuation捕捉到作为参数处理，然后再交回给上层。这种编程方式也称为CPS(continuation passing style).
+
+** call/cc
+另外一个和continuation相关的函数就是call-with-current-continuation(or call/cc). 关于call/cc介绍这里参考 [[http://www.ccs.neu.edu/home/dorai/t-y-scheme/t-y-scheme-Z-H-15.html#node_chap_13][这里]]. call/cc就是说以当前程序的continuation(或者说运行位置)作为参数发起一个函数调用，在这个函数调用里面可以使用这个continuation. 如果一旦使用这个continuation的话，那么就带上continuation的参数调回到原来程序的运行位置继续执行。以链接中给出的例子来说明
+
+#+BEGIN_SRC Scheme
+(+ 1 (call/cc
+      (lambda (cont)
+        (+ 2 (cont 3)))))
+
+(define prod
+  (lambda (xs)
+    (call/cc
+     (lambda (cont)
+       (let recur ((ys xs))
+         (display "doing on ")
+         (display ys)
+         (display "\n")
+         (cond
+          ((null? ys) 1)
+          ((zero? (car ys)) (cont 0))
+          (else (* (car ys) (recur (cdr ys))))))))))
+
+(display "----------\n")
+(prod '(1 2 3 4 5))
+(display "----------\n")
+(prod '(1 2 0 4 5))
+#+END_SRC
+
+第一个例子调用call/cc之后在(cont 3)时，实际上调回了(+ 1 [])这个位置，所以没有(+ 2)这个操作。第二个例子则是来判断链表乘积时候如果链表中存在0元素的话就可以提前返回，所调回的位置则是在(lambda (xs) [])这里，这里直接返回0.
+
+** partial function
+偏序函数在这里的意思是，对于函数f(x)来说，不是所有的x都可以得到一个y（这个函数根本就不会有任何返回）。比如类似eternity这样的函数：
+
+#+BEGIN_SRC scheme
+(define eternity
+  (lambda (x)
+    (eternity x)))
+#+END_SRC
+
+这个函数对所有的x都不会返回。或者是下面类似跳转程序，如果调用的是 (jump 5 0 vec)的话，那么就只能一直循环了。
+
+#+BEGIN_SRC scheme
+(define (nth n l)
+  (if (or (> n (length l)) (< n 0))
+    (error "Index out of bounds.")
+    (if (eq? n 0)
+      (car l)
+      (nth (- n 1) (cdr l)))))
+
+(define (jump a p vec)
+  (let ((x (nth p vec)))
+    (print "trying " x)
+    (cond
+     ((eq? x a) a)
+     (else
+      (jump a x vec)))))
+
+(define vec '(7 0 3 4 5 6 7 1))
+(print (jump 5 2 vec))
+
+#+END_SRC
+
+** halting problem
+
+停机问题学习cs的同学都不会陌生：是否能够写出一个函数will-stop?，然后对于任意函数f, will-stop?都可以判断出f是否会终止。这本书里面给出了一段比较有意思的程序，来说明我们实际上不能写出这个will-stop?函数。我们这里给出三个函数 1)will-stop? 2)eternity 3)last-try. 其中eternity是一个无限循环函数, 而last-try则是反证程序。
+
+#+BEGIN_SRC Scheme
+(define eternity
+  (lambda (x)
+    (eternity x)))
+
+(define will-stop?
+  (lambda (f) ...))
+
+(define last-try
+  (lambda (x)
+    (and (will-stop? last-try)
+         (eternity x))))
+#+END_SRC
+如果(will-stop? last-try) = #f, 那么说明last-try不会终止，但是(and #f ...)会立刻返回。而如果(will-stop? last-try) = #t, 那么说明last-try会终止，但是(and #t ...)后半部分(eternity x)会一直循环下去。
+
+作者在这里还附带了一句："It makes will-stop? the first function that we can describe precisely but cannot define in our language. Thank you Alan Turing and Kurt Godel".
+感觉这句话有点哥德尔不完备性的意思。
+
+** y combinator
+
+书中引入y combinator的例子比较有趣，要求我们编写一个计算列表长度的函数但是不允许define。我始终不太明白yc到底有什么现实用途，或许是可以体现某种运算或者是表达能力吧。
+
+*** Step 1
+我们可以通过枚举列表长度来完成，大致程序如下. 不过这里的问题是我们没有办法穷举长度，下面程序能处理的长度<=1. 如果>1的话那么就会调用eternity(露馅了!)
+
+#+BEGIN_SRC Scheme
+(lambda (xs)
+  (cond
+   ((null? xs)  0)
+   (else
+    (+ 1
+       ((lambda (xs)
+         (cond
+          ((null? xs) 0)
+          (else
+           (+ 1
+              (eternity (cdr xs))))))
+        (cdr xs))))))
+#+END_SRC
+
+*** Step 2
+上面程序其实是有个pattern的(lambda (xs) (cond ...)). 我们抽取这个pattern出来。同样如果处理长度>1的列表也会陷入eternity.
+
+#+BEGIN_SRC Scheme
+((lambda (length)
+   (lambda (xs)
+     (cond
+      ((null? xs) 0)
+      (else (+ 1 (length (cdr xs)))))))
+ ((lambda (length)
+    (lambda (xs)
+      (cond
+       ((null? xs) 0)
+       (else (+ 1 (length (cdr xs)))))))
+  eternity))
+#+END_SRC
+
+*** Step 3
+
+上面程序(lambda (length) ... ) 其实也是一个pattern. 同样如果处理长度>1的列表也会陷入eternity当中。
+
+#+BEGIN_SRC Scheme
+((lambda (mk-length)
+   (mk-length
+    (mk-length eternity)))
+ (lambda (length)
+   (lambda (xs)
+     (cond
+      ((null? xs) 0)
+      (else (+ 1 (length (cdr xs))))))))
+#+END_SRC
+
+*** Step 4
+
+然后我们反思，其实我们为的就是不陷入eternity. 并且最终结果肯定不会陷入eternity, 所以这里eternity其实可以是任意函数，比如mk-length:). 同时我们将内部函数参数名字换为mk-length. 那么上面程序就变化称为
+
+#+BEGIN_SRC Scheme
+((lambda (mk-length)
+   (mk-length mk-length))
+ (lambda (mk-length)
+   (lambda (xs)
+     (cond
+      ((null? xs) 0)
+      (else (+ 1 (mk-length (cdr xs))))))))
+#+END_SRC
+
+但是注意这里我们只能够处理长度==0的列表。>0的列表会出现运行时错误，发生在(mk-length (cdr xs))时候因为mk-length要求输入一个函数而不是列表。
+
+*** Step 5
+那么如果要处理>0的列表该怎么修正呢？我们这里可以在调用mk-length作用在(cdr xs)之前，将mk-length作用在eternity上，也就是如下代码. 但是这个代码只能处理<=1的列表
+
+#+BEGIN_SRC Scheme
+((lambda (mk-length)
+   (mk-length mk-length))
+ (lambda (mk-length)
+   (lambda (xs)
+     (cond
+      ((null? xs) 0)
+      (else (+ 1 ((mk-length eternity) (cdr xs))))))))
+#+END_SRC
+
+*** Step 6
+
+和Step 4对比一下，如果我们这里不调用eternity而是调用mk-length, 那么是否可以处理>1的列表呢? 答案是可以的。至此我们可以得到一个工作的函数。
+
+#+BEGIN_SRC Scheme
+((lambda (mk-length)
+   (mk-length mk-length))
+ (lambda (mk-length)
+   (lambda (xs)
+     (cond
+      ((null? xs) 0)
+      (else (+ 1 ((mk-length mk-length) (cdr xs))))))))
+#+END_SRC
+
+*** Step 7
+然后我们尝试简化上面的函数。我们尽量将mk-length抽离出来，其他部分形成一个单独的函数.
+
+#+BEGIN_SRC Scheme
+((lambda (mk-length)
+   (mk-length mk-length))
+ (lambda (mk-length)
+   (lambda (xs)
+     (cond
+      ((null? xs) 0)
+      (else (+ 1 ((lambda (x)
+                    ((mk-length mk-length) x))
+                  (cdr xs))))))))
+#+END_SRC
+
+然后再将(lambda (x) ...) 外提形成
+#+BEGIN_SRC Scheme
+((lambda (mk-length)
+   (mk-length mk-length))
+ (lambda (mk-length)
+   ((lambda (length)
+      (lambda (xs)
+        (cond
+         ((null? xs) 0)
+         (else (+ 1 (length (cdr xs)))))))
+    (lambda (x)
+      ((mk-length mk-length) x)))))
+#+END_SRC
+
+*** Step 8
+现在我们基本上可以看到(lambda (length) ...) 部分和mk-length没有任何关系，所以我们可以尝试将(lambda (length) ...) 部分外提
+
+#+BEGIN_SRC Scheme
+((lambda (fun)
+   ((lambda (mk-length)
+      (mk-length mk-length))
+    (lambda (mk-length)
+      (fun (lambda (x) ((mk-length mk-length) x))))))
+ (lambda (length)
+   (lambda (xs)
+     (cond
+      ((null? xs) 0)
+      (else (+ 1 (length (cdr xs))))))))
+#+END_SRC
+(lambda (length) ...) 后面部分是我们自己的逻辑，前面部分则是y-combinator.
+
+*** Step 9
+
+我们把y-combinator部分用更短的字符来表示的话就是如下形式
+
+#+BEGIN_SRC Scheme
+(define Y
+  (lambda (fun)
+    ((lambda (f) (f f))
+     (lambda (f) (fun (lambda (x) ((f f) x)))))))
+#+END_SRC
+
+注意fun函数只允许接收一个参数。

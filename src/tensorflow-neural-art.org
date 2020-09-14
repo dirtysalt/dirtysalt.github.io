@@ -1,0 +1,81 @@
+#+title: Tensorflow Neural Art
+
+之前用 [[file:mxnet-neural-art.org][mxnet]] 试过生成neural art, 处理一副图片大约需要2min(在g2.2xlarge实例上). 今天看到这么一个项目 [[https://github.com/dirtysalt/fast-style-transfer][fast-style-transfer]] README里面写只需要100ms就能处理好一副图片 (当然训练style图片需要很长时间，"Training takes 4-6 hours on a Maxwell Titan X.", 不过训练这个style图片是离线的，所以处理时间长也没有问题). 这个项目是用tensorflow写的，所以顺便也学习一下tf的安装。
+
+和neural art相关项目还有这些：
+- https://github.com/jcjohnson/fast-neural-style
+- https://github.com/alexjc/neural-enhance
+- https://github.com/Tetrachrome/subpixel
+- https://github.com/ajbrock/Neural-Photo-Editor
+
+有了上次安装CUDA的经验之后（比如用runfile安装，一定要关闭Nouveau, 并且要安装好linux kernel headers)，这次安装CUDA就顺利一些，不过还是遇到了一个大坑（还遇到了一个小坑是没有安装make, 不过很快就从log里面找到了问题根源）。安装时候出现如下错误：
+#+BEGIN_QUOTE
+The driver installation is unable to locate the kernel source. Please make sure that the kernel source packages are installed and set up correctly.
+If you know that the kernel source packages are installed and set up correctly, you may pass the location of the kernel source with the '--kernel-source-path' flag.
+#+END_QUOTE
+
+我确认了一下linux kernel headers是已经安装了的 *sudo apt-get install linux-headers-$(uname -r)*. 之后不放心还把linux-kernel-source也安装上了，但是问题依然存在。盲从地做了几次尝试之后，我终于记起了要看看log. 里面信息非常明确，就是缺少一些drm_*符号. 问题一下就明了了，很可能就是headers安装补全。
+#+BEGIN_QUOTE
+[ 1520.822063] nvidia_drm: Unknown symbol drm_open (err 0)
+
+[ 1520.822066] nvidia_drm: Unknown symbol drm_poll (err 0)
+
+[ 1520.822069] nvidia_drm: Unknown symbol drm_ut_debug_printk (err 0)
+
+[ 1520.822075] nvidia_drm: Unknown symbol drm_gem_prime_handle_to_fd (err 0)
+#+END_QUOTE
+
+在网上搜索了一下找到了这篇 [[https://devtalk.nvidia.com/default/topic/547588/error-installing-nvidia-drivers-on-x86_64-amazon-ec2-gpu-cluster-t20-gpu-/][文章]], 看了一些几位同学给出的办法，觉得可能这个命令 *sudo apt-get install -y linux-image-extra-$(uname -r)* 能解决问题。直觉是正确的:). 解决了CUDA的问题之后，[[https://www.tensorflow.org/versions/r0.11/get_started/os_setup.html][tf]] 很快就能够使用了。
+
+-----
+
+后来我们尝试做一个类似Prisma的小App，所以用这个fast-style-transfer训练了好几张style图。有几点体会：
+- train data大约提供了8w张图片，但是实际上使用6w张跑一轮下来就能得到比较好的效果了。
+- 存储模型的时候，如果已经知道graph定义的话，那么没有必要保存meta文件（模型参数文件大小15MB，而meta就有190MB）
+- 此外存储模型的时候，最好指定global_step, 这样就知道训练到了第几轮。
+#+BEGIN_SRC Python
+import os
+def latest_ckpt_file(save_path):
+    files = map(lambda x: os.path.basename(x), os.listdir(os.path.dirname(save_path)))
+    files = filter(lambda x: not x.endswith('meta') and x.find('ckpt') != -1, files)
+    xs = map(lambda x: int(x.split('-')[1]), files)
+    return max(xs) if xs else 0
+
+saver.save(sess, save_path, global_step, write_meta_graph = False)
+#+END_SRC
+- 图像生成阶段占用内存和速度和分辨率相关. 使用CPU的话，1280p大约使用13s, 720p使用9s, 640p使用6s. 综合下来还是使用640p比较好些。内存我没有统计，我只知道如果使用5000p的话直接就OOM.
+- 此外还有一点和jpg有关，就是jpg里面有exif字段来描述图片元信息，一个关键的字段就是 [[http://sylvana.net/jpegcrop/exif_orientation.html][Orientation(旋转)]] . 下面是一个参考函数来处理Orientation, 包括进行缩放：
+#+BEGIN_SRC Python
+def adjust_image(input_path, output_path, limit = 640):
+    im = Image.open(input_path)
+
+    # rotate if necessary
+    if hasattr(im, '_getexif'): # only present in JPEGs
+        for orientation in ExifTags.TAGS.keys():
+            if ExifTags.TAGS[orientation]=='Orientation':
+                break
+        e = im._getexif()
+        if e is not None:
+            exif=dict(e.items())
+            if orientation in exif:
+                orientation = exif[orientation]
+                if orientation == 3:   im = im.transpose(Image.ROTATE_180)
+                elif orientation == 6: im = im.transpose(Image.ROTATE_270)
+                elif orientation == 8: im = im.transpose(Image.ROTATE_90)
+
+    # scale it.
+    (w, h) = im.size
+    r = limit * 1.0 / max(w, h)
+    im = im.resize((int(w * r), int(r * h)))
+    im.save(output_path)
+    im.close()
+#+END_SRC
+
+-----
+几张我们处理的照片对比.
+
+file:images/tf-neural-art-getturban0.jpg file:images/tf-neural-art-getturban.jpg
+
+file:images/tf-neural-art-the-scream0.jpg file:images/tf-neural-art-the-scream.jpg
+
+file:images/tf-neural-art-udnie0.jpg file:images/tf-neural-art-udnie.jpg

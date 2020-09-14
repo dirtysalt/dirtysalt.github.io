@@ -1,0 +1,180 @@
+#+title: 1139. the kth subarray
+
+这题目我是在 https://www.lintcode.com/contest/85/ 看到的，其实上一道题目也是相同的问题：
+- https://www.lintcode.com/problem/the-kth-subarray/description
+- https://www.lintcode.com/problem/beautiful-subarrays/description
+
+思路都是遍历+二分搜索，但其实都是可以转换成为双指针遍历。第二题 "beautiful-subarrays" 如果使用遍历+二分还没有什么问题，
+但是第一题因为外层还有一个二分，所以内层如果继续使用遍历+二分就会出现超时（我也不确定，因为我用python版本内层是遍历依然超时）。
+
+--------------------
+两道题目的思路是相近的，先说说第二题 "beautiful-subarrays". 我最开始的思路是
+1. 创建odd前缀数组，然后遍历这个前缀数组，假设当前点的值是 k
+2. 那么分别找到第一个 (k-numOdds+1) 的位置p1, 以及第一个 (k-numOdds) 的位置p2
+3. 那么对于当前值，有(p1-p2)个点，以这些点为起始到当前点，odd是满足要求的
+
+#+BEGIN_SRC python
+    def BeautifulSubarrays(self, nums, numOdds):
+        # write your code here
+
+        tmp = []
+        odd = 0
+        for x in nums:
+            if x % 2 == 1:
+                odd += 1
+            tmp.append(odd)
+
+        def find(x, end):
+            if x == 0:
+                return -1
+
+            s, e = 0, end
+            while s <= e:
+                m = (s + e) // 2
+                if tmp[m] >= x:
+                    e = m - 1
+                else:
+                    s = m + 1
+            p = s
+            return p
+
+        ans = 0
+        # print(tmp)
+        for i in range(len(tmp)):
+            k = tmp[i]
+            if k < numOdds:
+                continue
+
+            exp1 = k - numOdds + 1
+            p1 = find(exp1, i)
+            if p1 > i:
+                continue
+            exp2 = k - numOdds
+            p2 = find(exp2, i)
+            if p2 > i:
+                continue
+            # print(i, k, p2, p1)
+            res = p1 - p2
+            ans += res
+        return ans
+#+END_SRC
+
+不过其实细想就会发现，没有必要每次都从头开始二分，因为二分数组都是非递减的。一旦我们保留合适的二分起始位置，那么就可以比较容易地变为双指针遍历。
+
+#+BEGIN_SRC python
+    def BeautifulSubarrays(self, nums, numOdds):
+        # write your code here
+        odd = 0
+        i, j = 0, -1
+
+        while i < len(nums):
+            odd += nums[i] % 2
+            if odd == numOdds:
+                break
+            i += 1
+
+        ans = 0
+        while i < len(nums):
+            k = j + 1
+            while nums[k] % 2 == 0:
+                k += 1
+
+            kk = i + 1
+            while kk < len(nums) and nums[kk] % 2 == 0:
+                kk += 1
+
+            print(i, kk, j, k)
+            ans += (kk - i) * (k - j) # 从[j..k-1] [i, kk-1] 这些搭配都是满足odd == numOdds
+            i = kk
+            j = k
+
+        return ans
+#+END_SRC
+
+--------------------
+
+然后再说回第一题，这题最外层是一个二分，判断值 `value` 在所有子数组和的rank是多少，也就是说有多少值是 `<=value` 的。
+我们也可以对数组先计算前缀树，然后遍历所有点x，判断以这些点为结尾，最开始点是在什么位置y它们之间的和是 `<=value` 的，
+那么就有(x-y+1)个子数组的和 `<=value`.
+
+如果使用遍历+二分的话，那么代码如下
+
+#+BEGIN_SRC python
+        def test(v):
+            res = 0
+            for i in range(len(tmp)):
+                s, e = i+1, len(tmp) - 1
+                while s <= e:
+                    m = (s + e) // 2
+                    if (tmp[m] - tmp[i]) > v:
+                        e = m - 1
+                    else:
+                        s = m + 1
+                # print('>>>', v, i, e)
+                sz = (e - i)
+                res += sz
+            return res
+#+END_SRC
+
+如果延续上面的思路，其实我们可以变为双指针遍历的，代码如下
+
+#+BEGIN_SRC python
+        def test(v):
+            res = 0
+            j = 0
+            for i in range(len(tmp)):
+                while j < len(tmp) and (tmp[j] - tmp[i]) <= v:
+                    j += 1
+                j -= 1
+                sz = (j - i)
+                res += sz
+            return res
+#+END_SRC
+
+最后不知道为什么python代码在lintcode上运行很慢，一直TLE（10s）左右，但是我抄写成为java之后1s就完成了。
+
+#+BEGIN_SRC java
+// https://www.lintcode.com/problem/the-kth-subarray/description
+
+public class Solution {
+    /**
+     * @param a: an array
+     * @param k: the kth
+     * @return: return the kth subarray
+     */
+    public long find_rank(long[] tmp, long value) {
+        long res = 0;
+        int j = 0;
+        for (int i = 0; i < tmp.length; i++) {
+            while ((j < tmp.length) && ((tmp[j] - tmp[i]) <= value)) {
+                j += 1;
+            }
+            j -= 1;
+            res += (j - i);
+        }
+        return res;
+    }
+    public long thekthSubarray(int[] a, long k) {
+        // wrrite your code here
+        long[] tmp = new long[a.length + 1];
+        long amin = 0, asum = 0;
+        for (int i = 0; i < a.length; i++) {
+            tmp[i + 1] = tmp[i] + a[i];
+            amin = Math.min(amin, a[i]);
+            asum += a[i];
+        }
+
+        long s = amin, e = asum;
+        while (s <= e) {
+            long m = (e - s) / 2 + s;
+            long rank = find_rank(tmp, m);
+            if (rank >= k) {
+                e = m - 1;
+            } else {
+                s = m + 1;
+            }
+        }
+        return s;
+    }
+}
+#+END_SRC

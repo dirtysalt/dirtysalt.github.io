@@ -1,0 +1,197 @@
+#+title: 微信跳一跳的自动化
+
+https://zhuanlan.zhihu.com/p/32636329 大概一两个月前看到这篇文章的吧，当时对这个东西没有怎么在意。前些时间突然想起来这篇文章，也很好奇如何通过代码控制iOS设备，所以就回头看了看这篇文章。
+
+-----
+首先需要将这个代码run起来。我fork了这个 [[https://github.com/dirtysalt/Wechat_AutoJump][项目]] 并且修改了一些代码。主要是随机化延迟以及随机化tap的位置，这样不太容易被微信平台被认为是作弊。这个过程有时候可以成功但是有时候不能，我不太确定微信平台是如何判断作弊的。
+
+如果想作弊的话，另外一个方法是伪装请求，这个 [[https://bbs.pediy.com/thread-223677.htm][文章]] 有讲解如何操作。这个我稍微抓过包，但是没有仔细分析协议。按照文章里面的方法尝试了一下但是没有成功，可能这个和版本升级有关系，高版本的协议发生了变化。
+
+[[https://testerhome.com/topics/7220][控制iOS设备]] 可以通过WebDriverAgent来完成，这个在手机上启动进程，打开端口，然后侦听外部的命令，然后操作iOS设备。facebook-wda将这些请求包装起来。imobiledevice解决的问题将手机上启动的端口映射到mac本地端口。
+
+在整个代码仓库里面只涉及到了两个iOS设备的动作：截屏和按压
+#+BEGIN_SRC Python
+# 创建client和session
+import wda
+self.client = wda.Client(self.serverURL)
+self.s = self.client.session()
+
+# 截屏
+self.client.screenshot('state.png')
+
+# 按压
+self.s.tap_hold(press_w, press_h, press_time / 1000.)
+#+END_SRC
+
+-----
+自动化的原理大致是这样的：
+1. 根据截图判断人的位置和目标的位置
+2. 根据之间的距离判断按压时间
+
+人的位置相对比较好找，直接拿人的截图去匹配就行。困难的是找准目标的位置。有两个实现：
+1. 第一种方法也是根据图像去匹配。这个可以work但是效果不是特别好。不过它可以积累很多训练数据。
+2. 第二种方法是根据训练数据去做个模型，然后根据输入预测位置。这个效果就好很多。
+因为两种方法是相互依赖的，所以运行上应该先跑第一个，然后跑第二个。
+
+先简单粗略地介绍一下第一种方法. 在图像匹配上，因为尺寸可能会有比较大的差异，所以需要以多种scale去匹配.
+#+BEGIN_SRC Python
+def multi_scale_search(pivot, screen, range=0.3, num=10):
+    H, W = screen.shape[:2]
+    h, w = pivot.shape[:2]
+
+    found = None
+    for scale in np.linspace(1-range, 1+range, num)[::-1]:
+        resized = cv2.resize(screen, (int(W * scale), int(H * scale)))
+        r = W / float(resized.shape[1])
+        if resized.shape[0] < h or resized.shape[1] < w:
+            break
+        res = cv2.matchTemplate(resized, pivot, cv2.TM_CCOEFF_NORMED)
+        loc = np.where(res >= res.max())
+        pos_h, pos_w = loc[0][0], loc[1][0]
+        # pos_h, pos_w = list(zip(*loc))[0]
+
+        if found is None or res.max() > found[-1]:
+            found = (pos_h, pos_w, r, res.max())
+
+    if found is None: return (0,0,0,0,0)
+    pos_h, pos_w, r, score = found
+    start_h, start_w = int(pos_h * r), int(pos_w * r)
+    end_h, end_w = int((pos_h + h) * r), int((pos_w + w) * r)
+    return [start_h, start_w, end_h, end_w, score]
+#+END_SRC
+
+所有的截图都会被scale到(1280, 720)尺寸上； 搜索target的话，会先根据人的位置，计算出target可能所在的位置范围而不是扫描整个图片，加快匹配速度。因为target可能有很多种，并且加上阴影等各种效果，所以会导致匹配数据不太准确。并且所有的target都要求中心在中点，这个也是会存在偏差的。在resource/circle以及resource/table下面有各种taregt的图片。我这里放两个看上去很相似的target, 但是其实是两张图片。
+
+file:images/wechat-auto-jump-circle01.png file:images/wechat-auto-jump-circle09.png
+
+如果人跳到中点的话，那么下一个物体中心会出现白色小圈，可以搜索这个小圈。小圈是否可以采用则是根据连通图检测来判断的，连通图的点数量在某个范围内。不过我理解这个地方应该是 `>=245` 可能会更加好点
+
+#+BEGIN_SRC Python
+    def get_target_position_fast(self, state, player_pos):
+        state_cut = state[:player_pos[0],:,:]
+        m1 = (state_cut[:, :, 0] == 245)
+        m2 = (state_cut[:, :, 1] == 245)
+        m3 = (state_cut[:, :, 2] == 245)
+        m = np.uint8(np.float32(m1 * m2 * m3) * 255)
+        # 寻找联通子图. b1是联通的编号，b2是联通子图编号矩阵
+        b1, b2 = cv2.connectedComponents(m)
+        for i in range(1, np.max(b2) + 1):
+            x, y = np.where(b2 == i)
+            # print('fast', len(x))
+            if len(x) > 280 and len(x) < 310:
+                r_x, r_y = x, y
+        h, w = int(r_x.mean()), int(r_y.mean())
+        return np.array([h, w])
+#+END_SRC
+
+然后在整个游戏期间，如果开启debug模式的话，那么会将图片以及计算得到的位置保存下来，用于方法2
+#+BEGIN_SRC Python
+    def debugging(self):
+        current_state = self.state.copy()
+        cv2.circle(current_state, (self.player_pos[1], self.player_pos[0]), 5, (0,255,0), -1)
+        cv2.circle(current_state, (self.target_pos[1], self.target_pos[0]), 5, (0,0,255), -1)
+        cv2.imwrite(os.path.join(self.debug, 'state_{:03d}_res_h_{}_w_{}.png'.format(self.step, self.target_pos[0], self.target_pos[1])), current_state)
+#+END_SRC
+存储的文件名里面包含了target的位置，这个位置虽然粗略但是完全可以用来作为训练数据。
+
+-----
+按照方法1跑出几千个图片之后就可以开始训练模型了：如何根据输入图片来自动寻找出target的位置。这是个回归问题。文章给的方法非常巧妙，不是直接使用单个模型，而是使用两个模型：
+1. 模型1叫做coarse-model. 几乎是从整个图片中(裁剪了上下各320个像素，所以输入是640*720). 来回归目标位置
+2. 模型2叫做fine-model. 是在模型1的基础上，预测中心附近继续裁剪出320 * 320图片，来回归目标位置
+
+从效果上看，fine-model起到的作用还是很大的
+#+BEGIN_QUOTE
+经过十小时的训练，coarse模型在测试集上达到了6像素的精度，实际测试精度大约为10像素，在测试机器（MacBook Pro Retina, 15-inch, Mid 2015, 2.2 GHz Intel Core i7）上inference时间0.4秒。
+
+经过十小时训练，fine模型测试集精度达到了0.5像素，实际测试精度大约为1像素，在测试机器上的inference时间0.2秒。
+#+END_QUOTE
+
+文中提到了一个点，就是在 fast-search 里面会出现很多白点，这个会影响训练。所以使用白色点周围的纯色像素来代替白点。不过我始终觉得这个写法有点问题。
+#+BEGIN_SRC Python
+ mask1 = (img[:, :, 0] == 245)
+ mask2 = (img[:, :, 1] == 245)
+ mask3 = (img[:, :, 2] == 245)
+ mask = mask1 * mask2 * mask3
+ img[mask] = img[x - 320 + 10, y + 14, :]
+#+END_SRC
+
+coarse/fine model如下。为了完整，我把使用到的函数也粘贴过来了
+#+BEGIN_SRC Python
+def conv2d(self, name, input, ks, stride):
+    with tf.name_scope(name):
+        with tf.variable_scope(name):
+            w = tf.get_variable('%s-w' % name, shape=ks, initializer=tf.truncated_normal_initializer())
+            b = tf.get_variable('%s-b' % name, shape=[ks[-1]], initializer=tf.constant_initializer())
+            out = tf.nn.conv2d(input, w, strides=[1, stride, stride, 1], padding='SAME', name='%s-conv' % name)
+            out = tf.nn.bias_add(out, b, name='%s-biad_add' % name)
+    return out
+
+def make_conv_bn_relu(self, name, input, ks, stride, is_training):
+    out = self.conv2d('%s-conv' % name, input, ks, stride)
+    out = tf.layers.batch_normalization(out, name='%s-bn' % name, training=is_training)
+    out = tf.nn.relu(out, name='%s-relu' % name)
+    return out
+
+def make_fc(self, name, input, ks, keep_prob):
+    with tf.name_scope(name):
+        with tf.variable_scope(name):
+            w = tf.get_variable('%s-w' % name, shape=ks, initializer=tf.truncated_normal_initializer())
+            b = tf.get_variable('%s-b' % name, shape=[ks[-1]], initializer=tf.constant_initializer())
+            out = tf.matmul(input, w, name='%s-mat' % name)
+            out = tf.nn.bias_add(out, b, name='%s-bias_add' % name)
+            # out = tf.nn.dropout(out, keep_prob, name='%s-drop' % name)
+    return out
+
+def forward(self, img, is_training, keep_prob, name='coarse'):
+    with tf.name_scope(name):
+        with tf.variable_scope(name):
+            out = self.conv2d('conv1', img, [3, 3, self.input_channle, 16], 2)
+            # out = tf.layers.batch_normalization(out, name='bn1', training=is_training)
+            out = tf.nn.relu(out, name='relu1')
+
+            out = self.make_conv_bn_relu('conv2', out, [3, 3, 16, 32], 1, is_training)
+            out = tf.nn.max_pool(out, [1, 2, 2, 1], [1, 2, 2, 1], padding='SAME')
+
+            out = self.make_conv_bn_relu('conv3', out, [5, 5, 32, 64], 1, is_training)
+            out = tf.nn.max_pool(out, [1, 2, 2, 1], [1, 2, 2, 1], padding='SAME')
+
+            out = self.make_conv_bn_relu('conv4', out, [7, 7, 64, 128], 1, is_training)
+            out = tf.nn.max_pool(out, [1, 2, 2, 1], [1, 2, 2, 1], padding='SAME')
+
+            out = self.make_conv_bn_relu('conv5', out, [9, 9, 128, 256], 1, is_training)
+            out = tf.nn.max_pool(out, [1, 2, 2, 1], [1, 2, 2, 1], padding='SAME')
+
+            out = tf.reshape(out, [-1, 256 * 20 * 23])
+            out = self.make_fc('fc1', out, [256 * 20 * 23, 256], keep_prob)
+            out = self.make_fc('fc2', out, [256, 2], keep_prob)
+
+    return out
+
+
+def forward(self, img, is_training, keep_prob, name='fine'):
+    with tf.name_scope(name):
+        with tf.variable_scope(name):
+            out = self.conv2d('conv1', img, [3, 3, self.input_channle, 16], 2)
+            # out = tf.layers.batch_normalization(out, name='bn1', training=is_training)
+            out = tf.nn.relu(out, name='relu1')
+
+            out = self.make_conv_bn_relu('conv2', out, [3, 3, 16, 64], 1, is_training)
+            out = tf.nn.max_pool(out, [1, 2, 2, 1], [1, 2, 2, 1], padding='SAME')
+
+            out = self.make_conv_bn_relu('conv3', out, [5, 5, 64, 128], 1, is_training)
+            out = tf.nn.max_pool(out, [1, 2, 2, 1], [1, 2, 2, 1], padding='SAME')
+
+            out = self.make_conv_bn_relu('conv4', out, [7, 7, 128, 256], 1, is_training)
+            out = tf.nn.max_pool(out, [1, 2, 2, 1], [1, 2, 2, 1], padding='SAME')
+
+            out = self.make_conv_bn_relu('conv5', out, [9, 9, 256, 512], 1, is_training)
+            out = tf.nn.max_pool(out, [1, 2, 2, 1], [1, 2, 2, 1], padding='SAME')
+
+            out = tf.reshape(out, [-1, 512 * 10 * 10])
+            out = self.make_fc('fc1', out, [512 * 10 * 10, 512], keep_prob)
+            out = self.make_fc('fc2', out, [512, 2], keep_prob)
+
+    return out
+#+END_SRC
+
+看上去coarse和fine模型差异不是很大，肉眼可以看到的差别就是第二个conv2d的filter number. 之后每层都是filter number翻倍，而filter size都是3, 5, 7, 9.

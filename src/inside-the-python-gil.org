@@ -1,0 +1,81 @@
+#+title: Inside The Python GIL
+
+首先Python的线程是操作系统原生线程的封装，线程调度也是依赖于操作系统的。
+
+>>> What is a Thread?
+- Python threads are real system threads
+  - POSIX threads (pthreads)
+  - Windows threads
+- Fully managed by the host operating system
+ - All scheduling/thread switching
+- Represent threaded execution of the Python interpreter process (written in C)
+
+>>> Thread-Specific State
+- Each thread has its own interpreter specific data structure (PyThreadState)
+  - Current stack frame (for Python code)
+  - Current recursion depth
+  - Thread ID
+  - Some per-thread exception information
+  - Optional tracing/profiling/debugging hooks
+- It's a small C structure (<100 bytes)
+
+Python解释器会保存当前执行线程的全局变量，为了避免这个全局变量被多线程访问，所以需要GIL.
+
+>>> Thread Execution
+- The interpreter has a global variable that simply points to the ThreadState structure of the currently running thread
+#+BEGIN_SRC C++
+/* Python/pystate.c */
+...
+PyThreadState *_PyThreadState_Current = NULL;
+#+END_SRC
+- Operations in the interpreter implicitly depend this variable to know what thread they're currently working with
+- Here's what happens on thread creation
+  - Python creates a small data structure containing some interpreter state
+  - A new thread (pthread) is launched
+  - The thread calls PyEval_CallObject
+
+Python解释器没有自己的线程调度器，依赖于操作系统的线程调度。
+
+>>> Thread Scheduling
+- Python does not have a thread scheduler
+- There is no notion of thread priorities, preemption, round-robin scheduling, etc.
+- All thread scheduling is left to the host operating system (e.g., Linux,Windows, etc.)
+- This is partly why signals get so weird (the interpreter has no control over scheduling so it just attempts to thread switch as fast as possible with the hope that main will run)
+
+-----
+GIL Behavior
+
+每个线程在执行之前需要acuqire GIL, 执行一段时间片去release GIL. 每个时间片称为"check interval" 可以通过 `sys.setcheckinterval()` 来做修改。
+
+file:images/python-gil-behavior.png file:images/python-cpu-bound-processing.png
+
+tick并不是按照指令和时间来计算的，更像是根据high-level op来计算的，单个tick没有办法中断。也就是说，如果一个操作属于一个tick, 一旦执行之后想要Ctrl-C中断是不可能的。
+
+一旦开辟工作线程之后，主线程要做的事情就是响应信号(signal), 以及等待工作线程结束。在check期间，主线程调用信号处理程序，而其他线程只是release然后重新acquire gil.
+解释器寄希望于OS在check期间可以调度到其他工作线程，不过这样会带来很多问题。
+
+-----
+Signal Handling
+
+一旦线程检测到有信号(signal)的话，那么就要开始切换回到主线程来处理信号的。但是注意前面"Thread Scheduling"，因为Python是自己做线程调度的，
+所以几乎没有办法主动地要求切换回到主线程， *只能是期待操作系统调度调度到主线程* 。如果这个时候其他工作线程是CPU密集型的话，很大规律是没有办法
+切换回主线程的，而一旦切换到工作线程又会立刻yield出去，结果就是整个系统几乎是不能工作的，而且信号也没有办法响应。
+
+file:images/python-signal-handling.png
+
+Frozen Signals
+- The reason Ctrl-C doesn't work with threaded programs is that the main thread is often blocked on an uninterruptible thread-join or lock
+- Since it's blocked, it never gets scheduled to run any kind of signal handler for it
+- And as an extra little bonus, the interpreter is left in a state where it tries to thread-switch after every tick (so not only can you not interrupt your program, it runs slow as hell!)
+
+-----
+GIL Implementation
+- The GIL is not a simple mutex lock
+- The implementation (Unix) is either...
+  - A POSIX unnamed semaphore
+  - Or a pthreads condition variable
+- All interpreter locking is based on signaling
+  - To acquire the GIL, check if it's free. If not, go to sleep and wait for a signal
+  - To release the GIL, free it and signal
+
+file:images/python-thread-scheduling.png

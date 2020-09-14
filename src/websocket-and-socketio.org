@@ -1,0 +1,73 @@
+#+title: WebSocket和Socket.IO
+
+下面是一些有用的链接：
+
+- python Socket.IO client [[https://github.com/invisibleroads/socketIO-client][github]]
+- python Socket.IO server: socketio [[https://github.com/miguelgrinberg/python-socketio][github]] [[https://python-socketio.readthedocs.io/en/latest/][doc]]
+- python flask-socketio [[https://github.com/miguelgrinberg/Flask-SocketIO][github]] [[http://flask-socketio.readthedocs.io/en/latest/][doc]]
+- uwsgi websocket http://uwsgi-docs.readthedocs.io/en/latest/WebSockets.html # 用uwsgi来管理websocket server.
+- WebSocket 与 Socket.IO : https://zhuanlan.zhihu.com/p/23467317 # 这篇文章不错，讲解了websocket的来源，以及socket.io和websocket是什么关系
+- [[https://stackoverflow.com/questions/10112178/differences-between-socket-io-and-websockets][SO]] 上面也有解释websocket和socket.io之间关系
+- 使用socket.io可能会出现的问题：主要是如果client/server之间没有办法达成websocket协议的话，那么会切换到long polling(xhr polling)的方式
+  - https://stackoverflow.com/questions/8801014/socket-io-xhr-polling-vs-flashsocket-and-websocket
+  - https://github.com/miguelgrinberg/Flask-SocketIO/issues/489
+
+WebSocket的诞生源于在Web端上做实时应用的需求。在实现技术上有这么几种：
+- polling: 每隔一段时间询问服务器是否有新消息，服务器有没有消息都会立刻返回。
+- long polling: 客户端每隔一段时间请求，如果服务器没有消息，那么会hold一段时间，直到有消息或者是超时。
+- http streaming: 客户端和服务端建立http长连接，这个连接一直不返回，有数据就发送。但是网页上的效果就是，HTTP响应一直没有完成，体验不太好。
+- websocket: 开始通过http握手确认client/server都支持WebSocket(ws)协议，然后双方都升级到ws协议。这个协议纯粹就是socket之间的通信。
+- socket.io: websocket规定了协议以及数据frame格式，但是没有实现一些基本操作，比如广播，管理群组，JSON序列化，水平扩展方案等。socket.io在实现上做了规范。
+
+所以如果没有特殊情况的话，应该尽可能地使用socket.io而不是websocket. 我同时尝试过 [[file:codes/py/test-websocket][websocket]] 和 [[file:codes/py/test-socketio/][socket.io]], socket.io实现起来容易太多了。具体来说, socket.io里面有这么几点特性：
+1. namespace. 可以把namespace当做一个房间来理解。理论上一个连接可以关联到多个namespace, server可以给某个namespace下面所有的连接发送消息。
+2. event. event可以用于区分不同的消息类型，不同的消息类型关联不同格式的数据
+3. 支持message queue. 这点对水平扩展很有用。一个server只能管理和这个server连接的clients, 如果需要群发消息的话可能会设计到多个servers. 我们可以将这些servers subscribe到某个message queue上，然后往这个message queue上写入消息，就可以通知到所有的servers了。
+
+-----
+
+使用socket.io的时候，我尝试了一下压力测试，两个指标：创建连接的延迟以及接收消息的延迟。需要注意的是创建连接(销毁连接)必须控制并发数，否则server没有响应那么连接之后的握手通常就会失败。测试代码可以看 [[file:codes/py/test-socketio/][这里]].
+
+运行脚本如下 `(venv) [ec2-user@us_ws0 ~]$ ./load_client.py --port 12307 --bind 192.168.77.10,192.168.77.11,192.168.77.12,192.168.77.13 --batch-round 10 --batch-size 500 --workers 2`
+- 绑定到10~13这些网卡上，每个网卡对应2个进程
+- 每个进程每轮创建500个连接，创建10轮
+这样计算下来，每个网卡对应 5000 * 2 = 1w个连接，一共4w个连接。
+
+实际观察到创建了16w个链接，这个是因为client端会创建两个连接(这个似乎是python socket.io client的问题，我没有办法正确地使用默认的namespace).
+
+UPDATE@2018-02: 在load_client.py里面需要主动地调用connect(path = '/')接口
+
+#+BEGIN_EXAMPLE
+(venv) [ec2-user@us_ws0 ~]$ ss -s
+Total: 160607 (kernel 0)
+TCP:   160106 (estab 160084, closed 0, orphaned 0, synrecv 0, timewait 0/0), ports 0
+
+Transport Total     IP        IPv6
+ *         0         -         -
+RAW       0         0         0
+UDP       12        8         4
+TCP       160106    160102    4
+INET      160118    160110    8
+FRAG      0         0         0
+#+END_EXAMPLE
+
+整个运行期间输出的完成日志可以看 [[file:codes/py/test-socketio/bench.output][bench.output]].
+
+-----
+
+python有两个socketio实现，一个是socketio_client, 一个是python-socketio. 第一个实现我发现有点问题，没有办法将交互协议升级为websocket, 一直处于长轮询的工作方式。此外这个实现长期没有维护。
+所以比较推荐python-socketio这个库，它有客户端和服务端两个实现，然后分别有同步和异步(async/await)两套实现。
+
+如果nginx日志一直是下面这样的话，那么说明还是使用长轮询而非websocket协议。
+
+#+BEGIN_EXAMPLE
+127.0.0.1 - - [19/Nov/2019:11:14:47 +0800] "GET /socket.io/?EIO=3&transport=polling&sid=cb74d348763d46baae519742a2d961c4&t=1574133286835-16 HTTP/1.1" 200 4 "-" "python-requests/2.22.0"
+127.0.0.1 - - [19/Nov/2019:11:14:48 +0800] "POST /socket.io/?EIO=3&transport=polling&sid=cb74d348763d46baae519742a2d961c4&t=1574133288818-19 HTTP/1.1" 200 2 "-" "python-requests/2.22.0"
+127.0.0.1 - - [19/Nov/2019:11:14:48 +0800] "GET /socket.io/?EIO=3&transport=polling&sid=cb74d348763d46baae519742a2d961c4&t=1574133287817-18 HTTP/1.1" 200 4 "-" "python-requests/2.22.0"
+127.0.0.1 - - [19/Nov/2019:11:14:49 +0800] "POST /socket.io/?EIO=3&transport=polling&sid=cb74d348763d46baae519742a2d961c4&t=1574133289827-21 HTTP/1.1" 200 2 "-" "python-requests/2.22.0"
+127.0.0.1 - - [19/Nov/2019:11:14:49 +0800] "GET /socket.io/?EIO=3&transport=polling&sid=cb74d348763d46baae519742a2d961c4&t=1574133288826-20 HTTP/1.1" 200 4 "-" "python-requests/2.22.0"
+127.0.0.1 - - [19/Nov/2019:11:14:50 +0800] "POST /socket.io/?EIO=3&transport=polling&sid=cb74d348763d46baae519742a2d961c4&t=1574133290840-23 HTTP/1.1" 200 2 "-" "python-requests/2.22.0"
+127.0.0.1 - - [19/Nov/2019:11:14:50 +0800] "GET /socket.io/?EIO=3&transport=polling&sid=cb74d348763d46baae519742a2d961c4&t=1574133289835-22 HTTP/1.1" 200 4 "-" "python-requests/2.22.0"
+127.0.0.1 - - [19/Nov/2019:11:14:51 +0800] "POST /socket.io/?EIO=3&transport=polling&sid=cb74d348763d46baae519742a2d961c4&t=1574133291848-25 HTTP/1.1" 200 2 "-" "python-requests/2.22.0"
+127.0.0.1 - - [19/Nov/2019:11:14:51 +0800] "GET /socket.io/?EIO=3&transport=polling&sid=cb74d348763d46baae519742a2d961c4&t=1574133290848-24 HTTP/1.1" 200 4 "-" "python-requests/2.22.0"
+#+END_EXAMPLE

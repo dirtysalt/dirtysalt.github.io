@@ -1,0 +1,213 @@
+#+title: spark
+** 运行模式
+
+spark整体架构如下图:
+
+file:images/spark-cluster-overview.png
+
+由这么几个部分组成：
+- driver progam # 客户端. 在这里创建sparkcontext, 然后提交任务到cluster上
+- cluster manager # master节点. 当然这里也可能包括其他资源管理系统比如mesos或yarn.
+- worker node # worker节点. 在上面会启动executor, 每个executor则会启动多个task. 一个task对应a action on a partition.
+
+根据spark文档中[[http://spark.apache.org/docs/latest/cluster-overview.html][Cluster Mode Overview]] 一节描述, 共有下面几种运行方式
+- local. 本地模式. master, worker都在一个JVM中.
+- local cluster. 本地集群模式. master, worker在一个机器上, 但是是不同的JVM
+- standalone. 独立集群模式. master做资源管理和状态收集.
+- mesos. 借助mesos来做资源管理
+- yarn cluster. 借助yarn来做资源管理. driver program运行在yarn集群上
+- yarn client. 和上面不同的是driver program运行在客户本地.
+
+----------
+这些运行方法内部实现原理非常类似. 先看看local cluster和standalone.(因为local将所有东西放在一个JVM里面, 所以许多组件都被省略)
+
+file:images/spark-local-cluster-mode.png
+
+standalone完全一样. 每个worker/executor上运行一个CoarseGrainedExecutorBackend和driver进行通信. driver对应组件是SparkDeploySchedulerBackend, 双方使用Akka来做通信. TaskSchedulerImpl管理整个DAG如何拆分成为tasks以及这些task按照什么顺序执行. task会被序列化发送到executor上, executor反序列化task然后执行, 执行完成后汇报给driver. driver从matser上申请资源, 然后master会在worker上启动executor来提供执行资源. driver还会向master汇报状态.
+
+这里顺带说一下spark是如何评估应用使用资源的. spark应用资源申请是以core为单位的(spark.cores.max). 集群启动时worker会检查这个机器有多少core, 然后汇报给master. 同时我们也需要配置每个executor占用多少core(spark.executor.cores). 这样spark在提交应用时候就知道这个应用会使用多少core以及使用多少executor
+
+----------
+mesos模式分为粗细两种粒度. 粗粒度和local cluster/standalone一样. 应用程序开始便申请executor, 如果没有足够资源不启动. 期间资源完全占据, 直到应用退出executor资源才会归还. 而细粒度则不通, 只要集群中有一些资源给部分executor的话, 那么应用程序就会开始执行任务(task). 任务执行完成之后, 那么executor资源就会归还. 粗粒度是以app/job作为分配单元的, 而细粒度是以task作为分配单元的. 这里的tradeoff是资源使用率以及调度带来的开销.
+
+file:images/spark-mesos-coarse-mode.png file:images/spark-mesos-fine-mode.png
+
+对于yarn来说只有粗粒度模式. cluster/client在启动executor细节上有所差异. cluster模式中因为driver已经运行在NM上所以可以直接启动其他NM上的executors, 而client必须委托一个NM来创建executors.
+
+file:images/spark-yarn-cluster-mode.png file:images/spark-yarn-client-mode.png
+
+----------
+RDD从生成到执行过程, 以及这个过程中使用的组件, 可以参考下图:
+- SparkContext 用户用来生成RDD
+- DAGScheduler
+  - 将RDD生成Jobs, 并且将Jobs划分成为Stages
+  - 然后将Stage细分到Tasks, 提交给TaskScheduler.
+- TaskScheduler是执行Tasks的引擎.
+  - 它会创建一个TaskSetManager来管理这些任务执行顺序(比如locality以及resource考虑)
+  - TaskScheduler收到Tasks执行结果, 将结果汇报给DAGScheduler.
+
+file:images/spark-rdd-scheduling.jpg
+
+** 示例代码
+[[file:codes/java/spark/src/main/scala/AvroDataFrame.scala][使用Spark DataFrame操作Avro文件]]
+
+#+BEGIN_SRC scala
+import java.io.File
+
+import com.databricks.spark.avro._
+import org.apache.commons.io.FileUtils
+import org.apache.spark.sql.SQLContext
+import org.apache.spark.{SparkConf, SparkContext}
+
+/**
+ * Created by dirlt on 9/6/15.
+ */
+object AvroDataFrame {
+  def main(args: Array[String]): Unit = {
+    val conf = new SparkConf()
+    conf.setAppName("avro-df")
+    conf.setMaster("local")
+    val sc = new SparkContext(conf)
+    val sqlContext = new SQLContext(sc)
+
+    // 读取本地文件
+    // 载入非常容易. 在数据上查询非常方便.
+    val df = sqlContext.read.avro("events1.avro")
+    // directory works too.
+    // val df = sqlContext.read.avro("hdfs://localhost:8020/events1.avro")
+    df.show()
+    df.printSchema()
+
+    // 但是写回有点麻烦, 需要显示指明schema. 对嵌套层次结构数据不太有利
+    // 虽然也可以按照avro格式写回, 但是仅限于单层结构.
+    import sqlContext.implicits._
+    val df2 = df.filter("id = 12345").map(x => x.getAs[String]("id") + "!!!").toDF("new_id")
+    df2.show()
+    df2.printSchema()
+    val path = "/tmp/events1-avro-output"
+    FileUtils.deleteDirectory(new File(path))
+    df2.write.avro(path)
+    val path2 = "/tmp/events1-parquet-output"
+    FileUtils.deleteDirectory(new File(path2))
+    df2.write.parquet(path2)
+    sc.stop()
+  }
+}
+#+END_SRC
+
+
+----------
+
+
+[[file:codes/java/spark/src/main/scala/AvroRawRDD.scala][使用Spark RDD操作Avro文件]]
+
+#+BEGIN_SRC scala
+import com.dirlt.avro.Event
+import org.apache.avro.mapred._
+import org.apache.hadoop.fs.{FileSystem, Path}
+import org.apache.hadoop.io.NullWritable
+import org.apache.spark.api.java.JavaPairRDD
+import org.apache.spark.{SparkConf, SparkContext}
+
+/**
+ * Created by dirlt on 9/6/15.
+ */
+object AvroRawRDD {
+  def main(args: Array[String]): Unit = {
+    val conf = new SparkConf()
+    conf.setAppName("avro-rdd")
+    conf.setMaster("local")
+    val sc = new SparkContext(conf)
+    // sc.hadoopConfiguration.set("fs.default.name", "hdfs://localhost:8020")
+    val path = "/tmp/events1.avro"
+    val rdd = sc.hadoopFile(path, classOf[AvroInputFormat[Event]], classOf[AvroWrapper[Event]], classOf[NullWritable])
+    rdd.map (x => {
+      val event = x._1.datum()
+      event.toString
+    }).foreach(println)
+    val output = rdd.map (x => {
+      val event = x._1.datum()
+      val builder = Event.newBuilder(event)
+      builder.setEvent(event.getEvent + "!!!")
+      (new AvroWrapper(builder.build()), NullWritable.get())
+    })
+    output.map(_._1.toString).collect().foreach(println)
+    val output2 = JavaPairRDD.fromRDD[AvroWrapper[Event], NullWritable](output)
+    val outputPath = "/tmp/events1-avro-output"
+    FileSystem.get(sc.hadoopConfiguration).delete(new Path(outputPath))
+
+    sc.hadoopConfiguration.set("avro.output.schema",Event.getClassSchema.toString)
+    output2.saveAsHadoopFile(outputPath, classOf[AvroWrapper[Event]], classOf[NullWritable], classOf[AvroOutputFormat[Event]])
+
+    // validate.
+    val rdd2 = sc.hadoopFile(outputPath, classOf[AvroInputFormat[Event]], classOf[AvroWrapper[Event]], classOf[NullWritable])
+    val rdd22 = rdd2.map(_._1.datum().getEvent.toString).collect()
+    rdd22.foreach(x => {
+      val len = x.length()
+      assert(x.substring(len - 3) == "!!!")
+    })
+    sc.stop()
+  }
+}
+#+END_SRC
+
+----------
+
+[[file:codes/java/spark/src/main/scala/TestOnHBase.scala][使用Spark读写HBase]]
+
+#+BEGIN_SRC scala
+import org.apache.hadoop.hbase.client.{Put, Result, Scan}
+import org.apache.hadoop.hbase.io.ImmutableBytesWritable
+import org.apache.hadoop.hbase.mapreduce.{TableInputFormat, TableOutputFormat}
+import org.apache.hadoop.hbase.protobuf.ProtobufUtil
+import org.apache.hadoop.hbase.util.{Base64, Bytes}
+import org.apache.hadoop.mapreduce.Job
+import org.apache.spark.rdd.PairRDDFunctions
+import org.apache.spark.{SparkConf, SparkContext}
+
+/**
+ * Created by dirlt on 9/11/15.
+ */
+object TestOnHBase {
+  def main(args: Array[String]): Unit = {
+    val conf = new SparkConf()
+    conf.setAppName("test-on-hbase")
+    conf.setMaster("local")
+
+    val sc = new SparkContext(conf)
+    val job = new Job(sc.hadoopConfiguration)
+    job.setOutputKeyClass(classOf[ImmutableBytesWritable])
+    job.setOutputValueClass(classOf[Result])
+    job.setOutputFormatClass(classOf[TableOutputFormat[ImmutableBytesWritable]])
+    job.getConfiguration.set(TableOutputFormat.OUTPUT_TABLE, "t1")
+
+    implicit def strToBytes(s: String) = Bytes.toBytes(s)
+
+    val rdd = sc.parallelize(Map("k1" -> "v1", "k2" -> "v2", "k3" -> "v3").toList, 3)
+    val hbase_rdd = rdd.map(x => {
+      val (k:String, v:String) = x
+      val p = new Put(k)
+      p.addImmutable("cf", "v", v)
+      (new ImmutableBytesWritable(), p)
+    })
+    new PairRDDFunctions(hbase_rdd).saveAsNewAPIHadoopDataset(job.getConfiguration)
+
+    job.getConfiguration.set(TableInputFormat.INPUT_TABLE, "t1")
+    val scan = new Scan()
+    scan.addColumn("cf", "v")
+    val proto = ProtobufUtil.toScan(scan);
+    val scan_string = Base64.encodeBytes(proto.toByteArray)
+    job.getConfiguration.set(TableInputFormat.SCAN, scan_string)
+    val rdd2 = sc.newAPIHadoopRDD(job.getConfiguration, classOf[TableInputFormat],
+      classOf[ImmutableBytesWritable], classOf[Result])
+    rdd2.map(x => {
+      val k = x._1.asInstanceOf[ImmutableBytesWritable]
+      val r = x._2.asInstanceOf[Result]
+      val v = r.getValue("cf", "v")
+      new String(k.get()) + ":" + new String(v)
+    }).collect().foreach(println)
+    sc.stop()
+
+  }
+}
+#+END_SRC

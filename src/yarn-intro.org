@@ -1,0 +1,120 @@
+#+title: YARN
+** Introducing Apache Hadoop YARN
+http://hortonworks.com/blog/introducing-apache-hadoop-yarn/
+
+看起来YARN的主要目的是将Hadoop不仅仅用于map-reduce的计算方式，还包括MPI，graph-processing，simple services等，而MR仅仅是作为其中一种计算方式。底层依然是使用HDFS。发布方式的话还是将HDFS，YARN，MR，以及Common一起统一发布。
+
+** Apache Hadoop YARN: Background and an Overview
+http://hortonworks.com/blog/apache-hadoop-yarn-background-and-an-overview/
+
+对于MR来说，最关键的一点就是lack of data motion。通过将任务放在数据所在的机器上面，而不是将数据移动到任务所在的机器上面，可以节省带宽提高计算效率。现在来说MR分为下面三个部分：
+- The end-user *MapReduce API* for programming the desired MapReduce application.
+- The *MapReduce framework*, which is the runtime implementation of various phases such as the map phase, the sort/shuffle/merge aggregation and the reduce phase. （framework做的事情是runtime的工作，比如怎么划分数据，怎么进行reducer上面的拉数据等）
+- The *MapReduce system*, which is the backend infrastructure required to run the user’s MapReduce application, manage cluster resources, schedule thousands of concurrent jobs etc. （system做的事情是确保runtime可以work的工作，集群管理如何调度）
+
+file:images/mr-arch.png
+
+For a while, we have understood that the Apache Hadoop MapReduce framework needed an overhaul. In particular, with regards to the JobTracker, we needed to address several aspects regarding scalability, cluster utilization, ability for customers to control upgrades to the stack i.e. customer agility and equally importantly, supporting workloads other than MapReduce itself. 考虑对于MR framework需要做下面这些改进，尤其是对于JobTracker来说：
+- 扩展性。我的理解是master有更好的处理能力，应该来支持更多的节点加入集群。2009年产品部署上能够达到5k个节点。
+- 集群利用。现在hadoop是将所有的nodes看作是distince map-reduce slots的，并且两者是不可替换的。可能mapper使用非常多而reducer非常少（或者相反），这样的情况会限制集群利用效率。
+- 灵活地控制software stack。我的理解是对于软件的升级，可能不能够完全替换，因此需要支持集群中有多个版本的MR运行。主要还是兼容性问题。
+- 服务不同的workload而非MR。比如MPI，graph-processing，realtime-processing，并且减少HDFS到自己存储系统之间数据的迁移（现在MR输入一定要在HDFS上面）
+
+-----
+
+YARN主要做的工作就是在资源利用的改进上面，将资源利用已经workflow分离：
+- 资源利用通过引入的ResouceManager（RM）以及NodeManager（NM）来管理。
+  - NM主要做单机上面的资源收集汇报给RM
+  - RM能够用来了解整个集群的资源使用情况，通过收集NM以及AM汇报信息。
+  - RM提供pluggable Scheduler来计算资源分配。
+- workflow方面将MR和其他类型workflow分离，抽象成为ApplicationManager（AM）以及Container（既有ResourceAllocation概念，也有ApplicationNode概念）
+
+file:images/yarn-arch.png
+
+** Apache Hadoop YARN: Concepts and Applications
+http://hortonworks.com/blog/apache-hadoop-yarn-concepts-and-applications/
+
+将AM和RM分离的好处在于：一方面减轻RM的压力这样可以让RM管理更多的集群，另外一方面可以让AM支持更多类型的计算而不仅仅是MR
+
+AM对RM提供Resource Request。对于Resource Model定义包括下面几个方面：
+- Resource-name (hostname, rackname – we are in the process of generalizing this further to support more complex network topologies with YARN-18).（我需要哪些机器，可以制定host，rack，或者是*/any）
+- Memory (in MB)（需要使用的内存大小）
+- CPU (cores, for now)（CPU的个数）
+- In future, expect us to add more resource-types such as disk/network I/O, GPUs etc.（各种IO参数）
+每一个Resource Model如果满足之后在一个机器上面形成一个Container。Resource Request包括下面几个部分：
+- <resource-name, priority, resource-requirement, number-of-containers>
+- resource-name is either hostname, rackname or * to indicate no preference. In future, we expect to support even more complex topologies for virtual machines on a host, more complex networks etc.
+- priority is intra-application priority for this request (to stress, this isn’t across multiple applications).
+- resource-requirement is required capabilities such as memory, cpu etc. (at the time of writing YARN only supports memory and cpu).
+- number-of-containers is just a multiple of such containers.（我需要多少个这样的container？）
+
+ApplicationMaster需要通知Container来执行任务，因为现在的任务不限于MR，需要提供下面这些信息：
+- Command line to launch the process within the container. 命令行
+- Environment variables. 环境变量
+- Local resources necessary on the machine prior to launch, such as jars, shared-objects, auxiliary data files etc. 一些本地资源
+- Security-related tokens. 安全token
+
+整个YARN执行任务的步骤包括下面这几步： Application execution consists of the following steps:
+- Application submission. 提交任务
+- Bootstrapping the ApplicationMaster instance for the application. 启动AM
+- Application execution managed by the ApplicationMaster instance. AM在不同的Container启动task
+
+Let’s walk through an application execution sequence (steps are illustrated in the diagram):
+- A client program submits the application, including the necessary specifications to launch the application-specific ApplicationMaster itself. （用户首先提交AM）
+- The ResourceManager assumes the responsibility to negotiate a specified container in which to start the ApplicationMaster and then launches the ApplicationMaster.（RM为AM分配所需要的Container，并且启动AM）
+- The ApplicationMaster, on boot-up, registers with the ResourceManager – the registration allows the client program to query the ResourceManager for details, which allow it to  directly communicate with its own ApplicationMaster.（AM向RM进行注册）
+- During normal operation the ApplicationMaster negotiates appropriate resource containers via the resource-request protocol.（AM通过Resouce Request和RM进行资源协调，获得所需要的Container）
+- On successful container allocations, the ApplicationMaster launches the container by providing the container launch specification to the NodeManager. The launch specification, typically, includes the necessary information to allow the container to communicate with the ApplicationMaster itself.（AM通知Container所处的NM启动task）
+- The application code executing within the container then provides necessary information (progress, status etc.) to its ApplicationMaster via an application-specific protocol.（Container会定时和AM进行通信，通知进度等）
+- During the application execution, the client that submitted the program communicates directly with the ApplicationMaster to get status, progress updates etc. via an application-specific protocol.（client直接和AM进行通信了解整个任务进度）
+- Once the application is complete, and all necessary work has been finished, the ApplicationMaster deregisters with the ResourceManager and shuts down, allowing its own container to be repurposed.（任务完成之后AM通知RM注销并且释放所持有的Container）
+
+file:images/yarn-flow.png
+
+** Apache Hadoop YARN: NodeManager
+http://hortonworks.com/blog/apache-hadoop-yarn-nodemanager/
+
+file:images/yarn-nodemanager-arch.png
+
+- NodeStatusUpdater 做一些资源状态汇报，并且接收RM请求停止已经运行的container
+- ContainerManager *核心部分*
+  - RPC server 接收AM的命令运行或停止container，和ContainerTokenSecretManager协作完成请求认证。所有操作会记录在audit-log
+  - ResourceLocalizationService 准备一些applicaiton所需要的资源
+  - ContainersLauncher 维护container线程池，接收RM/AM的请求来运行和停止container
+  - AuxServices 提供额外服务。当application在这个node上面第一个container运行或者是application结束的时候会收到通知。
+  - ContainersMonitor 监控container运行状况，如果资源使用超限的话会kill container
+  - LogHandler 收集application本地产生的日志进行聚合并且上传到hdfs
+- ContainerExecutor 执行container
+- NodeHealthCheckerService 对于node做一些健康检查，将一些资源数据给NodeStatusUpdater
+- Security
+  - ApplicationACLsManagerNM
+  - ContainerTokenSecretManager
+- WebServer 当前运行的application以及对应的container，资源利用状况以及聚合的log
+
+** Apache Hadoop YARN: ResourceManager
+http://hortonworks.com/blog/apache-hadoop-yarn-resourcemanager/
+
+file:images/yarn-resourcemanager-arch.png
+
+- Components interfacing RM to the clients:
+  - ClientService 用户接口用来提交删除application以及获得当前集群的状况等数据
+  - AdminService 管理接口可以用来调整queue的优先级或者是增加node等
+- Components connecting RM to the nodes:
+  - ResourceTrackerService 用来和NodeManager做RPC
+  - NMLivelinessMonitor 检测NM是否存活
+  - NodesListManager 维护当前所有的NM节点
+- Components interacting with the per-application AMs
+  - ApplicationMasterService 用来和AM交互部分接口，AM的资源请求通过这个接口提交，然后转向YarnScheduler处理
+  - AMLivelinessMonitor 检测AM是否存活
+- The core of the ResourceManager *核心部分*
+  - ApplicationsManager 维护当所有提交的Application
+  - ApplicationACLsManager
+  - ApplicationMasterLauncher 负责AM的启动
+  - YarnScheduler #note: 似乎这个调度行为是在一开始就决定的
+    - The Scheduler is responsible for allocating resources to the various running applications subject to constraints of capacities, queues etc. It performs its scheduling function based on the resource requirements of the applications such as memory, CPU, disk, network etc. Currently, only memory is supported and support for CPU is close to completion.
+  - ContainerAllocationExpirer application可能占用container但是却不使用。可以用来检测哪些container没有使用。
+- TokenSecretManagers
+  - ApplicationTokenSecretManager
+  - ContainerTokenSecretManager
+  - RMDelegationTokenSecretManager
+- DelegationTokenRenewer
