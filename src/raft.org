@@ -1,4 +1,4 @@
-#+title: Raft
+#+title: Raft(A consensus algorithm)
 
 参考链接
 - https://pdos.csail.mit.edu/6.824/papers/raft-extended.pdf [[[file:images/raft-extended.pdf][My Copy]]]
@@ -26,7 +26,7 @@ MIT-6.824课程里面给的raft论文是个扩展版本 <In Search of an Underst
 论文里面还提到了许多其他实现问题比如：
 1. 实现动态membership change
 2. 实现完整的状态(snapshot)传输
-3. 通过随机化election timeout时间来减少split votes问题
+3. 随机化election timeout时间来减少split votes的效果分析
 
 ----------
 Rafe FAQ
@@ -184,3 +184,73 @@ why not elect the server with the longest log as leader?
     so new leader can only be one of S2 or S3
     i.e. the rule cannot be simply "longest log"
 #+END_EXAMPLE
+
+----------
+
+关于实现的一些细节问题：
+
+Q: 如何让leader发现自己已经不在是leader了？
+
+A: 我觉得可以记录和每个follower最近的心跳时间，这个心跳时间可以在发送日志或者是发送心跳成功之后更新。如果发现超过半数的follower的时间太长的话，那么自己就要drop leader
+
+Q: 如何找到前面一个同步点？
+
+A: 如果leader的prevLogIndex比自己的logs还要多的话，那么先选择自己的logs最后一条记录。leader prevLogTerm肯定比自己的要大。假设自己在prevLogIndex的term是A的话，那么向前找到term是A-1的记录就是同步点，但是不用小于自己的commitIndex
+
+#+BEGIN_SRC go
+			DPrintf("X%d: mismatch log entry. index = %v, leader term = %v, my term = %v",
+				rf.me, req.PrevLogIndex, req.PrevLogTerm, rf.logs[idx].Term)
+			if rf.logs[idx].Term > req.PrevLogTerm {
+				panic(fmt.Sprintf("X%d: conflict term assert error: %d, %d", rf.me, rf.logs[idx].Term, req.PrevLogTerm))
+			}
+			searchTerm := rf.logs[idx].Term - 1
+			rb := 0
+			for idx >= 0 && rf.logs[idx].Term > searchTerm && (idx+rf.baseLogIndex) > rf.commitIndex {
+				idx -= 1
+				rb += 1
+			}
+#+END_SRC
+
+Q: 如何确保获得有效的超过半数投票？
+
+A: 首先reply.voteGranted要保证是true. 其次如果我们使用goroutine的话，在返回结果的时候，可能自己的term已经改变了。所以这个时候需要确保，自己的term和发起请求时候的term是相同的（否则可以认为这个投票并不是给自己的），才可以认为获得有效选票。
+
+#+BEGIN_SRC go
+				valid := true
+				rf.Lock()
+				// 如果修改了currentTerm的话，那么认为这轮就失败了
+				// 因为这里投票其实是投给req.Term
+				// 如果这里直接更新了currentTerm的话，那么就会出现两个leader.
+				if reply.Term > rf.currentTerm {
+					rf.changeToFollower(reply.Term, "electLeaderResponse")
+				}
+				if req.Term != rf.currentTerm {
+					valid = false
+				}
+				rf.Unlock()
+
+				// get majority votes
+				if valid && reply.VoteGranted {
+					v := atomic.AddInt32(&votes, 1)
+					if int(v) == (len(rf.peers)/2 + 1) {
+						rf.changeToLeader()
+					}
+				}
+#+END_SRC
+
+Q: 如何方便地打印RPC
+
+A: 首先实现request/response的String()方法，然后可以在处理过程中间将某些过程记录在一个字符串上，然后使用golang的defer功能，在，在函数返回的时候一起打印
+
+#+BEGIN_SRC go
+	trace := strings.Builder{}
+
+	defer func() {
+		DPrintf("X%d: AppendEntries:%v -> %v %s", rf.me, req, reply, trace.String())
+	}()
+
+	if req.Term < rf.currentTerm {
+		trace.WriteString("[ignore lower term]")
+		return
+	}
+#+END_SRC
