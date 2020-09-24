@@ -15,8 +15,8 @@ def isCompressGood(inputFile, outputFile):
     st0 = os.stat(inputFile)
     st1 = os.stat(outputFile)
     a, b = st0.st_size, st1.st_size
-    ratio = (a - b) * 1.0 / a
-    if ratio > 0.05:
+    delta = a - b
+    if delta > 5 * 1024:
         print("%s can have better size: %4d -> %4d" % (inputFile, a, b))
         return True
     return False
