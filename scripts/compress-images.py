@@ -15,7 +15,8 @@ def isCompressGood(inputFile, outputFile):
     st0 = os.stat(inputFile)
     st1 = os.stat(outputFile)
     a, b = st0.st_size, st1.st_size
-    if a > b:
+    ratio = (a - b) * 1.0 / a
+    if ratio > 0.05:
         print("%s can have better size: %4d -> %4d" % (inputFile, a, b))
         return True
     return False
@@ -34,8 +35,7 @@ def main():
         if not ok: continue
         if isCompressGood(fi, fo):
             actions.append((fo, fi))
-            pass
-    
+            pass    
     for fo, fi in actions:
         print('copy %s -> %s' % (fo, fi))
         shutil.copyfile(fo, fi)
