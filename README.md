@@ -6,6 +6,7 @@
    - publish/publish.el 发布脚本
    - pp-html 处理org生成的html文件，添加评论以及GA等代码
    - gen-404 生成404.html
+   - compress-image.py 对images目录下面图片进行压缩
 - codes
    - 放在这里主要是方便文档引用
    - 注意都是非生产代码
