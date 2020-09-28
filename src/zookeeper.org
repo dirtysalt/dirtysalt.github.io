@@ -1,6 +1,10 @@
 #+title: ZooKeeper: Wait-free coordination for Internet-scale systems
 http://research.yahoo.com/pub/3280 @ 2010
 
+https://pdos.csail.mit.edu/6.824/notes/l-zookeeper.txt
+
+https://pdos.csail.mit.edu/6.824/papers/zookeeper-faq.txt
+
 这篇文章主要介绍了Zookeeper系统提供的原语(primitives), 使用这些原语可以帮助构建分布式系统，底层的一致性协议是zab.
 
 我印象比较深刻的是：
@@ -103,3 +107,67 @@ However, ZooKeeper is not a lock service. It can be used by clients to implement
 ZooKeeper does not assume that servers can be Byzantine, but we do employ mechanisms such as checksums and sanity checks to catch non-malicious Byzantine faults. Clement et al. discuss an approach to make ZooKeeper fully Byzantine fault-tolerant without modifying the current server code base. To date, we have not observed faults in production that would have been prevented using a fully Byzantine fault-tolerant protocol.
 
 ** Conclusions
+** Q&A
+
+关于zxid
+
+#+BEGIN_EXAMPLE
+Linearizable writes
+  clients send writes to the leader
+  the leader chooses an order, numbered by "zxid"
+  sends to replicas, which all execute in zxid order
+
+A few consequences:
+  Leader must preserve client write order across leader failure.
+  Replicas must enforce "a client's reads never go backwards in zxid order"
+    despite replica failure.
+  Client must track highest zxid it has read
+    to help ensure next read doesn't go backwards
+    even if sent to a different replica
+#+END_EXAMPLE
+
+关于API设计
+
+#+BEGIN_EXAMPLE
+ZooKeeper API well tuned to synchronization:
+  + exclusive file creation; exactly one concurrent create returns success
+  + getData()/setData(x, version) supports mini-transactions
+  + sessions automate actions when clients fail (e.g. release lock on failure)
+  + sequential files create order among multiple clients
+  + watches -- avoid polling
+
+ZooKeeper is a successful design.
+  see ZooKeeper's Wikipedia page for a list of projects that use it
+  Rarely eliminates all the complexity from distribution.
+    e.g. GFS master still needs to replicate file meta-data.
+    e.g. GFS primary has its own plan for replicating chunks.
+  But does bite off a bunch of common cases:
+    Master election.
+    Persistent master state (if state is small).
+    Who is the current master? (name service).
+    Worker registration.
+    Work queues.
+#+END_EXAMPLE
+
+关于性能似乎也不错
+
+#+BEGIN_EXAMPLE
+Is the resulting performance good?
+  Table 1
+  High read throughput -- and goes up with number of servers!
+  Lower write throughput -- and goes down with number of servers!
+  21,000 writes/second is pretty good!
+    Maybe limited by time to persist log to hard drives.
+    But still MUCH higher than 10 milliseconds per disk write -- batching.
+
+
+Q: How does Zookeeper's performance compare to other systems
+such as Paxos?
+
+A: It has impressive performance (in particular throughput); Zookeeper
+would beat the pants of your implementation of Raft. 3 zookeeper
+servers process 21,000 writes per second. Your raft with 3 servers
+commits on the order of tens of operations per second (assuming a
+magnetic disk for storage) and maybe hundreds per second with
+SSDs.
+#+END_EXAMPLE
