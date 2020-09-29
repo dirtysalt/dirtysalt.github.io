@@ -1,0 +1,242 @@
+#+title: 微软面试2
+
+@2020-09-29
+
+----------
+电话面试
+
+将二叉树同一层的节点使用 =next= 指针穿起来。两个比较废空间的办法：
+1. 用二叉树的方式遍历，记录每层最后一个节点，需要一个Map. Map大小是O(lgn), 栈空间是O(lgn).
+2. 使用BFS方式遍历，因为是按照层遍历，所以同一层遍历的时候是节点是顺序访问的，不需要Map, 只需要Queue. Queue空间是O(N).
+
+面试官说还有空间O(1)的算法，我没有立刻给出解法。他提示一下我才知道，如果你将上一层的节点看做链表的话会怎么样呢？这是个不错的想法。
+
+#+BEGIN_SRC python
+class Tree:
+    Tree left
+    Tree right
+    Tree next
+
+def extendList(root):
+    head = Tree()
+    while root:
+        if root.left:
+            head.next = root.left
+            head = head.next
+        if root.right:
+            head.next = root.right
+            head = head.next
+    return head.next
+
+def buildNext(root):
+    head = root
+    while head:
+        head = extendList(head)
+    return root
+#+END_SRC
+
+----------
+面试1
+
+手写验证ipv4是否正确，以及找到数组中的众数
+
+#+BEGIN_SRC python
+def isIPV4(s):
+    d = 0 # to compute digit
+    comma = True # dot
+    count = 0 # how many digits
+
+    for c in s:
+        if c.isdigit():
+            if comma:
+                comma = False
+                count += 1
+                if count > 4:
+                    return False
+            # 0255
+            d = ord(c) - ord('0') + d * 10
+            if d > 255:
+                return False
+        elif c == '.':
+            if comma:
+                return False
+            d = 0
+            comma = True
+        else:
+             return False
+
+    # 结尾需要再次验证
+    if count != 4 or comma:
+        return False
+    return True
+
+
+def findMostCommon(arr):
+     ans = None
+     c = 0
+
+     for i in range(len(arr)):
+         if ans is None:
+             ans = arr[i]
+             c = 1
+             continue
+
+         if arr[i] == ans:
+            c += 1
+         else:
+            c -= 1
+            if c == 0:
+                ans = None
+                c = 0
+     return ans
+#+END_SRC
+
+----------
+面试2
+
+从流中找到median. 在这个问题上有两个扩展：
+1. 如果这些数的范围在[0,100]会怎么样？直接统计就好了。
+2. 如果90%的数在[0,100], 10%的数是其他范围呢？和上面一样，但是需要维护<0和>100的两个集合的数量
+
+#+BEGIN_SRC python
+import heapq
+
+class MinHeap:
+    def __init__(self):
+        self.data = []
+    def top():
+        return self.data[0][1]
+    def size():
+        return len(self.data)
+    def pop():
+        x = heapq.heappop(self.data)
+        return x[1]
+    def push(x):
+        heapq.heappush(self.data, (x, x))
+
+class MaxHeap(MinHeap):
+    def push(x):
+        heapq.heappush(self.data, (-x, x))
+
+class MedianFinder:
+    def __init__(self):
+        self.A = MaxHeap()
+        self.B = MinHeap()
+
+    def add(element):
+        # 0 1
+        # 0 2 -> 1, 1
+        self.B.add(element)
+        if (self.A.size() + 1) < self.B.size():
+            x = self.B.pop()
+            self.A.push(x)
+
+    def median():
+        asz = self.A.size()
+        bsz = self.B.size()
+        if asz == bsz:
+            # TODO: no element.
+            if asz == 0: return None
+              x = self.A.top()
+              y = self.B.top()
+              return (x+y) * 0.5
+        return self.B.top()
+#+END_SRC
+
+另外一个就是给找到N个括号的所有匹配情况，直接用dfs就好了。有两个优化可以做：
+1. 可以缓存k个括号的所有情况。当 =st==0= 的时候，直接范围 =n-left= 所有括号情况就好。
+2. 可以将(看做1, )看做0, 遍历 =for st in range(1 << (2*N))=. 这种做法比较粗暴，但是却适合并行化。
+
+#+BEGIN_SRC python
+def printBrackets(n):
+    def dfs(buf, st, left):
+        if left == 0:
+            ans = buf + [')'] * st
+            print(ans)
+            return
+
+        buf.append('(')
+        dfs(buf, st + 1, left - 1)
+        buf.pop()
+
+        if st > 0:
+            buf.append(')')
+            dfs(buf, st - 1, left)
+            buf.pop()
+
+    buf = []
+    dfs(buf, 0, n)
+#+END_SRC
+
+----------
+面试3
+
+面试聊到了一个真实情况下的系统设计题目，主要是找出bottleneck在什么地方。这个系统不复杂，只不过你需要详细询问每个部分的QPS/处理能力，然后找到可能的bottleneck，然后进行优化。
+
+笔试题目是流式地处理一些数字的输入，然后打印出所有的区间，主要就是处理区间合并的问题。
+
+#+BEGIN_SRC python
+class Merger:
+    def __init__(self):
+        self.d = {}
+        self.ranges = set()
+
+    def add(element):
+        # find prev rane.
+        a, b = element, element
+        if element-1 in self.d:
+            c, d = self.d[element-1]
+            self.ranges.remove((c, d))
+            a, b = min(a, c), max(b, d)
+            self.d.remove(c)
+            self.d.remove(d)
+
+        if element +1 in self.d:
+            c, d = self.d[element+1]
+            self.ranges.remove((c, d))
+            a, b = min(a, c), max(b, d)
+            self.d.remove(c)
+            self.d.remove(d)
+
+        self.d[a] = (a, b)
+        self.d[b] = (a, b)
+        self.ranges.add((a, b))
+#+END_SRC
+
+----------
+面试4
+
+因为聊到之前做过C++，也说自己对底层编程比较感兴趣，所以就让我写一个快速的 =strcpy= 实现。这个实现有几个假设：
+1. 没有内存重叠
+2. 使用相同的allocator分配（也就是对齐方式是一样的）
+
+#+BEGIN_SRC C++
+int strcpy(uchar *from, uchar* dest) {
+    int n = strlen(from);
+    int count = n;
+    int align = 8 - from % 8;
+    while(n > 0 && align > 0) {
+        *from = *dest;
+        from ++;
+        dest ++;
+        align --;
+        n --;
+     }
+
+    while(n > 8) {
+        int64_t* p = (int64_t*)from;
+        int64_t* p2 = (int64_t*)dest;
+        *p = *p2;
+        n -= 8;
+        from = from + 8;
+        dest = dest + 8;
+    }
+    while(n) {
+        *from = *dest;
+        from += 1;
+        dest += 1;
+        n --;
+    }
+    return count;
+}
+#+END_SRC
