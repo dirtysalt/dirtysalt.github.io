@@ -22,23 +22,36 @@ def isCompressGood(inputFile, outputFile):
     return False
 
 import shutil
+import json
+
 def main():
     from glob import glob
+    cacheFile = '.compress-images-cache'
+    alreadyChecked = set()
+    if os.path.exists(cacheFile):
+        with open(cacheFile) as fh:
+            alreadyChecked = set(json.load(fh))
+
     imageFiles = glob("images/*.png") + glob("images/*.jpg")
     outputDir = "./output-dir/"
     shutil.rmtree(outputDir, ignore_errors = True)
     os.makedirs(outputDir, exist_ok = True)
     actions = []
-    for fi in imageFiles:        
+    for fi in imageFiles:
+        if fi in alreadyChecked: continue
         fo = outputDir + fi.replace("images/", '').replace('png', 'jpg')
         ok = compressImageFile(fi, fo)
         if not ok: continue
         if isCompressGood(fi, fo):
             actions.append((fo, fi))
-            pass    
+            pass
     for fo, fi in actions:
         print('copy %s -> %s' % (fo, fi))
         shutil.copyfile(fo, fi)
 
+    with open(cacheFile, 'w') as fh:
+        json.dump(imageFiles, fh)
+
+
 if __name__ == "__main__":
-    main()      
+    main()
