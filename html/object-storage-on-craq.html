@@ -160,6 +160,15 @@ Additionally, when the tail receives a propagated write request, a multicast ack
 Q&amp;A
 </p>
 
+<p>
+处理Byzantine Fault Tolerant(BFT)需要实现几个东西：
+</p>
+<ol class="org-ol">
+<li>身份识别，比如确认某个机器的确是属于这个集群的。</li>
+<li>数据自身完整性，通常可以使用checksum以及hash sign来解决。</li>
+<li>数据语义正确性，比如要求必须最新数据。</li>
+</ol>
+
 <pre class="example">
 Why can CRAQ serve reads from replicas linearizably but Raft/ZooKeeper/&amp;c cannot?
   Relies on being a chain, so that *all* nodes see each
@@ -187,6 +196,52 @@ How can we safely make use of a replication system that can't handle partition?
       data sharded over many replica groups,
       CR or something else fast for each replica group.
     Lab 4 works this way (though Raft for everything).
+
+Q: The paper's Introduction mentions that one could use multiple
+chains to solve the problem of intermediate chain nodes not serving
+reads. What does this mean?
+
+A: In Chain Replication, only the head and tail directly serve client
+requests; the other replicas help fault tolerance but not performance.
+Since the load on the head and tail is thus likely to be higher than
+the load on intermediate nodes, you could get into a situation where
+performance is bottlenecked by head/tail, yet there is plenty of idle
+CPU available in the intermediate nodes. CRAQ exploits that idle CPU
+by moving the read work to them.
+
+The Introduction is referring to this alternate approach. A data
+center will probably have lots of distinct CR chains, each serving a
+fraction (shard) of the objects. Suppose you have three servers (S1,
+S2, and S3) and three chains (C1, C2, C3). Then you can have the three
+chains be:
+
+  C1: S1 S2 S3
+  C2: S2 S3 S1
+  C3: S3 S1 S2
+
+Now, assuming activity on the three chains is roughly equal, the load on
+the three servers will also be roughly equal. In particular the load of
+serving client requests (head and tail) will be roughly equally divided
+among the three servers.
+
+This is a pretty reasonable arrangement; CRAQ is only better if it
+turns out that some chains see more load than others.
+
+Q: Is the failure model for CRAQ non-Byzantine?
+
+A: CRAQ cannot handle Byzantine failures. Just fail-stop failures.
+
+Few systems have a good story for Byzantine failures, and typically
+have to make sacrifices in performance or flexibility when they do.
+There are two main approaches I'm aware of. First, systems derived
+from a paper titled Practical Byzantine Fault Tolerance (PBFT) by
+Castro and Liskov; PBFT is like Raft but has more rounds of
+communication and uses cryptography. Second, systems in which clients
+can directly check the correctness of results that servers return,
+typically by use of cryptographic hashes or signatures. This can be
+tricky because clients need to defend against a server that returns
+data whose signature or hash is correct, but is not the latest value.
+Systems like this include SUNDR and Bitcoin.
 </pre>
 </div>
 </body>
