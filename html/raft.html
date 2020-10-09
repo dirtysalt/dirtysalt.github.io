@@ -259,9 +259,6 @@ A: 如果leader的prevLogIndex比自己的logs还要多的话，那么先选择�
 <div class="org-src-container">
 <pre class="src src-go"><span class="org-function-name">DPrintf</span>(<span class="org-string">"X%d: mismatch log entry. index = %v, leader term = %v, my term = %v"</span>,
     rf.me, req.PrevLogIndex, req.PrevLogTerm, rf.logs[idx].Term)
-<span class="org-keyword">if</span> rf.logs[idx].Term &gt; req.PrevLogTerm {
-    <span class="org-builtin">panic</span>(fmt.<span class="org-function-name">Sprintf</span>(<span class="org-string">"X%d: conflict term assert error: %d, %d"</span>, rf.me, rf.logs[idx].Term, req.PrevLogTerm))
-}
 searchTerm := rf.logs[idx].Term - 1
 rb := 0
 <span class="org-keyword">for</span> idx &gt;= 0 &amp;&amp; rf.logs[idx].Term &gt; searchTerm &amp;&amp; (idx+rf.baseLogIndex) &gt; rf.commitIndex {
@@ -270,6 +267,24 @@ rb := 0
 }
 </pre>
 </div>
+
+<p>
+或者是另外一种写法
+</p>
+
+<div class="org-src-container">
+<pre class="src src-go"><span class="org-function-name">DPrintf</span>(<span class="org-string">"X%d: mismatch log entry. index = %v, leader term = %v, my term = %v"</span>,
+    rf.me, req.PrevLogIndex, req.PrevLogTerm, rf.logs[idx].Term)
+
+searchTerm := rf.logs[idx].Term
+rb := 0
+<span class="org-keyword">for</span> idx &gt;= 0 &amp;&amp; rf.logs[idx].Term == searchTerm &amp;&amp; (idx+rf.baseLogIndex) &gt; rf.commitIndex {
+    idx -= 1
+    rb += 1
+}
+</pre>
+</div>
+
 
 <p>
 Q: 如何确保获得有效的超过半数投票？
@@ -321,6 +336,110 @@ A: 首先实现request/response的String()方法，然后可以在处理过程�
 <span class="org-keyword">if</span> req.Term &lt; rf.currentTerm {
     trace.<span class="org-function-name">WriteString</span>(<span class="org-string">"[ignore lower term]"</span>)
     <span class="org-keyword">return</span>
+}
+</pre>
+</div>
+
+<p>
+Q: 如何判断某个提交失败或者是成功
+</p>
+
+<p>
+A: Lab2实现的Raft里面任何提交都是异步的。只要当时提交的是leader, 那么就认为是成功的，但实际上可能永远不会成功。
+</p>
+
+<p>
+等待结果返回有两个办法，一个是关注提交的index是否被commit了，另外一个方法则是在提交中带上提交id(唯一).
+</p>
+
+<p>
+关注提交的index需要注意一个问题就是，这个index可能会被重复提交。想象一下，从某个leader上在index=5上提交，之后
+这个节点的logs被覆盖阶段，那么理论上还有再次在index=5上提交的可能。但是两次提交的term肯定是不同的，可以拿term来做区分。
+</p>
+
+<p>
+Q: 实现LogCompaction有什么要注意的吗？
+</p>
+
+<p>
+A: 我在Lab3中实现的log compaction策略非常简单，我觉得有两个关注点： 1. 什么时候触发compaction 2. 应该清除多少logs.
+</p>
+
+<p>
+我的策略是在有提交的时候检查logs size来决定是否触发compaction。触发由应用层决定而不是raft层决定。
+</p>
+
+<p>
+理论上只需要保留到最近一次提交的index就行。但是如果每次只是保留到最近提交的index, 如果在传输snapshot期间如果leader
+再次出现compaction的话，那么follower还是跟不上leader. 所以为了保险还是需要存一定的余量。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-go">
+<span class="org-keyword">func</span> (kv *<span class="org-type">KVServer</span>) <span class="org-function-name">logCompactionWorker</span>() {
+    <span class="org-keyword">if</span> kv.maxraftstate == -1 {
+        <span class="org-keyword">return</span>
+    }
+
+    <span class="org-keyword">const</span> COMPACTION_RATIO = 4
+    <span class="org-keyword">const</span> CHECK_INTERVAL = 20
+    <span class="org-keyword">for</span> {
+        <span class="org-keyword">if</span> kv.<span class="org-function-name">killed</span>() {
+            <span class="org-keyword">break</span>
+        }
+        kv.<span class="org-function-name">Lock</span>()
+        size := kv.persister.<span class="org-function-name">RaftStateSize</span>()
+        <span class="org-keyword">if</span> <span class="org-function-name">float64</span>(size) &lt; <span class="org-function-name">float64</span>(kv.maxraftstate)*COMPACTION_RATIO {
+            kv.moreLogsCond.<span class="org-function-name">Wait</span>()
+            kv.<span class="org-function-name">Unlock</span>()
+            <span class="org-keyword">continue</span>
+        }
+        kv.<span class="org-function-name">Unlock</span>()
+        <span class="org-function-name">DPrintf</span>(<span class="org-string">"kv%d: make log compaction, current size = %d, threshold = %d"</span>, kv.me, size, kv.maxraftstate)
+        kv.<span class="org-function-name">doLogCompaction</span>()
+        <span class="org-function-name">SleepMills</span>(CHECK_INTERVAL)
+    }
+}
+
+<span class="org-keyword">func</span> (kv *<span class="org-type">KVServer</span>) <span class="org-function-name">doLogCompaction</span>() {
+    <span class="org-comment-delimiter">// </span><span class="org-comment">log compaction &#21644; install snapshot &#36807;&#31243;&#35201;&#23545;&#24212;&#19978;</span>
+    <span class="org-comment-delimiter">// </span><span class="org-comment">&#36825;&#20010;&#36807;&#31243;&#20808;&#23545;kv&#21152;&#38145;&#65292;&#22312;&#23545;rf&#21152;&#38145;</span>
+    kv.<span class="org-function-name">Lock</span>()
+    <span class="org-keyword">defer</span> kv.<span class="org-function-name">Unlock</span>()
+    snapshot := kv.<span class="org-function-name">encodeSnapshot</span>()
+    applyIndex := kv.lastApplyIndex
+    <span class="org-comment-delimiter">// </span><span class="org-comment">&#21521;&#21069;&#20445;&#30041;&#20960;&#20010;log&#21487;&#33021;&#21487;&#20197;&#20943;&#23569;&#21516;&#27493;&#27425;&#25968;</span>
+    kv.rf.<span class="org-function-name">LogCompaction</span>(snapshot, applyIndex-10)
+}
+</pre>
+</div>
+
+<p>
+Q: 实现Snapshot上有什么需要注意的吗？
+</p>
+
+<p>
+A: Lab3简化了传输问题，snapshot数据一次RPC就可以完全传输完成。Snapshot在安装的时候，因为涉及到state, 所以也只能由单线程来执行，
+而且再安装也说明它无法成为leader，无法为client服务，所以性能就不是太大的问题。
+</p>
+
+<p>
+在实现Lab3的时候最tricky的地方就是，一旦安装了snapshot，需要马上创建一次snapshot。这个trick的原因，是因为snapshot并不是共享的。
+不是说我安装了snapshot A之后，我自己创建的snapshot就变成了snapshot A，我自己的创建的snapshot还是之前的snapshot. 实际生产系统中
+这不会是个问题，因为snapshot通常都是放在存储系统上的。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-go"><span class="org-keyword">if</span> op == <span class="org-string">"install"</span> {
+    <span class="org-function-name">DPrintf</span>(<span class="org-string">"kv%d: install snapshot. rpcId=%d"</span>, kv.me, msg.RpcId)
+    data := msg.Command.([]<span class="org-type">byte</span>)
+    wait := msg.WaitChan
+    kv.<span class="org-function-name">doInstallSnapshot</span>(data)
+    wait &lt;- <span class="org-string">"ok"</span>
+    <span class="org-comment-delimiter">// </span><span class="org-comment">&#36825;&#37324;&#23433;&#35013;&#23436;&#25104;&#20102;snapshot&#20043;&#21518;</span>
+    <span class="org-comment-delimiter">// </span><span class="org-comment">&#26368;&#22909;&#22312;&#20570;&#19968;&#20010;snapshot. &#19981;&#28982;&#22914;&#26524;&#36825;&#20010;&#26102;&#20505;&#37325;&#21551;&#30340;&#35805;</span>
+    <span class="org-comment-delimiter">// </span><span class="org-comment">applyIndex&#20250;&#22238;&#28378;&#21040;&#20043;&#21069;&#30340;&#29366;&#24577;&#65292;&#32780;&#36825;&#20010;&#29366;&#24577;&#27809;&#26377;&#21150;&#27861;&#25509;&#30528;&#32487;&#32493;</span>
+    kv.<span class="org-function-name">doLogCompaction</span>()
 }
 </pre>
 </div>
