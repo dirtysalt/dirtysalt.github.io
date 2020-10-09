@@ -271,3 +271,83 @@ A: 首先实现request/response的String()方法，然后可以在处理过程�
 		return
 	}
 #+END_SRC
+
+Q: 如何判断某个提交失败或者是成功
+
+A: Lab2实现的Raft里面任何提交都是异步的。只要当时提交的是leader, 那么就认为是成功的，但实际上可能永远不会成功。
+
+等待结果返回有两个办法，一个是关注提交的index是否被commit了，另外一个方法则是在提交中带上提交id(唯一).
+
+关注提交的index需要注意一个问题就是，这个index可能会被重复提交。想象一下，从某个leader上在index=5上提交，之后
+这个节点的logs被覆盖阶段，那么理论上还有再次在index=5上提交的可能。但是两次提交的term肯定是不同的，可以拿term来做区分。
+
+Q: 实现LogCompaction有什么要注意的吗？
+
+A: 我在Lab3中实现的log compaction策略非常简单，我觉得有两个关注点： 1. 什么时候触发compaction 2. 应该清除多少logs.
+
+我的策略是在有提交的时候检查logs size来决定是否触发compaction。触发由应用层决定而不是raft层决定。
+
+理论上只需要保留到最近一次提交的index就行。但是如果每次只是保留到最近提交的index, 如果在传输snapshot期间如果leader
+再次出现compaction的话，那么follower还是跟不上leader. 所以为了保险还是需要存一定的余量。
+
+#+BEGIN_SRC go
+
+func (kv *KVServer) logCompactionWorker() {
+	if kv.maxraftstate == -1 {
+		return
+	}
+
+	const COMPACTION_RATIO = 4
+	const CHECK_INTERVAL = 20
+	for {
+		if kv.killed() {
+			break
+		}
+		kv.Lock()
+		size := kv.persister.RaftStateSize()
+		if float64(size) < float64(kv.maxraftstate)*COMPACTION_RATIO {
+			kv.moreLogsCond.Wait()
+			kv.Unlock()
+			continue
+		}
+		kv.Unlock()
+		DPrintf("kv%d: make log compaction, current size = %d, threshold = %d", kv.me, size, kv.maxraftstate)
+		kv.doLogCompaction()
+		SleepMills(CHECK_INTERVAL)
+	}
+}
+
+func (kv *KVServer) doLogCompaction() {
+	// log compaction 和 install snapshot 过程要对应上
+	// 这个过程先对kv加锁，在对rf加锁
+	kv.Lock()
+	defer kv.Unlock()
+	snapshot := kv.encodeSnapshot()
+	applyIndex := kv.lastApplyIndex
+	// 向前保留几个log可能可以减少同步次数
+	kv.rf.LogCompaction(snapshot, applyIndex-10)
+}
+#+END_SRC
+
+Q: 实现Snapshot上有什么需要注意的吗？
+
+A: Lab3简化了传输问题，snapshot数据一次RPC就可以完全传输完成。Snapshot在安装的时候，因为涉及到state, 所以也只能由单线程来执行，
+而且再安装也说明它无法成为leader，无法为client服务，所以性能就不是太大的问题。
+
+在实现Lab3的时候最tricky的地方就是，一旦安装了snapshot，需要马上创建一次snapshot。这个trick的原因，是因为snapshot并不是共享的。
+不是说我安装了snapshot A之后，我自己创建的snapshot就变成了snapshot A，我自己的创建的snapshot还是之前的snapshot. 实际生产系统中
+这不会是个问题，因为snapshot通常都是放在存储系统上的。
+
+#+BEGIN_SRC go
+		if op == "install" {
+			DPrintf("kv%d: install snapshot. rpcId=%d", kv.me, msg.RpcId)
+			data := msg.Command.([]byte)
+			wait := msg.WaitChan
+			kv.doInstallSnapshot(data)
+			wait <- "ok"
+			// 这里安装完成了snapshot之后
+			// 最好在做一个snapshot. 不然如果这个时候重启的话
+			// applyIndex会回滚到之前的状态，而这个状态没有办法接着继续
+			kv.doLogCompaction()
+		}
+#+END_SRC
