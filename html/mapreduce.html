@@ -19,29 +19,8 @@
 <li><a href="#orgc8eb862">1. Abstract</a></li>
 <li><a href="#org3b59a54">2. Introduction</a></li>
 <li><a href="#org1af39b8">3. Programming Model</a></li>
-<li><a href="#orga0f359b">4. Implementation</a>
-<ul>
-<li><a href="#orgc5fbe8a">4.1. Execution Overview</a></li>
-<li><a href="#org2287118">4.2. Master Data Structures</a></li>
-<li><a href="#orgd59bcfd">4.3. Fault Tolerance</a></li>
-<li><a href="#org30756bb">4.4. Locality</a></li>
-<li><a href="#orgcb4d763">4.5. Task Granularity</a></li>
-<li><a href="#org918c8aa">4.6. Backup Tasks</a></li>
-</ul>
-</li>
-<li><a href="#orge720846">5. Refinements</a>
-<ul>
-<li><a href="#org8653a17">5.1. Partitioning Function</a></li>
-<li><a href="#org5f63c2c">5.2. Ordering Guarantees</a></li>
-<li><a href="#orgf894695">5.3. Combiner Function</a></li>
-<li><a href="#org81d7474">5.4. Input and Output Types</a></li>
-<li><a href="#org93a7317">5.5. Side-effects</a></li>
-<li><a href="#orga48def3">5.6. Skipping Bad Records</a></li>
-<li><a href="#orgfd7ae39">5.7. Local Execution</a></li>
-<li><a href="#org663f4ea">5.8. Status Information</a></li>
-<li><a href="#orge365a06">5.9. Counters</a></li>
-</ul>
-</li>
+<li><a href="#orga0f359b">4. Implementation</a></li>
+<li><a href="#orge720846">5. Refinements</a></li>
 <li><a href="#orgad05056">6. Performance</a></li>
 <li><a href="#org25dd251">7. Experience</a></li>
 <li><a href="#org83ea694">8. Related Work</a></li>
@@ -66,10 +45,28 @@
 <div id="outline-container-org1af39b8" class="outline-2">
 <h2 id="org1af39b8"><span class="section-number-2">3</span> Programming Model</h2>
 <div class="outline-text-2" id="text-3">
+<p>
+The computation takes a set of input key/value pairs, and produces a set of output key/value pairs. The user of the MapReduce library expresses the computation as two functions: Map and Reduce.
+</p>
+
+<p>
+Map, written by the user, takes an input pair and produces a set of intermediate key/value pairs. The MapReduce library groups together all intermediate values associated with the same intermediate key I and passes them to the Reduce function.
+</p>
+
+<p>
+对于reduce阶段处理的values是以iterator形式提供的，这样可以不用担心values过多放不进入内存
+</p>
+
+<p>
+The Reduce function, also written by the user, accepts an intermediate key I and a set of values for that key. It merges together these values to form a possibly smaller set of values. Typically just zero or one output value is produced per Reduce invocation. The intermediate values are supplied to the user's reduce function via an iterator. This allows us to handle lists of values that are too large to fit in memory.
+</p>
+
+<p>
+Map/Reduce的输入输出类型是：
+</p>
 <ul class="org-ul">
-<li>用户指定map以及reduce函数，其中map函数处理每个key/value pair,而reduce函数处理同一个key对应的所有values.</li>
-<li>The intermediate val-ues are supplied to the user’s reduce function via an iter-ator. This allows us to handle lists of values that are too large to fit in memory.（对于reduce阶段处理的values都是iterator提供的，这样可以不用担心values过多放不进入内存）</li>
-<li>Distributed Sort: The map function extracts the key from each record, and emits a key, record pair. The reduce function emits all pairs unchanged. This compu-tation depends on the partitioning facilities described in Section 4.1 and the ordering properties described in Sec-tion 4.2. （关于分布式排序这个比较值得关注，map以及reduce阶段都没有做任何工作。所有的工作都是依赖framework完成的：partition指定到一个reducer上面，而reducer是按照key的顺序来处理的，用户可以指定key的比较函数。）</li>
+<li>Map (k1, v1) -&gt; list(k2, v2)</li>
+<li>Reduce (k2, list(v2)) -&gt; list(v3)</li>
 </ul>
 </div>
 </div>
@@ -77,27 +74,35 @@
 <div id="outline-container-orga0f359b" class="outline-2">
 <h2 id="orga0f359b"><span class="section-number-2">4</span> Implementation</h2>
 <div class="outline-text-2" id="text-4">
-<ul class="org-ul">
-<li>Many different implementations of the MapReduce in-terface are possible. The right choice depends on the environment. For example, one implementation may be suitable for a small shared-memory machine, another for a large NUMA multi-processor, and yet another for an even larger collection of networked machines.（mapreduce可以有很多实现，这个取决于环境。）</li>
-<li>This section describes an implementation targeted to the computing environment in wide use at Google: large clusters of commodity PCs connected together with switched Ethernet . In our environment:（下面是google的环境）
+<p>
+Many different implementations of the MapReduce in-terface are possible. The right choice depends on the environment. For example, one implementation may be suitable for a small shared-memory machine, another for a large NUMA multi-processor, and yet another for an even larger collection of networked machines.（mapreduce可以有很多实现，这个取决于环境。）
+</p>
+
+<p>
+This section describes an implementation targeted to the computing environment in wide use at Google: large clusters of commodity PCs connected together with switched Ethernet . In our environment:
+</p>
 <ul class="org-ul">
 <li>(1) Machines are typically dual-processor x86 processors running Linux, with 2-4 GB of memory per machine.（双核x86，2-4GB内存）</li>
-<li>(2) Commodity networking hardware is used – typically either 100 megabits/second or 1 gigabit/second at the machine level, but averaging considerably less in over-all bisection bandwidth.（1Gbps的网卡，但是带宽依然有限）</li>
+<li>(2) Commodity networking hardware is used – typically either 100 megabits/second or 1 gigabit/second at the machine level, but averaging considerably less in over-all bisection bandwidth.（单机上是1Gbps的网卡，但是外层的交换机上存在带宽限制，所以通常单机是跑不满的）</li>
 <li>(3) A cluster consists of hundreds or thousands of ma-chines, and therefore machine failures are common.（考虑机器故障）</li>
 <li>(4) Storage is provided by inexpensive IDE disks at-tached directly to individual machines. A distributed file system developed in-house is used to manage the data stored on these disks. The file system uses replication to provide availability and reliability on top of unreliable hardware.（使用廉价IDE磁盘，但是应该没有使用磁盘阵列，而是使用gfs做soft RAID）</li>
-<li>(5) Users submit jobs to a scheduling system. Each job consists of a set of tasks, and is mapped by the scheduler to a set of available machines within a cluster.（用户提交到scheduler system，scheduler来指定job在哪些机器运行，每个job包含很多task）</li>
-</ul></li>
+<li>(5) Users submit jobs to a scheduling system. Each job consists of a set of tasks, and is mapped by the scheduler to a set of available machines within a cluster.（用户提交到scheduler system，scheduler来指定job在哪些机器运行，每个job包含很多task. Borg/Omega/k8s etc)</li>
 </ul>
-</div>
 
 
-<div id="outline-container-orgc5fbe8a" class="outline-3">
-<h3 id="orgc5fbe8a"><span class="section-number-3">4.1</span> Execution Overview</h3>
-<div class="outline-text-3" id="text-4-1">
-<ul class="org-ul">
-<li>The Map invocations are distributed across multiple machines by automatically partitioning the input data into a set of M splits. The input splits can be pro-cessed in parallel by different machines. （框架自动将输入数据拆分成为M份，每个mapper实例处理一份，分布在各个机器上面且可以同时运行。对于这个M没有办法指定）</li>
-<li>Reduce invoca-tions are distributed by partitioning the intermediate key space into R pieces using a partitioning function (e.g.,hash(key) mod R). The number of partitions (R) and the partitioning function are specified by the user.（reducer的实例个数可以指定，分布在各个机器上面处理落到这个reducer上面所有的key/value pairs。其中partition函数用户可以指定）</li>
-</ul>
+<hr />
+
+<p>
+Execution Overview
+</p>
+
+<p>
+The Map invocations are distributed across multiple machines by automatically partitioning the input data into a set of M splits. The input splits can be pro-cessed in parallel by different machines. （框架自动将输入数据拆分成为M份，每个mapper实例处理一份，分布在各个机器上面且可以同时运行。对于这个M没有办法指定）
+</p>
+
+<p>
+Reduce invoca-tions are distributed by partitioning the intermediate key space into R pieces using a partitioning function (e.g.,hash(key) mod R). The number of partitions (R) and the partitioning function are specified by the user.（reducer的实例个数可以指定，分布在各个机器上面处理落到这个reducer上面所有的key/value pairs。其中partition函数用户可以指定）
+</p>
 
 
 <div class="figure">
@@ -119,32 +124,36 @@
 <li>When all map tasks and reduce tasks have been completed, the master wakes up the user program. At this point, the MapReduce call in the user pro-gram returns back to the user code.（当所有的task完成之后，master就会返回到user code）</li>
 <li>After successful completion, the output of the mapre-duce execution is available in the R output files (one per reduce task, with file names as specified by the user). Typically, users do not need to combine these R output files into one file – they often pass these files as input to another MapReduce call, or use them from another dis-tributed application that is able to deal with input that is partitioned into multiple files.（输出结果有R份，我们并不需要进行merge，通常这些结果会作为下一轮mapreduce的输入）</li>
 </ul>
-</div>
-</div>
 
-<div id="outline-container-org2287118" class="outline-3">
-<h3 id="org2287118"><span class="section-number-3">4.2</span> Master Data Structures</h3>
-<div class="outline-text-3" id="text-4-2">
+<hr />
+<p>
+Master Data Structures
+</p>
+
 <p>
 master维护的数据结构之需要包括
 </p>
 <ul class="org-ul">
 <li>每个task的状态（idle/in-progress/completed）</li>
-<li>每个mapper的R份输出文件名称以及文件大小。对于一个mapper如果一旦有R份输出文件的话，那么就可以认为这个mapper运行完成。</li>
+<li>每个mapper的R份输出文件名称以及文件大小
+<ul class="org-ul">
+<li>对于一个mapper如果一旦有R份输出文件的话，那么就可以认为这个mapper运行完成。</li>
+<li>mapper的输出会被推送到reducer上（或许是piggyback到reducer上？）</li>
+</ul></li>
 </ul>
-</div>
-</div>
 
-<div id="outline-container-orgd59bcfd" class="outline-3">
-<h3 id="orgd59bcfd"><span class="section-number-3">4.3</span> Fault Tolerance</h3>
-<div class="outline-text-3" id="text-4-3">
+<hr />
+<p>
+Fault Tolerance
+</p>
+
 <p>
 Worker Failure: 检测worker故障是通过周期性ping来完成的。如果检测到worker失败的话:
 </p>
 <ul class="org-ul">
 <li>如果是mapper的话，那么无论如何都需要重新启动这个mapper任务（将状态修改为idle），因为mapper输出结果在本地文件</li>
 <li>如果是reducer的话，如果completed的话那么不需要重新执行，因为输出文件在gfs。否则也需要重启（修改为idle状态）</li>
-<li>如果是mapper重新计算的话，那么mapper也会同时reducer地址变化。如果reducer之前没有拉下数据的话，那么就在新的mapper机器上拉数据</li>
+<li>如果是mapper重新计算的话，那么mapper也会同时reducer输出文件地址变化。如果reducer之前没有拉下数据的话，那么就在新的mapper机器上拉数据</li>
 </ul>
 
 <p>
@@ -160,60 +169,89 @@ Semantics in the Presence of Failures.
 </p>
 <ul class="org-ul">
 <li>When the map and/or reduce operators are non-deterministic, we provide weaker but still reasonable se-mantics. In the presence of non-deterministic operators, the output of a particular reduce task R1 is equivalent to the output for R1 produced by a sequential execution of the non-deterministic program. However, the output for a different reduce task R2 may correspond to the output for R2 produced by a different sequential execution of the non-deterministic program.</li>
-<li>Consider map task M and reduce tasks R1 and R2. Let e(Ri ) be the execution of Ri that committed (there is exactly one such execution). The weaker semantics arise because e(R1 ) may have read the output produced by one execution of M and e(R2) may have read the output produced by a different execution of M.</li>
+<li>Consider map task M and reduce tasks R1 and R2. Let e(Ri) be the execution of Ri that committed (there is exactly one such execution). The weaker semantics arise because e(R1 ) may have read the output produced by one execution of M and e(R2) may have read the output produced by a different execution of M.</li>
 </ul>
-</div>
-</div>
 
-<div id="outline-container-org30756bb" class="outline-3">
-<h3 id="org30756bb"><span class="section-number-3">4.4</span> Locality</h3>
-<div class="outline-text-3" id="text-4-4">
+<hr />
 <p>
-master在选择mapper启动位置的话，会优先考虑将mapper启动到离input data近的机器上面（如果是本地的话就可以节省网络带宽）。
+Locality
 </p>
-</div>
-</div>
 
-<div id="outline-container-orgcb4d763" class="outline-3">
-<h3 id="orgcb4d763"><span class="section-number-3">4.5</span> Task Granularity</h3>
-</div>
-<div id="outline-container-org918c8aa" class="outline-3">
-<h3 id="org918c8aa"><span class="section-number-3">4.6</span> Backup Tasks</h3>
-<div class="outline-text-3" id="text-4-6">
-<ul class="org-ul">
-<li>One of the common causes that lengthens the total time taken for a MapReduce operation is a “straggler”: a ma-chine that takes an unusually long time to complete one of the last few map or reduce tasks in the computation.（straggler表示有某一个机器花去非常多的时间完成了最后一个mapper或者是reducer任务，使得整个任务运行时间延长）</li>
-<li>Stragglers can arise for a whole host of reasons. For ex-ample, （造成straggler原因非常多）
+<p>
+master在选择mapper启动位置的话，会优先考虑将mapper启动到离input data近的机器上面（如果是本地的话就可以节省网络带宽），这也是为了配合GFS才这么做的。
+</p>
+
+<p>
+The MapReduce master takes the location information of the input files into account and attempts to schedule a map task on a machine that contains a replica of the corresponding input data. Failing that, it attempts to schedule a map task near a replica of that task's input data (e.g., on a worker machine that is on the same network switch as the machine containing the data). When running large MapReduce operations on a significant fraction of the workers in a cluster, most input data is read locally and consumes no network bandwidth.
+</p>
+
+<hr />
+<p>
+Task Granularity
+</p>
+
+<p>
+任务粒度上要保证tasks数量比worker数量多，应该多一个数量级会比较合适。这样如果某个worker上的tasks失败的话，那么这些tasks也可以被平均地分布在其他worker上，对负载均衡很有帮助。但是这个数量不能无限大，因为master需要维护的数据结构大小是O(M*R)的，虽然每个pair大约只需要1个字节来存储状态（R是否接受到了来自M的输入，我觉得是这个信息吧）
+</p>
+
+<p>
+We subdivide the map phase into M pieces and the reduce phase into R pieces, as described above. Ideally,M and R should be much larger than the number of worker machines. Having each worker perform many different tasks improves dynamic load balancing, and also speeds up recovery when a worker fails: the many map tasks it has completed can be spread out across all the other worker machines.
+</p>
+
+<p>
+There are practical bounds on how largeM and R can be in our implementation, since the master must make O(M + R) scheduling decisions and keeps O(M*R) state in memory as described above. (The constant factors for memory usage are small however: the O(M*R) piece of the state consists of approximately one byte of data per map task/reduce task pair.)
+</p>
+
+<hr />
+<p>
+Backup Tasks
+</p>
+
+<p>
+straggler表示有某一个机器花去非常多的时间完成了最后一个mapper或者是reducer任务，使得整个任务运行时间延长。产生拖延的原因有很多包括硬件故障和资源不足。
+</p>
+
+<p>
+One of the common causes that lengthens the total time taken for a MapReduce operation is a “straggler”: a ma-chine that takes an unusually long time to complete one of the last few map or reduce tasks in the computation. Stragglers can arise for a whole host of reasons. For ex-ample
+</p>
 <ul class="org-ul">
 <li>a machine with a bad disk may experience fre- quent correctable errors that slow its read performance from 30 MB/s to 1 MB/s. （磁盘故障）</li>
 <li>The cluster scheduling sys-tem may have scheduled other tasks on the machine, causing it to execute the MapReduce code more slowly due to competition for CPU, memory, local disk, or net-work bandwidth.（并且如果过多的任务在这个机器上的话，那么因为CPU，mem，network的竞争使用会变得更慢）</li>
 <li>A recent problem we experienced was a bug in machine initialization code that caused proces-sor caches to be disabled: computations on affected ma-chines slowed down by over a factor of one hundred.（最近遇到的鼓掌机器代码使得CPU cache失效，使得运行速度降低1/100）</li>
-</ul></li>
-<li>When a MapReduce operation is close to completion, the master schedules backup executions of the remaining in-progress tasks. The task is marked as completed whenever either the primary or the backup execution completes（解决这个问题就是当task快完成的时候，启动一个backup task同时运行，看哪个首先完成） We have tuned this mechanism so that it typically increases the computational resources used by the operation by no more than a few percent.（调节这个机制使得计算资源并不会浪费太多）</li>
-<li>As an exam-ple, the sort program described in Section 5.3 takes 44% longer to complete when the backup task mechanism is disabled.（最近的例子就是发现如果将backup停止的话，那么执行时间延长44%）</li>
 </ul>
-</div>
+
+<p>
+解决这个问题就是当task快完成的时候，启动一个backup task同时运行，看哪个首先完成。事实证明这个机制并不会浪费太多计算资源，而如果不开启的话执行时间会延长44%.
+</p>
+
+<p>
+When a MapReduce operation is close to completion, the master schedules backup executions of the remaining in-progress tasks. The task is marked as completed whenever either the primary or the backup execution completes. We have tuned this mechanism so that it typically increases the computational resources used by the operation by no more than a few percent.（调节这个机制使得计算资源并不会浪费太多） As an exam-ple, the sort program described in Section 5.3 takes 44% longer to complete when the backup task mechanism is disabled.
+</p>
 </div>
 </div>
 
 <div id="outline-container-orge720846" class="outline-2">
 <h2 id="orge720846"><span class="section-number-2">5</span> Refinements</h2>
 <div class="outline-text-2" id="text-5">
-</div>
-<div id="outline-container-org8653a17" class="outline-3">
-<h3 id="org8653a17"><span class="section-number-3">5.1</span> Partitioning Function</h3>
-</div>
-<div id="outline-container-org5f63c2c" class="outline-3">
-<h3 id="org5f63c2c"><span class="section-number-3">5.2</span> Ordering Guarantees</h3>
-<div class="outline-text-3" id="text-5-2">
+<hr />
 <p>
-We guarantee that within a given partition, the interme-diate key/value pairs are processed in increasing key or-der. （确保产生的key/value pairs都是按照key进行排序的）
+Partitioning Function
 </p>
-</div>
-</div>
 
-<div id="outline-container-orgf894695" class="outline-3">
-<h3 id="orgf894695"><span class="section-number-3">5.3</span> Combiner Function</h3>
-<div class="outline-text-3" id="text-5-3">
+<hr />
+<p>
+Ordering Guarantees
+</p>
+
+<p>
+We guarantee that within a given partition, the intermediate key/value pairs are processed in increasing key order. This ordering guarantee makes it easy to generate a sorted output file per partition, which is useful when the output file format needs to support efficient random access lookups by key, or users of the output find it convenient to have the data sorted.
+</p>
+
+<hr />
+<p>
+Combiner Function
+</p>
+
 <p>
 combiner可以使得在mapper本地就进行一些reducer操作。通常这些操作可以使得输出减少很多，这样reducer可以节省带宽。
 </p>
@@ -223,32 +261,36 @@ combiner可以使得在mapper本地就进行一些reducer操作。通常这些�
 <li>Typically the same code is used to implement both the combiner and the reduce func-tions. （combiner和reducer使用相同的reduce代码）</li>
 <li>The only difference between a reduce function and a combiner function is how the MapReduce library han-dles the output of the function. The output of a reduce function is written to the final output file. The output of a combiner function is written to an intermediate file that will be sent to a reduce task.（唯一差别在于combiner写入本地文件，而reducer写入gfs）</li>
 </ul>
-</div>
-</div>
 
-<div id="outline-container-org81d7474" class="outline-3">
-<h3 id="org81d7474"><span class="section-number-3">5.4</span> Input and Output Types</h3>
-<div class="outline-text-3" id="text-5-4">
+<hr />
 <p>
-允许用户自定义reader/writer
+Input and Output Types
 </p>
-</div>
-</div>
 
-<div id="outline-container-org93a7317" class="outline-3">
-<h3 id="org93a7317"><span class="section-number-3">5.5</span> Side-effects</h3>
-<div class="outline-text-3" id="text-5-5">
+<hr />
 <p>
-如果程序有side-effect的话，那么需要保证这个side-effect是原子并且是幂等的。
+Side-effects
 </p>
-</div>
-</div>
 
-<div id="outline-container-orga48def3" class="outline-3">
-<h3 id="orga48def3"><span class="section-number-3">5.6</span> Skipping Bad Records</h3>
-<div class="outline-text-3" id="text-5-6">
 <p>
-实现方法非常巧妙：
+MapReduce框架对side-effects没有任何支持，用户代码自己去保证外部一致性。
+</p>
+
+<p>
+In some cases, users of MapReduce have found it convenient to produce auxiliary files as additional outputs from their map and/or reduce operators. We rely on the application writer to make such side-effects atomic and idempotent.
+</p>
+
+<p>
+Typically the application writes to a temporary file and atomically renames this file once it has been fully generated. We do not provide support for atomic two-phase commits of multiple output files produced by a single task. Therefore, tasks that produce multiple output files with cross-file consistency requirements should be deterministic. This restriction has never been an issue in practice.
+</p>
+
+<hr />
+<p>
+Skipping Bad Records
+</p>
+
+<p>
+产生Bad Records的原因可能某些buggy的代码或者是协议不兼容。通常也没有办法删除它，所以只能忽略掉：
 </p>
 <ul class="org-ul">
 <li>针对每条记录，都将记录的seqnum记录在一个全局变量里面</li>
@@ -256,21 +298,18 @@ combiner可以使得在mapper本地就进行一些reducer操作。通常这些�
 <li>如果出现错误的话，那么在sighandler里面将这个seqnum作为UDP packet发送给master</li>
 <li>如果master连续收到两次相同seqnum的话，那么就会告诉worker忽略seqnum这条记录。</li>
 </ul>
-</div>
-</div>
 
-<div id="outline-container-orgfd7ae39" class="outline-3">
-<h3 id="orgfd7ae39"><span class="section-number-3">5.7</span> Local Execution</h3>
-<div class="outline-text-3" id="text-5-7">
+<hr />
 <p>
+Local Execution
 方便调试以及测试。
 </p>
-</div>
-</div>
 
-<div id="outline-container-org663f4ea" class="outline-3">
-<h3 id="org663f4ea"><span class="section-number-3">5.8</span> Status Information</h3>
-<div class="outline-text-3" id="text-5-8">
+<hr />
+<p>
+Status Information
+</p>
+
 <p>
 提供http接口返回当前master状态，信息包括下面这些：
 </p>
@@ -290,21 +329,25 @@ combiner可以使得在mapper本地就进行一些reducer操作。通常这些�
 <ul class="org-ul">
 <li>which workers have failed, and （哪些worker失败）</li>
 <li>which map and reduce tasks they were processing when they failed. （为什么失败）</li>
-<li>This informa-tion is useful when attempting to diagnose bugs in the user code.</li>
 </ul></li>
 </ul>
-</div>
-</div>
 
-<div id="outline-container-orge365a06" class="outline-3">
-<h3 id="orge365a06"><span class="section-number-3">5.9</span> Counters</h3>
-<div class="outline-text-3" id="text-5-9">
-<ul class="org-ul">
-<li>The counter values from individual worker machines are periodically propagated to the master (piggybacked on the ping response).（关于这些counter信息都是在ping response时候捎带回去给master的）</li>
-<li>When aggre-gating counter values, the master eliminates the effects of duplicate executions of the same map or reduce task to avoid double counting. (Duplicate executions can arise from our use of backup tasks and from re-execution of tasks due to failures.)（在进行这些counter聚合的时候需要考虑重复计数，比如backup execution就可能造成重复计数）</li>
-<li>Some counter values are automatically maintained by the MapReduce library, such as the number of in-put key/value pairs processed and the number of output key/value pairs produced.（有一些计数是mr自带的，比如输入和输出多少个kv pairs）</li>
-</ul>
-</div>
+<hr />
+<p>
+Counters
+</p>
+
+<p>
+关于这些counter都是在ping response时候捎带回去给master的，counter应该是对应到每个mapper/reducer上的，然后聚合起来返回。如果mapper/reducer重启或者是有backup task的话，那么会进行去重。
+</p>
+
+<p>
+The counter values from individual worker machines are periodically propagated to the master (piggybacked on the ping response). When aggre-gating counter values, the master eliminates the effects of duplicate executions of the same map or reduce task to avoid double counting. (Duplicate executions can arise from our use of backup tasks and from re-execution of tasks due to failures.
+</p>
+
+<p>
+Users have found the counter facility useful for sanity checking the behavior of MapReduce operations. For example, in some MapReduce operations, the user code may want to ensure that the number of output pairs produced exactly equals the number of input pairs processed, or that the fraction of German documents processed is within some tolerable fraction of the total number of documents processed.
+</p>
 </div>
 </div>
 
@@ -343,7 +386,7 @@ combiner可以使得在mapper本地就进行一些reducer操作。通常这些�
 </div>
 
 <p>
-改写了线上索引程序，处理文档大小在20TB（也不是很多啊？），大约使用了5~10个mapreduce程序。带来效果是这样的：
+改写了线上索引程序，处理文档大小在20TB，大约使用了5~10个mapreduce程序。带来效果是这样的：
 </p>
 <ul class="org-ul">
 <li>代码少了很多，比如很多错误恢复代码。（通信代码应该没有太大节省，因为google库本身就应该比较完善）。其中一个计算过程的代码从3800掉至700行。</li>
@@ -355,7 +398,17 @@ combiner可以使得在mapper本地就进行一些reducer操作。通常这些�
 
 <div id="outline-container-org83ea694" class="outline-2">
 <h2 id="org83ea694"><span class="section-number-2">8</span> Related Work</h2>
+<div class="outline-text-2" id="text-8">
+<p>
+Our locality optimization draws its inspiration from techniques such as active disks [12, 15], where computation is pushed into processing elements that are close to local disks, to reduce the amount of data sent across I/O subsystems or the network. We run on commodity processors to which a small number of disks are directly connected instead of running directly on disk controller processors, but the general approach is similar.
+</p>
+
+<p>
+The MapReduce implementation relies on an in-house cluster management system that is responsible for distributing and running user tasks on a large collection of shared machines. Though not the focus of this paper, the cluster management system is similar in spirit to other systems such as Condor [16].
+</p>
 </div>
+</div>
+
 <div id="outline-container-orgc7fe370" class="outline-2">
 <h2 id="orgc7fe370"><span class="section-number-2">9</span> Conclusions</h2>
 <div class="outline-text-2" id="text-9">
