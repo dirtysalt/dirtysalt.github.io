@@ -10,7 +10,7 @@
 
 ** Introduction
 - Our system leverages a Hadoop elastic batch computing infrastructure to build its index and data files, thereby supporting high throughput for batch refreshes. A custom read-only storage engine plugs into Voldemort’s extensible storage layer. The Voldemort infrastructure then provides excellent live serving perfor-mance for this batch output—even during data refreshes. Our system supports quick rollback, where data can be restored to a clean copy, minimizing the time in error if an algorithm should go awry. This helps support fast, iterative development necessary for new feature improve-ments. The storage data layout also provides the ability to grow horizontally by rebalancing existing data to new nodes without downtime. Our system supports twice the request throughput ver-sus MySQL while serving read requests with a median latency of less than 5 ms.（Hadoop来构建索引和数据文件，只读存储引擎，快速回滚数据，在线扩充存储节点）
-- At LinkedIn, this system has been running for over 2 years, with one of our largest clusters loading more than 4 terabytes of new data to the site every day.（运行时间超过2年，每天载入4TB数据） 
+- At LinkedIn, this system has been running for over 2 years, with one of our largest clusters loading more than 4 terabytes of new data to the site every day.（运行时间超过2年，每天载入4TB数据）
 - The key contributions of this work are:
   - A scalable offline index construction, based on MapReduce, which produces partitioned data for online consumption
   - Complete data cycle to refresh terabytes of data with minimum effect on existing serving latency
@@ -42,7 +42,7 @@ Before we started building our own custom storage engine, we decided to evaluate
 - We then tried completely offloading the index construc-tion to another system as building the index on the serving system has isolation problems.（在另外一个和线上服务独立的集群创建索引）
   - We leveraged the fact that MyISAM allows copying of database files from another node into a live database directory, automatically making it available for serving. We bulk load to a separate cluster and then copy the resulting database files over to the live cluster. （因为MyISAM可以直接copy文件，所以在另外集群导入MySQL然后copy数据和索引文件到现有集群）
   - This two-step approach requires the extra main-tenance cost of a separate MySQL cluster with exactly the same number of nodes as the live one. Additionally, the inability to load compressed data in the bulk load phase means data is copied multiple times between nodes: first, as a flat file to the bulk load cluster; then as an in-ternal copy during the LOAD statement; and finally, as a raw database file copy to the actual live database. Thesecopies make the load more time-consuming.（比较浪费资源，首先是需要单独创建索引的集群，另外是数据多次拷贝）
-- The previous solution was not ideal, due to its depen-dency on redundant MySQL servers and the resulting vulnerability to failure downtime. 
+- The previous solution was not ideal, due to its depen-dency on redundant MySQL servers and the resulting vulnerability to failure downtime.
 - To address this short-coming, the next attempted approach used the inherent fault tolerance and parallelism of Hadoop and built in-dividual node/partition-level data stores, which could be transferred to Voldemort for serving.
   - A Hadoop job reads data from a source in HDFS , repartitions it on a per-node basis, and finally writes the data to individual storage engines (for example, Berkeley DB) on the local filesystem of the reducer phase Hadoop nodes. The num-ber of reducers equals the number of Voldemort nodes, but could have easily been further split on a per-partition basis.（Hadoop reduce将数据文件和索引文件先写到本地磁盘然后上传到HDFS。应该是数据文件可以直接写入到HDFS，但是索引文件需要先写本次磁盘然后上传）
   - This data is then read from the local filesystem and copied onto HDFS, where it can be fetched by Voldemort. The benefit of this approach is that it leverages Hadoop’s parallelism to build the indexes offline; （Voldemort从HDFS上面拉取下来加载）
@@ -73,32 +73,31 @@ file:images/voldemort-storage-format.png
 
 *** Chunk Set Generation
 *** Data Versioning
-- Every store is represented by a directory, which in turn contains directories corresponding to “versions” of the data. A symbolic link per store is used to point to the current serving version directory. Because the data in all version directories except the serving one is inactive, we are not affecting page cache usage and latency. （通过目录来保存历史版本，软链接指向当前使用的版本。存储历史并不会影响到page cache以及latency） 
+- Every store is represented by a directory, which in turn contains directories corresponding to “versions” of the data. A symbolic link per store is used to point to the current serving version directory. Because the data in all version directories except the serving one is inactive, we are not affecting page cache usage and latency. （通过目录来保存历史版本，软链接指向当前使用的版本。存储历史并不会影响到page cache以及latency）
 - Every version directory (named version-no) has a configurable number as-sociated with it, which should monotonically increase with every new fetch. A commonly used example for the version number is the timestamp of push.（版本号应该是单调递增的，比如push时间戳。
-- Swapping in a new data version on a single node is done as follows: 
-    1. copy into a new version directory, 
-    2. close the current set of active chunk set files, 
-    3. open the chunk set files from the new version, 
-    4. memory map all the index files, 
-    5. and change the symbolic link to the new version. 
+- Swapping in a new data version on a single node is done as follows:
+    1. copy into a new version directory,
+    2. close the current set of active chunk set files,
+    3. open the chunk set files from the new version,
+    4. memory map all the index files,
+    5. and change the symbolic link to the new version.
 - The entire operation is coordinated using a read-write lock. A rollback follows the same sequence of steps, except that files are opened in an older version directory. Both of these operations are very fast as they are purely metadata operations: no data reads take place.
 
 *** Data Load
-#todo: 原子切换使用2PC来实现?
 
 *** Retrieval
 - The most time-consuming step is to search the index file. A binary search in an index of 1 million keys can result in around 20 key comparisons; if the index file is not cached, then 20 disk seeks are required to read one value. （检索最耗时的部分还是在查询index file上） #note: 用bloom filter屏蔽key不存在这种最坏情况。
 - As a small optimization, while fetching the files from HDFS, Voldemort fetches the index files after all data files to aid in keeping the index files in the page cache. *首先传输数据文件，然后传输index文件，来帮助index文件留在page cache里面*
 - Rather than binary search, another retrieval strategy for sorted disk files is interpolation search. This search strategy uses the key distribution to predict the approxi-mate location of the key, rather than halving the search space for every iteration. Interpolation search works well for uniformly distributed keys, dropping the search com-plexity from O(log N) to O(log log N). This helps in the uncached scenario by reducing the number of disk seeks. As MD5 (and its subsets) provides a fairly represen-tative uniform distribution, there will be minimal speedup from these techniques. （插值搜索可以在key分布不均匀的情况下提高效率）
-     
+
 *** Schema Upgrades
 *** Rebalancing
-#note: 因为Voldemort定位为只读数据库，所以在membership的变化下数据可以保持强一致性。而Dynamo这类读写数据库的话，在membership的变化数据只能够保持最终一致性。
+因为Voldemort定位为只读数据库，所以在membership的变化下数据可以保持强一致性。而Dynamo这类读写数据库的话，在membership的变化数据只能够保持最终一致性。
 
 - Our smallest unit of rebalancing is a partition. In other words, the addition of a new node translates to giving the ownership of some partitions to that node. The rebalancing process is run by a tool that coordinates the full process.（Again，这种partition方式就是dynamo里面提到的第三种方式，好处就是在rebalance的时候不需要scan key range而只是需要移动对应的partition data file）
-- The following describes the rebalancing strategy during the addition of a new node. 
+- The following describes the rebalancing strategy during the addition of a new node.
   - First, the rebalancing tool is provided with the future cluster topology metadata, and with this data, it generates a list of all primary partitions that need to be moved. The tool moves partitions in small batches so as to checkpoint and not refetch too much data in case of failure.（driver会计算出哪些partition需要移动，但是每次移动一批partition而不是全部。这样可以方便做checkpoint，并且在失败重试情况下面少取数据）
-  - For every small batch of primary partitions, the sys-tem generates an intermediate cluster topology metadata, which is the current cluster topology plus changes in own-ership of the batch of partitions moved. 
+  - For every small batch of primary partitions, the sys-tem generates an intermediate cluster topology metadata, which is the current cluster topology plus changes in own-ership of the batch of partitions moved.
   - Voldemort must take care of all secondary replica movements that might be required due to the primary partition movement.（还需要考虑secondary replica的移动）
   - A plan is generated that lists the set of donating and steal-ing node-id pairs along with the chunk buckets being moved. With this plan, the rebalancing tool starts asyn-chronous processes (through the administrative service) on the stealer nodes to copy all chunk sets corresponding to the moving chunk buckets from their respective donor nodes.（移动过程完全是异步操作）
   - Rebalancing works only on the active version of the data, ignoring the previous versions. （只是操作当前版本的数据）
@@ -110,5 +109,3 @@ file:images/voldemort-storage-format.png
 
 ** Evaluation
 ** Conclusion and Future Work
-
-
