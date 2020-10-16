@@ -4,7 +4,7 @@ https://pdos.csail.mit.edu/6.824/papers/thekkath-frangipani.pdf
 
 https://pdos.csail.mit.edu/6.824/notes/l-frangipani.txt
 
-这里我简称FP吧，FP其实是运行在叫做Petal的分布式存储服务上的，然后配合petal lock service，实现出POSIX语义的文件系统。
+这里我简称FP，FP其实是运行在叫做Petal的分布式存储服务上的，然后配合petal lock service，实现出POSIX语义的文件系统。
 
 层次结构如下图。这里提到的FP其实就是图片里面的fragnipani server. Distributed lock service是做在petal里面的，用Paxos来做共识算法。
 
@@ -45,6 +45,48 @@ Some operations require atomically updating several ondisk data structures cover
 
 The Lock Service
 
-clerk是这个lock service的client, 负责和lock servers进行通信。每个fp server都会嵌入clerk，通过clerk和lock service进行通信。clerk向server发起request/release请求，server向clerk回复grant/revoke。它们之间的交互是异步的，fp在使用的时候向clerk发起请求，然后等待clerk的回应，超时就放弃。
+clerk是这个lock service的client, 负责和lock servers进行通信。每个FP server都会嵌入clerk，通过clerk和lock service进行通信。clerk向server发起request/release请求，server向clerk回复grant/revoke。它们之间的交互是异步的，FP在使用的时候向clerk发起请求，然后等待clerk的回应，超时就放弃。在release/revoke之前，FP server需要将dirty cache data刷回到petal disk上。
 
-clerk连接上lock server都会被分配lease identifier, 也就相当给fp server分配了唯一标识符。每个lock都是一个int64整数。lock servers维护着一个 map<lock-id, lease-id> 的映射，这个映射关系会通过paxos做replication. clerk通过lease机制保证锁的有效性，和其他lease机制一样也会面临两个问题，时钟偏移以及检查lease有效性到发起操作时间太长，petal将这个margin的时间设置成为15s.
+clerk连接上lock server都会被分配lease identifier, 也就相当给FP server分配了唯一标识符。每个lock都是一个int64整数。lock servers维护着一个 map<lock-id, lease-id> 的映射，这个映射关系会通过paxos做replication. clerk通过lease机制保证锁的有效性，和其他lease机制一样也会面临两个问题，时钟偏移以及检查lease有效性到发起操作时间太长，petal将这个margin的时间设置成为15s.
+
+既然是通过paxos做replication的，那么做replication group的servers数量肯定不能太多，但是从之前的图上看每个petal server上都有一个lock server, 我直觉估计这个数量应该也是不少的。如果lock server的数量很多的话，那么就不能只形成一个replication group. 怎么形成多个replication group是个问题，论文里面没有说，直觉也比较困难。论文里面也提到global state information包含所有的lock servers, 所以我猜测lock server数量应该不多，只是一个replication group. 如果是这样的话就会简单许多。
+
+并不是每个lock server都维护着所有的map<lock-id, lease-id>的映射，而是将这些lock-id分成了100个lock groups, 然后每个lock server会负责几个lock groups. 至于lock-id是如何映射到lock groups的话，论文里面没有写。但是论文里面提到了lock是可以做迁移的，所以这个映射可能是动态的。
+
+#+BEGIN_QUOTE
+A small amount of global state information that does not change often is consistently replicated across all lock servers using Lamport’s Paxos algorithm [23]. The lock service reuses an implementation of Paxos originally written for Petal. The global state information consists of a list of lock servers, a list of locks that each is responsible for serving, and a list of clerks that have opened but not yet closed each lock table. This information is used to achieve consensus, to reassign locks across lock servers, to recover lock state from clerks after a lock server crash, and to facilitate recovery of Frangipani servers. For efficiency, locks are partitioned into about one hundred distinct lock groups, and are assigned to servers by group, not individually.
+
+Locks are occasionally reassigned across lock servers to compensate for a crashed lock server or to take advantage of a newly recovered lock server. A similar reassignment occurs when a lock server is permanently added to or removed from the system. In such cases, the locks are always reassigned such that the number of locks served by each server is balanced, the number of reassignments is minimized, and each lock is served by exactly one lock server. The reassignment occurs in two phases. In the first phase, lock servers that lose locks discard them from their internal state. In the second phase, lock servers that gain locks contact the clerks that have the relevant lock tables open. The servers recover the state of their new locks from the clerks, and the clerks are informed of the new servers for their locks.
+#+END_QUOTE
+
+----------
+
+关于这个系统的设计背景
+
+#+BEGIN_EXAMPLE
+what's the intended use?
+  environment: single lab with collaborating engineers
+    the authors' research lab
+    programming, text processing, e-mail, &c
+  workstations in offices
+  most file access is to user's own files
+  need to potentially share any file among any workstations
+    user/user collaboration
+    one user logging into multiple workstations
+  so:
+    common case is exclusive access; want that to be fast
+    but files sometimes need to be shared; want that to be correct
+  this was a common scenario when the paper was written
+
+why is Frangipani's design good for the intended use?
+  strong consistency, which humans expect from a file system
+  caching in each workstation -- write-back
+    all updates initially applied just in workstation's cache -- fast
+    including e.g. creating files, creating directories, rename, &c
+    updates proceed without any RPCs if everything already cached
+    so file system code must reside in the workstation, not server
+  most complexity is in clients, not the shared Petal servers
+    more clients -> more CPU power
+    complex servers were a serious bottleneck in previous systems e.g. NFS, AFS
+
+#+END_EXAMPLE
