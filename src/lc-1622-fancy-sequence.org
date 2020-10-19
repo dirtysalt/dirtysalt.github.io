@@ -1,0 +1,189 @@
+#+title: 1622. 奇妙序列
+
+https://leetcode-cn.com/problems/fancy-sequence/
+
+这题让我想起了分布式系统里面的回放日志操作：我们将所有的操作以日志的方式记录下来，并且日志上包含具体的时间戳。当需要确定数组某个idx的值的时候，查找到应该从哪个日志点开始放回，然后apply日志即可。
+
+按照这种思路实现如下：
+- op字段分别表示
+  - idx 表示这个日志需要应用在所有下标<=idx的数组元素上
+  - 0/1 表示 inc/mul
+  - inc/m 表示具体的value
+- ops数组是按照idx排序的，所以可以进行二分搜索
+
+#+BEGIN_SRC python
+class Fancy:
+
+    def __init__(self):
+        self.ops = []
+        self.array = []
+
+    def append(self, val: int) -> None:
+        self.array.append(val)
+
+    def addAll(self, inc: int) -> None:
+        idx = len(self.array) - 1
+        self.ops.append((idx, 0, inc))
+
+    def multAll(self, m: int) -> None:
+        idx = len(self.array) - 1
+        self.ops.append((idx, 1, m))
+
+    def getIndex(self, idx: int) -> int:
+        if idx >= len(self.array):
+            return -1
+        MOD = 10 ** 9 + 7
+        s, e = 0, len(self.ops) - 1
+        while s <= e:
+            m = (s + e) // 2
+            if self.ops[m][0] >= idx:
+                e = m - 1
+            else:
+                s = m + 1
+        # starts with s
+        val = self.array[idx]
+        for idx, op, v in self.ops[s:]:
+            if op == 0:
+                val += v
+            else:
+                val *= v
+        return val % MOD
+#+END_SRC
+
+很明显这个问题出在，如果在某个时候我们想看idx=0的元素的时候，那是要回放所有的日志。如果按照系统设计的方式，是要做snapshot来减少日志回访量的，不过这里不现实。
+
+----------
+
+这里如何做合并呢？也就是如何将这些计算组合起来呢？考虑 (x+a)*b = x*b+a*b. 可以想到 add(a), mul(b), 可以合并成为一个操作就是 x*b + a*b. 如果之后 mul(c)的话，那么就是 x*b*c + a*b*c. 依次类推。
+最后 add/mul 合并在一起，就是就可以组合成为一个 f(x)=x*a+b.
+
+虽然上面说到snapshot不现实，但是我们可以使用类似线段树的组织方式，将一些日志做合并，减少日志的应用数量。但是我觉得可能代码会比较多。
+
+这里说一个更简单的办法，就是前面说到日志可以合并应用，但是其实也也是可以取消的（计算组合性）。
+- 比如要执行 add(a), mul(b), add(c), mul(d) 这些操作
+- 先执行 add(a), mul(b), 那么f(x) = x*b + a*b （系数分别是 b, a*b)
+- 在执行 add(c), mul(d), 那么f(x) = x*b*d + (a*b+c) *d （系数分别是 b*d, (a*b+c)*d)
+
+如果我们这时候想取消 add(a), mul(b), 应该怎么办呢？
+- 我们应该使用什么乘数： b*d/d
+- 我们应该使用什么加数：(a*b+c)*d / d - c
+
+讲清楚这件事情好像有点困难，不过思路大体是清楚的。按照这个思路实现的话，就是下面这样的代码。注意下面这个代码使用了python的大数功能，想要不使用大数功能就需要解决除法取模的问题。
+
+#+BEGIN_SRC python
+
+MOD = 10 ** 9 + 7
+
+
+class Fancy:
+    def __init__(self):
+        self.array = []
+        self.ops = []
+        self.ops.append((-1, 0, 1))
+
+    def append(self, val: int) -> None:
+        self.array.append(val)
+
+    def addAll(self, inc: int) -> None:
+        idx = len(self.array) - 1
+        _, add, mul = self.ops[-1]
+        self.ops.append((idx, add + inc, mul))
+
+    def multAll(self, m: int) -> None:
+        idx = len(self.array) - 1
+        _, add, mul = self.ops[-1]
+        self.ops.append((idx, add * m, mul * m))
+
+    def getIndex(self, idx: int) -> int:
+        if idx >= len(self.array):
+            return -1
+
+        s, e = 0, len(self.ops) - 1
+        while s <= e:
+            m = (s + e) // 2
+            if self.ops[m][0] >= idx:
+                e = m - 1
+            else:
+                s = m + 1
+
+        # print(self.ops)
+        # apply latest op
+        # and cancel op self.ops[e]
+        _, add1, mul1 = self.ops[-1]
+        _, add2, mul2 = self.ops[e]
+        val = self.array[idx]
+        mul = mul1 // mul2
+        add = add1 - add2 * mul
+        ans = val * mul + add
+        return ans % MOD
+#+END_SRC
+
+
+除法取模的问题需要使用到 [[file:euler-and-fermat-little-theorem.org][欧拉和费马定理]], 简单地说就是 x / p % MOD = x * POW(p, MOD-2) % MOD. 所以不适用大数除法的版本如下。
+
+#+BEGIN_SRC python
+MOD = 10 ** 9 + 7
+
+
+def POW(a, b):
+    ans = 1
+    a = a % MOD
+    while b:
+        if b & 0x1:
+            ans = ans * a
+            ans = ans % MOD
+        b = b >> 1
+        a = (a * a) % MOD
+    return ans
+
+
+class Fancy:
+    def __init__(self):
+        self.array = []
+        self.ops = []
+        self.ops.append((-1, 0, 1, 1))
+
+    def append(self, val: int) -> None:
+        self.array.append(val)
+
+    def addAll(self, inc: int) -> None:
+        idx = len(self.array) - 1
+        _, add, mul, _ = self.ops[-1]
+        self.ops.append((idx, add + inc, mul, POW(mul, MOD - 2)))
+
+    def multAll(self, m: int) -> None:
+        idx = len(self.array) - 1
+        _, add, mul, _ = self.ops[-1]
+        self.ops.append((idx, add * m, (mul * m) % MOD, POW(mul * m, MOD - 2)))
+
+    def getIndex(self, idx: int) -> int:
+        if idx >= len(self.array):
+            return -1
+
+        s, e = 0, len(self.ops) - 1
+        while s <= e:
+            m = (s + e) // 2
+            if self.ops[m][0] >= idx:
+                e = m - 1
+            else:
+                s = m + 1
+
+        # print(self.ops)
+        # apply latest op
+        # and cancel op self.ops[e]
+
+        _, add1, mul1, div1 = self.ops[-1]
+        _, add2, mul2, div2 = self.ops[e]
+        val = self.array[idx]
+
+        # mul = mul1 // mul2
+        # add = add1 - add2 * mul
+        # ans = val * mul + add
+
+        mul = (mul1 * div2) % MOD
+        add = add1 - add2 * mul
+        ans = val * mul + add
+        while ans < 0:
+            ans += MOD
+        return ans % MOD
+#+END_SRC
