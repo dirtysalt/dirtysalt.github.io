@@ -1,0 +1,109 @@
+#+title: 1659. 最大化网格幸福感
+
+https://leetcode-cn.com/problems/maximize-grid-happiness/
+
+在动态规划中使用轮廓压缩状态，这种方法在之前还没有遇到过，挺新鲜的。
+
+题解 https://leetcode-cn.com/problems/maximize-grid-happiness/solution/zui-da-hua-wang-ge-xing-fu-gan-by-zerotrac2/ 在 “方法二：按轮廓线进行状态压缩” 这个部分解释的比较清楚了。我没有仔细看后面的说明，只是看前面两段大体可以猜到来如何解决了。为了完整性，我直接把题解中的文字和截图粘贴过来。
+
+#+BEGIN_QUOTE
+思路与算法
+
+这是一种在竞赛中会用到的动态规划方法，称之为「轮廓线动态规划」。当我们在一个二维矩阵上进行动态规划，并且数据规模不大、状态的表示方法有限（可以使用状态压缩的方法）、可以通过当前位置与其上方和左侧的位置计算状态转移方程，那么就可以考虑使用轮廓线动态规划。在力扣平台上，这一类的题目非常少，类似的只有一道力扣杯的题目 LCP 04. 覆盖。这里感谢 @newhar 指出，还有一道题目 1349. 参加考试的最大学生数。
+
+下面左侧的图展示了轮廓线动态规划需要维护的状态以及它的转移过程。如果我们枚举到了当前位置（绿色）的状态，我们需要利用到从该位置上一行位于相同列的位置开始，到该位置的上一个位置结束的 nn 个状态的状态压缩表示（蓝色）。这样一来，我们可以通过当前位置与编号为 00 的位置（也就是上下相邻），以及编号为 n-1n−1 的位置（左右相邻）之间的关系，计算出因为两人相邻贡献的额外分数。如果我们规定上下相邻的两人由下面的人负责计算贡献，左右相邻的人由右边的人负责计算贡献，那么我们就可以按照行优先的顺序依次枚举每一个位置，并进行状态转移了。
+
+file:images/dp-contour-line.png
+
+那么我们为什么要存储连续的 nn 个状态，而不是当前位置的上方和左侧 22 个状态呢？看上去我们额外存储了 n-2n−2 个状态，但我们可以想一下，如果只存储 22 个状态会造成什么后果。参考上面右侧的图，当我们枚举到下一个位置时，如果我们存储的是连续的 nn 个状态，那么我们将上面左侧编号 00 的位置移除，再添加前一个位置，就可以得到下一个位置对应的 nn 个状态。但加入我们只存储状态 00 和 n-1n−1，那么在枚举到下一个位置时，状态 n-1n−1 可以通过上一个位置得到，但状态 00 却是未知的了。这也是轮廓线动态规划的妙处所在。
+
+#+END_QUOTE
+
+回到Python实现上。这个状态大概是这样的:
+- =dp[r][c][st][j][k]=
+- r, c 表示放置位置
+- st 表示轮廓线
+- j, k 表示放置了j个introvert和k个extrovert.
+
+考虑到在Python里面开辟这么多维数组比较麻烦，所以改成使用map来存储状态。另外r,c可以合并成为一个idx. 改成map来存储状态的另外一个好处是可以简化基准情况，如果某个情况在map里面查询不到的话，那么就认为是无效状态。
+
+我们使用状态更新方程：
+- 先得到 =dp[idx-1][st][j][k]= 的值，表示上一个位置(idx-1), 如果轮廓线是st, 并且放置了(j, k)个人，对应的最大值。然后可以更新下面几个状态
+- =dp[idx][st2][j+1][k]= 当前位置放置introvert
+- =dp[idx][st2][j][k+1]= 当前位置放置extrovert
+- =dp[idx][st2][j][k]= 不放置任何东西
+- 基准情况是 =dp[-1][0][0][0]=0=
+- 考虑到值只能是越来越大，所以我们结果只需要去查询所有状态的最大值就行。
+
+#+BEGIN_SRC python
+class Solution:
+    def getMaxGridHappiness(self, m: int, n: int, introvertsCount: int, extrovertsCount: int) -> int:
+        dp = {}
+
+        def updatePlace(r, c, st, p):
+            score = 0
+            if p == 1:
+                score += 120
+                delta = -30
+            elif p == 2:
+                score += 40
+                delta = 20
+            assert p != 3
+
+            up = st & 0x3
+            assert up != 3
+            if up != 0:
+                score += delta
+            if up == 1:
+                score -= 30
+            elif up == 2:
+                score += 20
+
+            if c != 0:
+                left = (st >> (2 * n - 2)) & 0x3
+                assert left != 3
+                if left != 0:
+                    score += delta
+                if left == 1:
+                    score -= 30
+                elif left == 2:
+                    score += 20
+            return score
+
+        key = (-1, 0, 0, 0)
+        dp[key] = 0
+
+        def updateDP(idx, st, j, k, score):
+            key = (idx, st, j, k)
+            # print(key, score)
+            if key not in dp:
+                dp[key] = score
+            else:
+                dp[key] = max(score, dp[key])
+
+        for idx in range(m * n):
+            for st in range(1 << (2 * n)):
+                for j in range(introvertsCount + 1):
+                    for k in range(extrovertsCount + 1):
+                        key = (idx - 1, st, j, k)
+                        if key not in dp: continue
+                        score = dp[key]
+                        r, c = idx // n, idx % n
+
+                        # if a introvert.
+                        if j < introvertsCount:
+                            res = updatePlace(r, c, st, 1)
+                            st2 = 1 << (2 * n - 2) | (st >> 2)
+                            updateDP(idx, st2, j + 1, k, res + score)
+
+                        if k < extrovertsCount:
+                            res = updatePlace(r, c, st, 2)
+                            st2 = 1 << (2 * n - 1) | (st >> 2)
+                            updateDP(idx, st2, j, k + 1, res + score)
+
+                        updateDP(idx, st >> 2, j, k, score)
+
+        # print(dp)
+        ans = max(dp.values())
+        return ans
+#+END_SRC
