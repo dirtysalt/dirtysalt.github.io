@@ -1,0 +1,72 @@
+#+title: Writing a simple os from scratch
+
+https://www.cs.bham.ac.uk/~exr/lectures/opsys/10_11/lectures/os-dev.pdf
+
+可以使用bochs/qemu来作为x86模拟器
+
+----------
+BIOS上有代码可以从存储设备加载boot sector. 所谓boot sector是一串512字节的代码，并且结尾以0xaa55结束。
+刚开始运行的是x86的16位实模式(16bit real mode), BIOS会将则个boot sector加载到0x7c00这个内存地址上。
+在这个阶段我们可以使用BIOS提供的中断例程来访问外部设备(int 0x10) 加载上来之后，会将启动设备编号保存在dl这个寄存器上。
+
+file:images/os-boot-mm.png
+
+但是kernel代码无论如何也是没有办法放在512字节里面的，通常的做法就是在这512字节里面写点代码，将boot sector后面512 * 15字节的image加载进来，
+加载地址是0x1000. 这么来说os image布局就是这样的：
+1. boot sector [ 512 bytes]
+    1. load next 512 * 15 bytes to 0x1000
+    2. 0000
+    3. 0xaa55
+2. kernel image.
+
+至于是不是512 * 15字节，我觉得可以商量，这个值不固定。但是在允许范围内，也就是0x7c00 - 0x1000 = 0x6c00字节以内是没有问题的。甚至连0x1000这个地址可能也是可以改的，从上图看，好像只要在0x500以上就是OK的。
+
+下面命令可以指定kernel.bin 被加载到0x1000上 =ld -o kernel.bin -Ttext 0x1000 kernel entry.o kernel.o --oformat binary=
+
+----------
+在16bit模式下面，为了扩展可以访问的内存大小，还引入了段式内存管理(segment mm). 具体来说就是可以指定cs, ds这样的段寄存器来安排起始地址。
+比如ds = 0x4000的话，那么ds:0x7c00访问的地址就是 0x4000 * 16 + 0x7c00. 可以访问的内存空间从64KB扩展到了1MB.
+
+不过这个模式下面可以访问内存依然有限。为了从16bit切换到32bit保护模式(protect mode)，访问内存可以扩展到4GB，就要用到GDT(global descriptor table).
+GDT这个事情后面再说。从16bit切换到32bit之后，BIOS上面的中断例程比如访问磁盘或者键盘鼠标，就完全不能用了，这些设备的driver就只能自己写了。
+
+----------
+GDT管理内存的方式，还是类似段式内存管理，可以在一个segment descriptor指定这个段的起始地址。但是考虑到类似cs, ds这样的段寄存器是16bits，没有办法
+指定32bits的起始地址了，所以只能将cs, ds当做一个index来使用。另外保护模式还强调这个段的大小，虽然只有20bits，但是是以4K为单位的，所以段的大小上限
+正好可以达到32bits.
+
+首先定义segment descriptor table, 是一块48bits的内存地址，头16bits表示有多少个segment descriptor, 然后32bits表示descriptors地址在哪里。然后在descriptors
+的地址定义连续的descriptor. 每个descriptor的结构如下图。不过第一个descriptor必须是null descriptor. 一般为了简单而言，code和data的descriptor基本设置相同，
+只不过在read/write权限上稍微有点差异。
+
+file:images/os-gdt-descriptor.png
+
+#+BEGIN_SRC asm
+gdb_descriptor:
+dw gdt_end - gdt_start - 1
+dd gdt_start
+
+gdt_start:
+gdt_null:
+dd 0x0
+dd 0x0
+
+gdt_code:
+...
+gdt_data:
+...
+gdt_end:
+
+CODE_SEG equ gdt_code - gdt_start ; 此后将mov al, CODE_SEG; mov cs al
+DATA_SEG equ gdt_data - gdt_start
+
+;; 下面切换到32bits
+lgdt [gdt_descriptor]
+mov eax , cr0
+or eax, 0x1
+mov cr0 , eax
+
+[bits 32] ; 告诉assembler, 下面的代码编译成为32bits instruction.
+#+END_SRC
+
+从16bits在切换到32bits模式之后，因为流水线的原因，某些最新的32bits代码依然以16bits的方式在解码。为了flush pipeline,  在切换之后，需要立刻使用一个jmp/call来跳转到32bits code的代码空间，比如 jmp CODE_SEG: init_pm 这样。
