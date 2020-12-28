@@ -3,12 +3,12 @@
 "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
 <html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
 <head>
-<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Using HBase with ioMemory(Fusion-io)</title>
-<meta name="generator" content="Org mode" />
-<meta name="author" content="dirtysalt" />
-<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<!-- 2020-12-28 Mon 12:40 -->
+<meta  http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta  name="generator" content="Org-mode" />
+<meta  name="author" content="dirtysalt" />
+</head>
 <body>
 <div id="content">
 <h1 class="title">Using HBase with ioMemory(Fusion-io)</h1>
@@ -22,40 +22,59 @@ HBase Challenges in Practice
 <ul class="org-ul">
 <li>Working Set and DRAM
 <ul class="org-ul">
-<li>a major performance disparity between reads serviced from memory vs. those from disk 内存和磁盘速度差异巨大</li>
-<li>reads from memory can return as quickly as 0-3 milliseconds, whereas reads from disk can take as long as 30 milliseconds. 内存读取0-3ms, 磁盘读取在30ms</li>
-<li>even when DRAM in the cluster is ~40% the size of the entire database, each node was only capable of serving about 900 reads per second, which is much worse than the 30,000 reads per second attained when all the records fit in DRAM.</li>
-<li>This behavior can be a significant problem for the predictability of cluster performance, particularly when it is difficult or impossible to accurately predict the size of the database’s working set at the time the cluster is provisioned. Some workloads are simply too random to be able to characterize a subset of the database as the working set. 难以预测性能，无法预测到哪些数据存在working set</li>
-</ul></li>
+<li>a major performance disparity between reads serviced from memory vs. those from disk 内存和磁盘速度差异巨大
+</li>
+<li>reads from memory can return as quickly as 0-3 milliseconds, whereas reads from disk can take as long as 30 milliseconds. 内存读取0-3ms, 磁盘读取在30ms
+</li>
+<li>even when DRAM in the cluster is ~40% the size of the entire database, each node was only capable of serving about 900 reads per second, which is much worse than the 30,000 reads per second attained when all the records fit in DRAM.
+</li>
+<li>This behavior can be a significant problem for the predictability of cluster performance, particularly when it is difficult or impossible to accurately predict the size of the database’s working set at the time the cluster is provisioned. Some workloads are simply too random to be able to characterize a subset of the database as the working set. 难以预测性能，无法预测到哪些数据存在working set
+</li>
+</ul>
+</li>
 <li>JVM Limitations
 <ul class="org-ul">
-<li>Java Virtual Machine (JVM) garbage collection performance can be a problem when JVM processes are assigned large heap values. large heap会影响GC性能</li>
-</ul></li>
+<li>Java Virtual Machine (JVM) garbage collection performance can be a problem when JVM processes are assigned large heap values. large heap会影响GC性能
+</li>
+</ul>
+</li>
 <li>Scale-out for DRAM
 <ul class="org-ul">
-<li>In a conventional HBase cluster, the critical component for performance is DRAM. There must be sufficient memory available across the cluster to hold the working set of records so that reads from disk are minimized. 传统hbase使用场景必须有足够内存</li>
-<li>Unfortunately servers configured with very large DRAM configurations can quickly exceed the price range expected of so-called commodity servers. DRAM非常大的话很容易就会超过所谓commodity-server的价格范围，因为内存$/GB非常高。</li>
-<li>Despite being a commodity component, DRAM modules at high densities approach $35-$45/GB, limiting the cost-effective range for DRAM in a server to 48GB to 128GB per node. 并且commdity server单个节点通常只能配置48GB-128GB.</li>
-<li>Organizations simply don’t have sufficient rack-space to continue to scale at that relatively low-density per GB <b>这就意味着，内存本身的密度还是非常小的，一个机器对应48GB-128GB的空间，而如果使用磁盘的话，可能一个机器对应8TB-16TB的空间</b></li>
-</ul></li>
+<li>In a conventional HBase cluster, the critical component for performance is DRAM. There must be sufficient memory available across the cluster to hold the working set of records so that reads from disk are minimized. 传统hbase使用场景必须有足够内存
+</li>
+<li>Unfortunately servers configured with very large DRAM configurations can quickly exceed the price range expected of so-called commodity servers. DRAM非常大的话很容易就会超过所谓commodity-server的价格范围，因为内存$/GB非常高。
+</li>
+<li>Despite being a commodity component, DRAM modules at high densities approach $35-$45/GB, limiting the cost-effective range for DRAM in a server to 48GB to 128GB per node. 并且commdity server单个节点通常只能配置48GB-128GB.
+</li>
+<li>Organizations simply don’t have sufficient rack-space to continue to scale at that relatively low-density per GB <b>这就意味着，内存本身的密度还是非常小的，一个机器对应48GB-128GB的空间，而如果使用磁盘的话，可能一个机器对应8TB-16TB的空间</b>
+</li>
+</ul>
+</li>
 </ul>
 
 <p>
 fusion iomemory 是类似 ssd的东西， <b>操作速度接近DRAM，成本更低但是却能够提供大量的存储空间。</b>
 </p>
 <ul class="org-ul">
-<li>Fusion’s ioMemory platform achieves a more satisfactory balance of capacity and performance, operating at near DRAM speeds but with the persistence required for database storage.</li>
-<li>Fusion-io provides direct PCIe bus access to NAND flash memory that does not rely on legacy block-storage chipsets.</li>
+<li>Fusion’s ioMemory platform achieves a more satisfactory balance of capacity and performance, operating at near DRAM speeds but with the persistence required for database storage.
+</li>
+<li>Fusion-io provides direct PCIe bus access to NAND flash memory that does not rely on legacy block-storage chipsets.
+</li>
 </ul>
 <p>
 文章中具体的优势如下：
 </p>
 <ul class="org-ul">
-<li>It eliminates the notion of a working set for the database. Because the entirety of the database is accessible at latencies measured in tens of microseconds, the notion of a working set becomes irrelevant. Instead of an HBase cluster supporting fast access to a working set of a few tens of GB per node, HBase with ioMemory can provide fast access to hundreds of GB or even several TB per node. This can save many hours in engineering time spent trying to reduce the working set to a manageable size. <b>速度</b></li>
-<li>It provides relief from JVM problems. DRAM is no longer solely responsible for performance in the cluster, and smaller JVM heap allocations can be used to improve cluster stability. <b>heap space可以减小</b></li>
-<li>It offers a solution at a fraction of the cost per gigabyte of high-density DRAM modules. <b>成本更低</b></li>
-<li>It consumes significantly less power per GB. <b>功耗更低</b></li>
-<li>The higher physical density of ioMemory can reduce unnecessary scale-out. <b>密度更低</b></li>
+<li>It eliminates the notion of a working set for the database. Because the entirety of the database is accessible at latencies measured in tens of microseconds, the notion of a working set becomes irrelevant. Instead of an HBase cluster supporting fast access to a working set of a few tens of GB per node, HBase with ioMemory can provide fast access to hundreds of GB or even several TB per node. This can save many hours in engineering time spent trying to reduce the working set to a manageable size. <b>速度</b>
+</li>
+<li>It provides relief from JVM problems. DRAM is no longer solely responsible for performance in the cluster, and smaller JVM heap allocations can be used to improve cluster stability. <b>heap space可以减小</b>
+</li>
+<li>It offers a solution at a fraction of the cost per gigabyte of high-density DRAM modules. <b>成本更低</b>
+</li>
+<li>It consumes significantly less power per GB. <b>功耗更低</b>
+</li>
+<li>The higher physical density of ioMemory can reduce unnecessary scale-out. <b>密度更低</b>
+</li>
 </ul>
 </div>
 </body>

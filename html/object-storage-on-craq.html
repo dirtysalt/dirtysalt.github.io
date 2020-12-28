@@ -3,12 +3,12 @@
 "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
 <html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
 <head>
-<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Object Storage on CRAQ</title>
-<meta name="generator" content="Org mode" />
-<meta name="author" content="dirtysalt" />
-<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<!-- 2020-12-28 Mon 12:42 -->
+<meta  http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta  name="generator" content="Org-mode" />
+<meta  name="author" content="dirtysalt" />
+</head>
 <body>
 <div id="content">
 <h1 class="title">Object Storage on CRAQ</h1>
@@ -28,11 +28,13 @@
 CRAQ涉及到两个技术：
 </p>
 <ul class="org-ul">
-<li>CR: Chain Replication. 因为可以通过pipeline的方式发送数据，可以做到比较高的写吞吐。</li>
-<li>AQ: Apportioned Query. 可以向所有的节点发起读请求并且依然满足强一致性，做到比较高的读吞吐。</li>
+<li>CR: Chain Replication. 因为可以通过pipeline的方式发送数据，可以做到比较高的写吞吐。
+</li>
+<li>AQ: Apportioned Query. 可以向所有的节点发起读请求并且依然满足强一致性，做到比较高的读吞吐。
+</li>
 </ul>
 
-<hr />
+<hr  />
 
 <p>
 CR原始论文为了满足强一致性只能查询tail节点。因为到了write到了tail节点之后，说明所有的replicas就都可以committed了。但是这样会造成读的吞吐量上不去，毕竟只能查询tail节点。
@@ -43,10 +45,14 @@ AQ的方式是允许将读分摊到所有的节点上，而不仅仅是tail节�
 如何保证读任意节点依然满足强一致性呢？可以在CR协议的基础上稍加改进：
 </p>
 <ol class="org-ol">
-<li>node每次收到写入 <code>(key, value, version)</code>, 会将version加入到key下面的列表中，并且标记dirty状态。</li>
-<li>所谓dirty状态就是这次写入还没有被tail节点所ack.</li>
-<li>当tail节点收到写入之后，会将ack信息向前传播。所以node收到了 <code>(key, version, ack)</code> 信息的话，那么就可以清除dirty标记clean状态了。</li>
-<li>于此同时，可以将这个version之前所有的版本都清楚掉。因为当前这个版本就是最新数据，对外没有必要提供历史数据。</li>
+<li>node每次收到写入 <code>(key, value, version)</code>, 会将version加入到key下面的列表中，并且标记dirty状态。
+</li>
+<li>所谓dirty状态就是这次写入还没有被tail节点所ack.
+</li>
+<li>当tail节点收到写入之后，会将ack信息向前传播。所以node收到了 <code>(key, version, ack)</code> 信息的话，那么就可以清除dirty标记clean状态了。
+</li>
+<li>于此同时，可以将这个version之前所有的版本都清楚掉。因为当前这个版本就是最新数据，对外没有必要提供历史数据。
+</li>
 </ol>
 
 
@@ -55,7 +61,7 @@ AQ的方式是允许将读分摊到所有的节点上，而不仅仅是tail节�
 </p>
 </div>
 
-<hr />
+<hr  />
 
 <p>
 当client读取key的时候，如果当前有某个version处于dirty状态的话，那么说明当前有写入但是不确定是否到达了tail节点。这个时候节点可以和tail节点做一个通信，询问“你最新写入的key是什么version”，
@@ -70,7 +76,7 @@ AQ的方式是允许将读分摊到所有的节点上，而不仅仅是tail节�
 <b>Eventual Consistency with Maximum-Bounded Inconsistency</b> allows read operations to return newly written objects before they commit, but only to a certain point. The limit imposed can be based on time (relative to a node’s local clock) or on absolute version numbers. In this model, a value returned from a read operation is guaranteed to have a maximum inconsistency period (defined over time or versioning). If the chain is still available, this inconsistency is actually in terms of the returned version being newer than the last committed one. If the system is partitioned and the node cannot participate in writes, the version may be older than the current committed one.
 </p>
 
-<hr />
+<hr  />
 
 <p>
 关于检测节点可用性这件事情，CRAQ外包给了zookeeper。所有节点都会在zookeeper上面去注册所属的datacenter目录下面，并且关注这个目录下面的节点加入和删除，然后了解到整个dc里面有哪些nodes.
@@ -81,7 +87,7 @@ AQ的方式是允许将读分摊到所有的节点上，而不仅仅是tail节�
 Although this approach requires that nodes keep track of the CRAQ node list of entire datacenters, we chose this method over the alternative approach in which nodes register their membership for each chain they belong to (i.e., chain metadata explicitly names the chain’s current members). We make the assumption that the number of chains will generally be at least an order of magnitude larger than the number of nodes in the system, or that chain dynamism may be significantly greater than nodes joining or leaving the system (recall that CRAQ is designed for managed datacenter, not peer-to-peer, settings). Deployments where the alternate assumptions hold can take the other approach of tracking per-chain memberships explicitly in the coordination service. If necessary, the current approach’s scalability can also be improved by having each node track only a subset of datacenter nodes: We can partition node lists into separate directories within <i>nodes/dc_name</i> according to node_id prefixes, with nodes monitoring just their own and nearby prefixes.
 </p>
 
-<hr />
+<hr  />
 
 <p>
 关于如何处理这个membership的变化，论文的5.3 Handling Memberships Changes里面有，我没有仔细阅读，好像是通过back-propagation来做数据同步的。这个membership变化还有点难，
@@ -107,7 +113,7 @@ Intuition for linearizability of CR?
       re-send recent writes.
 </pre>
 
-<hr />
+<hr  />
 
 <p>
 CR这种方式很适合wide-area network。拓扑做好的话，dc之间传输只要一次。
@@ -121,7 +127,7 @@ That said, applications might further optimize the selection of wide-area chains
 Even with an optimized chain, the latency of write operations over wide-area links will increase as more datacenters are added to the chain. Although this increased latency could be significant in comparison to a primary/backup approach which disseminates writes in parallel, it allows writes to be pipelined down the chain. This vastly improves write throughput over the primary/ backup approach.
 </p>
 
-<hr />
+<hr  />
 
 <p>
 WAN部署方式对zookeeper要求很高，如果我没有理解错误的话，zookeeper使用的zab协议应该也是quorum的，对延迟还是比较敏感的，比较适合LAN和DC内部使用。
@@ -137,14 +143,14 @@ Membership management and chain metadata across multiple datacenters does introd
 To remove the redundancy of cross-datacenter ZooKeeper traffic, one could build a hierarchy of Zookeeper instances: Each datacenter could contain its own local ZooKeeper instance (of multiple nodes), as well as having a representative that participates in the global ZooKeeper instance (perhaps selected through leader election among the local instance). Separate functionality could then coordinate the sharing of data between the two. An alternative design would be to modify ZooKeeper itself to make nodes aware of network topology, as CRAQ currently is. We have yet to fully investigate either approach and leave this to future work.
 </p>
 
-<hr />
+<hr  />
 
 <p>
 DC内部还可以使用multicast来优化网络传输减少写入延迟，这个对于大对象来说有点不太可行，此外还需要考虑UDP数据包丢失以及membership changes造成数据没有收到的情况。不过无论如何，这的确是个有趣的点。
 </p>
 
 <p>
-CRAQ can take advantage of multicast protocols [41] to improve write performance, especially for large updates or long chains. Since chain membership is stable between node membership changes, a multicast group can be created for each chain. Within a datacenter, this would probably take the form of a network-layer multicast protocol, while application-layer multicast protocols may be bettersuited for wide-area chains. No ordering or reliability guarantees are required from these multicast protocols.
+CRAQ can take advantage of multicast protocols <sup><a id="fnr.1" name="fnr.1" class="footref" href="#fn.1">1</a></sup> to improve write performance, especially for large updates or long chains. Since chain membership is stable between node membership changes, a multicast group can be created for each chain. Within a datacenter, this would probably take the form of a network-layer multicast protocol, while application-layer multicast protocols may be bettersuited for wide-area chains. No ordering or reliability guarantees are required from these multicast protocols.
 </p>
 
 <p>
@@ -155,7 +161,7 @@ Then, instead of propagating a full write serially down a chain, which adds late
 Additionally, when the tail receives a propagated write request, a multicast acknowledgment message can be sent to the multicast group instead of propagating it backwards along the chain. This reduces both the amount of time it takes for a node’s object to re-enter the clean state after a write, as well as the client’s perceived write delay. Again, no ordering or reliability guarantees are required when multicasting acknowledgments—if a node in the chain does not receive an acknowledgement, it will reenter the clean state when the next read operation requires it to query the tail.
 </p>
 
-<hr />
+<hr  />
 <p>
 Q&amp;A
 </p>
@@ -164,9 +170,12 @@ Q&amp;A
 处理Byzantine Fault Tolerant(BFT)需要实现几个东西：
 </p>
 <ol class="org-ol">
-<li>身份识别，比如确认某个机器的确是属于这个集群的。</li>
-<li>数据自身完整性，通常可以使用checksum以及hash sign来解决。</li>
-<li>数据语义正确性，比如要求必须最新数据。</li>
+<li>身份识别，比如确认某个机器的确是属于这个集群的。
+</li>
+<li>数据自身完整性，通常可以使用checksum以及hash sign来解决。
+</li>
+<li>数据语义正确性，比如要求必须最新数据。
+</li>
 </ol>
 
 <pre class="example">
@@ -243,6 +252,14 @@ tricky because clients need to defend against a server that returns
 data whose signature or hash is correct, but is not the latest value.
 Systems like this include SUNDR and Bitcoin.
 </pre>
+<div id="footnotes">
+<h2 class="footnotes">Footnotes: </h2>
+<div id="text-footnotes">
+
+<div class="footdef"><sup><a id="fn.1" name="fn.1" class="footnum" href="#fnr.1">1</a></sup> <p>DEFINITION NOT FOUND.</p></div>
+
+
 </div>
+</div></div>
 </body>
 </html>
