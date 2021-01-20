@@ -2,9 +2,23 @@
 
 http://www.agner.org/optimize/
 
-** Introduction
-** Choosing the optimal platform
-*** Choice of operating system
+** 1. Introduction
+** 2. Choosing the optimal platform
+主处理器搭配上为特殊任务定制的协处理器可以有效地提高性能，而FPGA将有效地降低了制作协处理器的成本。
+
+It is possible to implement a microprocessor in an FPGA as a so-called soft processor. Such a soft processor is much slower than a dedicated microprocessor and therefore not advantageous by itself. But a solution where a soft processor activates critical application- specific instructions that are coded in a hardware definition language in the same chip can be a very efficient solution in some cases. An even more powerful solution is the combination of a dedicated microprocessor core and an FPGA in the same chip. Such hybrid solutions are now used in some embedded systems.
+
+64位处理器相比32位在CPU密集型任务上可以有5-10%的性能提升，并且支持更大内存，而其他情况则没有太大差异，真是免费的午餐。
+
+64-bit operating systems are common today. These system are capable of running both 32- bit and 64-bit programs. The 64-bit systems can improve the performance by 5-10% for some CPU-intensive applications with many function calls and for applications that use large amounts of RAM memory. If the bottleneck is elsewhere, then there is no difference in performance between 32-bit and 64-bit systems. Applications that use large amounts of memory will benefit from the larger address space of the 64-bit systems.
+
+MacOSX上默认使用PIC方式来编译，PIC在函数初次调用上的时候有符号解析的时间，如果想继续提升效率则可以考虑静态编译（PIC代码是为编译出动态库设计的）
+
+The Intel-based Mac OS X operating system is based on BSD, but the compiler uses position-independent code and lazy binding by default, which makes it less efficient. The performance can be improved by using static linking and by not using position-independent code (option -fno-pic).
+
+
+下表是64位和32位系统的对比。粗看下来就是64位系统都是优势，更多的寄存器，支持更大的内存，支持更大的寻址空间，缺点就是指令上稍微大些不太利于缓存。
+
 64 bit systems have several advantages over 32 bit systems:
 - The number of registers is doubled. This makes it possible to store intermediate data and local variables in registers rather than in memory.
 - Function parameters are transferred in registers rather than on the stack. This makes function calls more efficient.
@@ -19,108 +33,59 @@ http://www.agner.org/optimize/
 - Some instructions are one byte longer in 64 bit mode than in 32 bit mode.
 - Some 64-bit compilers are inferior to their 32-bit counterparts.
 
-** Finding the biggest time consumers
-*** Use a profiler to find hot spots
-Most compiler packages include a profiler that can tell how many times each function is
-called and how much time it uses. There are also third-party profilers such as AQtime, Intel
-VTune and AMD CodeAnalyst.
+64位的Linux会比Windows使用更多的寄存器来传递函数参数，可是为什么Windows不这么做呢？
+
+The similarity between the operating systems disappears when running in 64-bit mode because the function calling conventions are different. 64-bit Windows allows only four function parameters to be transferred in registers, whereas 64-bit Linux, BSD and Mac allow up to fourteen parameters to be transferred in registers (6 integer and 8 floating point). There are also other details that make function calling more efficient in 64-bit Linux than in 64-bit Windows (See page 49 and manual 5: "Calling conventions for different C++ compilers and operating systems"). An application with many function calls may run slightly faster in 64-bit Linux than in 64-bit Windows. The disadvantage of 64-bit Windows may be mitigated by making critical functions inline or static or by using a compiler that can do whole program optimization.
+
+使用平台独立中间语言（Java Bytecode，CIL）好处是代码会更加紧凑。但是这个紧凑仅仅是对于发布而言，而不是对于运行时而言。使用JIT可以有效地提升性能，但是JIT的runtime本身开销就比较大。此外因为托管代码的引入抽象层，而JIT本身行为也非常复杂，所以造成手动地对进行某种优化会非常困难。
+
+The reason for using an intermediate code is that it is intended to be platform-independent and compact. The biggest disadvantage of using an intermediate code is that the user must install a large runtime framework for interpreting or compiling the intermediate code. This framework typically uses much more resources than the code itself.
+
+Another disadvantage of intermediate code is that it adds an extra level of abstraction which makes detailed optimization more difficult. On the other hand, a just-in-time compiler can optimize specifically for the CPU it is running on, while it is more complicated to make CPU- specific optimizations in precompiled code.
+
+在Visual Studio上C++也可以被编译成为托管代码！！
+
+Development in C++ is quite efficient thanks to the availability of powerful development tools. One popular development tool is Microsoft Visual Studio. This tool can make two different implementations of C++, directly compiled code and intermediate code for the common language runtime of the .NET framework. Obviously, the directly compiled version is preferred when speed is important.
+
+对于Intel这种行为感到强烈鄙视！！
+
+The compiler supports automatic CPU dispatching to make multiple code versions for different Intel CPUs. The most important disadvantage of the Intel compiler is that the code is optimized for a specific Intel CPU. The compiled code checks whether it is running on an Intel CPU. If another brand of CPU (AMD or VIA) is detected, then it will run a different branch of the code with reduced speed, even if the optimal code branch is compatible with the processor it is running on. It is possible to avoid this problem in some cases by bypassing the CPU-dispatcher that checks whether the code is running on an Intel CPU. See page 139 for details).
+
+作者自己编写的库函数集合，可以作为学习材料
+
+My own function library made for demonstration purposes. Available from http://www.agner.org/optimize/asmlib.zip. Currently includes optimized versions of memory and string functions and some other functions that are difficult to find elsewhere. Faster than most other libraries when running on the newest processors. Supports all x86 and x86-64 platforms.
+
+** 3. Finding the biggest time consumers
+
+下面是几种性能剖分方式：指令，调试，时间采样，事件采样
 
 There are several different profiling methods:
 - Instrumentation: The compiler inserts extra code at each function call to count how many times the function is called and how much time it takes.
 - Debugging. The profiler inserts temporary debug breakpoints at every function or every code line.
 - Time-based sampling: The profiler tells the operating system to generate an interrupt, e.g. every millisecond. The profiler counts how many times an interrupt occurs in each part of the program. This requires no modification of the program under test, but is less reliable.
-- Event-based sampling: The profiler tells the CPU to generate interrupts at certain events, for example every time a thousand cache misses have occurred. This makes it possible to see which part of the program has most cache misses, branch mispredictions, floating point exceptions, etc. Event-based sampling requires a CPU-specific profiler. For Intel CPUs use Intel VTune, for AMD CPUs use AMD CodeAnalyst.（CPU可以提供很多性能计数器）
+- Event-based sampling: The profiler tells the CPU to generate interrupts at certain events, for example every time a thousand cache misses have occurred. This makes it possible to see which part of the program has most cache misses, branch mispredictions, floating point exceptions, etc. Event-based sampling requires a CPU-specific profiler. For Intel CPUs use Intel VTune, for AMD CPUs use AMD CodeAnalyst.
 
-Unfortunately, profilers are often unreliable. They sometimes give misleading results or fail
-completely because of technical problems. Some common problems with profilers are:
-- Coarse time measurement. If time is measured with millisecond resolution and the critical functions take microseconds to execute then measurements can become imprecise or simply zero.
-- Execution time too small or too long. If the program under test finishes in a short time then the sampling generates too little data for analysis. If the program takes too long time to execute then the profiler may sample more data than it can handle.
-- Waiting for user input. Many programs spend most of their time waiting for user input or network resources. This time is included in the profile. It may be necessary to modify the program to use a set of test data instead of user input in order to make profiling feasible.
-- Interference from other processes. The profiler measures not only the time spent in the program under test but also the time used by all other processes running on the same computer, including the profiler itself.
-- Function addresses are obscured in optimized programs. The profiler identifies any hot spots in the program by their address and attempts to translate these addresses to function names. But a highly optimized program is often reorganized in such a way that there is no clear correspondence between function names and code addresses. The names of inlined functions may not be visible at all to the profiler. The result will be misleading reports of which functions take most time.（使用优化版本的话函数地址可能会被优化掉，这样不利于分析）
-- Uses debug version of the code. Some profilers require that the code you are testing contains debug information in order to identify individual functions or code lines. The debug version of the code is not optimized.（而使用调试版本虽然利于分析，但是性能却不是最优的）
-- Jumps between CPU cores. A process or thread does not necessarily stay in the same processor core on multi-core CPUs, but event-counters do. This results in meaningless event counts for threads that jump between multiple CPU cores. You may need to lock a thread to a specific CPU core by setting a thread affinity mask.（如果某个线程在多个CPU上执行的话，那么每个核上CPU计数器没有意义。解决办法是将thread绑定到某个CPU上）
-- Poor reproducibility. Delays in program execution may be caused by random events that are not reproducible. Such events as task switches and garbage collection can occur at random times and make parts of the program appear to take longer time than normally.
 
-There are various alternatives to using a profiler. A simple alternative is to run the program
-in a debugger and press break while the program is running. If there is a hot spot that uses
-90% of the CPU time then there is a 90% chance that the break will occur in this hot spot.
-Repeating the break a few times may be enough to identify a hot spot. Use the call stack in
-the debugger to identify the circumstances around the hot spot.
+注意区分吞吐量和延迟，对于CPU来说也是一样。在加入了流水线之后（尤其是深度流水），指令的延迟和吞吐量就出现了偏离。一个指令可能会执行10个周期，但是如果前后指令不出现依赖的话，那么理论上实际的吞吐量可以达到一个指令1周期。乱序执行以及分支预测技术，也是为了提高流水线效率，而被设计出来的。
 
-Sometimes, the best way to identify performance bottlenecks is to put measurement
-instruments into the code rather than using a ready-made profiler. This does not solve all
-the problems associated with profiling, but it often gives more reliable results. If you are not
-satisfied with the way a profiler works then you may put the desired measurement
-instruments into the program itself. You may add counter variables that count how many
-times each part of the program is executed. Furthermore, you may read the time before and
-after each of the most important or critical parts of the program to measure how much time
-each part takes.（通常来说自己编写profiler也是非常有必要的）
+There is an important distinction between the latency and the throughput of an execution unit. For example, it may take 3 - 5 clock cycles to do a floating point addition on a modern CPU. But it is possible to start a new floating point addition every clock cycle. This means that if each addition depends on the result of the preceding addition then you will have only one addition every three clock cycles. But if all the additions are independent then you can have one addition every clock cycle.
 
-The time measurements may require a very high resolution if time intervals are short. In
-Windows, you can use the GetTickCount or QueryPerformanceCounter functions for
-millisecond resolution. A much higher resolution can be obtained with the time stamp
-counter in the CPU, which counts at the CPU clock frequency.（通过CPU时钟计数器来计时）
+现代CPU执行单元被分成为了许多部分，比如整数计算，浮点加法，浮点乘法等等，并且可能这些部分还会存在冗余。这些部分是相互独立的，为了提升并行度，在指令上我们最好可以将整数计算和浮点计算进行搭配，来有效使用CPU。
 
-The time stamp counter becomes invalid if a thread jumps between different CPU cores.
-You may have to fix the thread to a specific CPU core during time measurements to avoid
-this. (In Windows, SetThreadAffinityMask, in Linux, sched_setaffinity).（为了避免线程在多个CPU上执行的话需要绑定CPU）
+The execution core of modern microprocessors is split between several execution units. Typically, there are two or more integer units, one or two floating point addition units, and one or two floating point multiplication units. This means that it is possible to do an integer addition, a floating point addition, and a floating point multiplication at the same time.
 
-The program should be tested with a realistic set of test data. The test data should contain a
-typical degree of randomness in order to get a realistic number of cache misses and branch
-mispredictions.（使用真实数据或者是达到真实数据的效果，然后进行分析）
+A code that does floating point calculations should therefore preferably have a balanced mix of additions and multiplications. Subtractions use the same unit as additions. Divisions take longer time. It is possible to do integer operations in-between the floating point operations without reducing the performance because the integer operations use different execution units. For example, a loop that does floating point calculations will typically use integer operations for incrementing a loop counter, comparing the loop counter with its limit, etc. In most cases, you can assume that these integer operations do not add to the total computation time.
 
-If a library function or any other small piece of code is particularly critical then it may be
-useful to measure the number of cache misses, branch mispredictions, floating point
-exceptions, etc. in this piece of code. （如果是片段代码或者是库函数的话还需要考虑cache miss，分支预测错误，浮点数异常等问题）
-
-** Performance and usability
-** Choosing the optimal algorithm
-** Development process
+** 4. Performance and usability
+** 5. Choosing the optimal algorithm
+** 6. Development process
 ** The efficiency of different C++ constructs
-*** Different kinds of variable storage
-The volatile keyword specifies that a variable can be changed by another thread. This
-prevents the compiler from making optimizations that rely on the assumption that the
-variable always has the value it was assigned previously in the code.
-The effect of the keyword volatile is that it makes sure the variable is stored in memory
-rather than in a register and prevents all optimizations on the variable. This can be useful in
-test situations to avoid that some expression is optimized away.
-Note that volatile doesn't mean atomic. It doesn't prevent two threads from attempting to
-write the variable at the same time. （volatile变量要求编译器必须每次从内存中读取，但是并不意味着线程安全）
 
-Most compilers can make thread-local storage of static and global variables by using the
-keyword __thread or __declspec(thread). Such variables have one instance for
-each thread. Thread-local storage is inefficient because it is accessed through a pointer
-stored in a thread environment block. Thread-local storage should be avoided, if possible,
-and replaced by storage on the stack (see above, p. 26). Variables stored on the stack
-always belong to the thread in which they are created.（线程级别变量访问效率低，每次访问都必须通过指针访问线程块内存）
+关于浮点寄存器的变化。最开始intel提供的是x87浮点协处理器，操作方式是栈式的，所以好处是指令比较精简，但是缺点就是对编译器的限制太大。x87寄存器是80bits的，精度上没有任何问题，并且提供了许多内置的数学计算指令，在浮点本身精度转换上效率可以，但是在整数和浮点转换上效率不好。
 
-*** Integers variables and operators
-In most cases, there is no difference in speed between using signed and unsigned integers.
-But there are a few cases where it matters:
-- Division by a constant: Unsigned is faster than signed when you divide an integer with a constant (see page 140). This also applies to the modulo operator %. （除法上无符号数更快）
-- Conversion to floating point is faster with signed than with unsigned integers (see page 145).（转换到浮点数，有符号数更快）
+Modern microprocessors in the x86 family have two different types of floating point registers and correspondingly two different types of floating point instructions. Each type has advantages and disadvantages.
 
-Integer operations are generally very fast. Simple integer operations such as addition,
-subtraction, comparison, bit operations and shift operations take only one clock cycle on
-most microprocessors.（大部分指令只占用一个时钟周期）
-
-Multiplication and division take longer time. Integer multiplication takes 11 clock cycles on
-Pentium 4 processors, and 3 - 4 clock cycles on most other microprocessors. Integer
-division takes 40 - 80 clock cycles, depending on the microprocessor. Integer division is
-faster the smaller the integer size on AMD processors, but not on Intel processors. Details
-about instruction latencies are listed in manual 4: "Instruction tables". Tips about how to
-speed up multiplications and divisions are given on page 139 and 140, respectively.
-（乘法占用3-4个时钟周期，除法占用40-80时钟周期）
-
-*** Floating point variables and operators
-Modern microprocessors in the x86 family have two different types of floating point registers
-and correspondingly two different types of floating point instructions. Each type has
-advantages and disadvantages.
-
-The original method of doing floating point operations involves eight floating point registers
-organized as a register stack. These registers have long double precision (80 bits). The
-advantages of using the register stack are:（寄存器组织是栈式，内部使用long double精度表示）
+The original method of doing floating point operations involves eight floating point registers organized as a register stack. These registers have long double precision (80 bits). The advantages of using the register stack are:
 - All calculations are done with long double precision.
 - Conversions between different precisions take no extra time.
 - There are intrinsic instructions for mathematical functions such as logarithms and trigonometric functions.
@@ -131,115 +96,47 @@ The register stack also has disadvantages:
 - Conversions between integers and floating point numbers is inefficient.
 - Division, square root and mathematical functions take more time to calculate when long double precision is used.
 
-A newer method of doing floating point operations involves eight or sixteen vector registers
-(XMM or YMM) which can be used for multiple purposes. Floating point operations are done
-with single or double precision, and intermediate results are always calculated with the
-same precision as the operands. The advantages of using the vector registers are:
-（另外一种方式则和整形寄存器类似，并且支持向量计算。但是不要混用单精度和双精度浮点数，因为之间的转换会非常耗时）
+在出了SSE之后，提供了一套和整形寄存器类似使用方式的寄存器组(XMM,YMM,ZMM)，这些寄存器尺寸很大所以适合做并行计算。
+
+A newer method of doing floating point operations involves eight or more vector registers (XMM, YMM, or ZMM) which can be used for multiple purposes. Floating point operations are done with single or double precision, and intermediate results are always calculated with the same precision as the operands. The advantages of using the vector registers are:
 - It is easy to make floating point register variables.
-- Vector operations are available for doing parallel calculations on vectors of two double precision or four single precision variables in the XMM registers (see page 105). If the AVX instruction set is available then each vector can hold four double precision or eight single precision variables in the YMM registers.
+- Vector operations are available for doing parallel calculations on multiple variables in vector registers (see page 112).
 Disadvantages are:
 - Long double precision is not supported.
-- The calculation of expressions where operands have mixed precision require precision conversion instructions which can be quite time-consuming (see page 143).
+- The calculation of expressions where operands have mixed precision require precision conversion instructions which can be quite time-consuming (see page 150).
 - Mathematical functions must use a function library, but this is often faster than the intrinsic hardware functions.
 
-The floating point stack registers are available in all systems that have floating point
-capabilities (except in device drivers for 64-bit Windows). The XMM vector registers are
-available in 64-bit systems and in 32-bit systems when the SSE2 or later instruction set is
-enabled (single precision requires only SSE). The YMM registers are available if the AVX
-instruction set is supported by the processor and the operating system. See page 123 for
-how to test for the availability of these instruction sets.
+The x87 floating point registers are available in all systems that have floating point capabilities (except in device drivers for 64-bit Windows). The XMM, YMM, and ZMM registers require the SSE, AVX, and AVX512 instruction set, respectively. See page 131 for how to test for the availability of these instruction sets.
 
-Most compilers will use the XMM registers for floating point calculations whenever they are
-available, i.e. in 64-bit mode or when the SSE2 instruction set is enabled. Few compilers
-are able to mix the two types of floating point operations and choose the type that is optimal
-for each calculation.（基本上64位系统都使用第二种方式）
+关于单精度和双精度浮点的选择上，主要还是依照精度本身而定。单精度在某些操作上会快些，并且因为体积更小缓存效果更好。浮点加法在3-6周期，乘法4-8周期，除法14-45周期，类型转换在2-15周期（除非使用x87, 但是应该也不怎么用了吧）。有符号整数转为浮点使用4-16个周期，而浮点转回去则需要使用50-100个周期，之所以这么大是因为C/C++转换使用截断而非round，如果使用汇编进行round的话，那么速度会快不少（也就是说，不要用C/C++内置的浮点到整形的类型转换）。
 
-In most cases, double precision calculations take no more time than single precision. When
-the floating point registers are used, there is simply no difference in speed between single
-and double precision. Long double precision takes only slightly more time. Single precision
-division, square root and mathematical functions are calculated faster than double precision
-when the XMM registers are used, while the speed of addition, subtraction, multiplication,
-etc. is still the same regardless of precision on most processors (when vector operations are
-not used).
+In most cases, double precision calculations take no more time than single precision as long as they are not joined into vectors. Single precision division, square root, and mathematical functions are calculated faster than double precision when the XMM registers are used, while the speed of addition, subtraction, multiplication, etc. is still the same regardless of precision on most processors when vector operations are not used.
 
-You may use double precision without worrying too much about the costs if it is good for the
-application. You may use single precision if you have big arrays and want to get as much
-data as possible into the data cache. Single precision is good if you can take advantage of
-vector operations, as explained on page 105.（单精度和双精度上在性能上差别不是很大，所以完全可以根据应用需要而定）
+You may use double precision without worrying too much about the costs if it is good for the application. You may use single precision if you have big arrays and want to get as much data as possible into the data cache. Single precision is good if you can take advantage of vector operations, as explained on page 112.
 
-Floating point addition takes 3 - 6 clock cycles, depending on the microprocessor.
-Multiplication takes 4 - 8 clock cycles. Division takes 14 - 45 clock cycles. Floating point
-comparisons are inefficient when the floating point stack registers are used. Conversions of
-float or double to integer takes a long time when the floating point stack registers are used.
-（加法减法占用3-6个时钟周期，乘法占用4-8个时钟周期，除法占用14-45时钟周期，比较代价也不是很高，但是主要不要在单精度和双精度之间做转换）
+Floating point addition takes 3 - 6 clock cycles, depending on the microprocessor. Multiplication takes 4 - 8 clock cycles. Division takes 14 - 45 clock cycles. Floating point comparisons and floating point to integer conversions are inefficient when the old x87 floating point registers are used.
 
-Do not mix single and double precision when the XMM registers are used. See page 143.
+Conversions between float, double and long double take no extra time when the floating point register stack is used. It takes between 2 and 15 clock cycles (depending on the processor) when the XMM registers are used.
 
-Avoid conversions between integers and floating point variables, if possible. See page 144.（同时也尽量避免浮点和整形之间转换）
+Conversion of a signed integer to a float or double takes 4 - 16 clock cycles, depending on the processor and the type of registers used. Conversion of an unsigned integer takes longer time. It is faster to first convert the unsigned integer to a signed integer if there is no risk of overflow.
 
-*** Function pointers
-Calling a function through a function pointer typically takes a few clock cycles more than
-calling the function directly if the target address can be predicted. The target address is
-predicted if the value of the function pointer is the same as last time the statement was
-executed. If the value of the function pointer has changed then the target address is likely to
-be mispredicted, which causes a long delay.（通过函数指针调用通常会多占用几个时钟周期，如果分支预测准确的话）
+Conversion of a floating point number to an integer takes a very long time unless the SSE2 or later instruction set is enabled. Typically, the conversion takes 50 - 100 clock cycles. The reason is that the C/C++ standard specifies truncation so the floating point rounding mode has to be changed to truncation and back again. Use rounding instead of truncation and make a round function using assembly language. See page 150 for details about rounding.
 
-*** Type conversions
-Conversions between float, double and long double take no extra time when the
-floating point register stack is used. It takes between 2 and 15 clock cycles (depending on
-the processor) when the XMM registers are used.（如果使用XMM操作浮点数的话，那么之间转换占用2-15个时钟周期）
+分支预测正确跳转占用0-2个时钟周期，而错误的话占用12-25个时钟周期。为了加快分支跳转，有个特殊的cache叫做branch target buffer. 但是因为容量有效，所以如果分支或者是函数调用特别多的话，那么因为冲突也会造成性能损失，所以在关键代码部分要减少分支和函数调用。
 
-Conversion of a signed integer to a float or double takes 4 - 16 clock cycles, depending
-on the processor and the type of registers used. Conversion of an unsigned integer takes
-longer time. It is faster to first convert the unsigned integer to a signed integer if there is no
-risk of overflow. （推荐使用有符号数转换到浮点书，占用4-16个时钟周期）
+A branch instruction takes typically 0 - 2 clock cycles in the case that the microprocessor has made the right prediction. The time it takes to recover from a branch misprediction is approximately 12 - 25 clock cycles, depending on the processor. This is called the branch misprediction penalty.
 
-Conversion of a floating point number to an integer takes a very long time unless the SSE2
-or later instruction set is enabled. Typically, the conversion takes 50 - 100 clock cycles. The
-reason is that the C/C++ standard specifies truncation so the floating point rounding mode
-has to be changed to truncation and back again.（如果不使用SSE2的话这个转换会占用到50-100个时钟周期）
+The target of branches and function calls are saved in a special cache called the branch target buffer. Contentions in the branch target buffer can occur if a program has many branches or function calls. The consequence of such contentions is that branches can be mispredicted even if they otherwise would be predicted well. Even direct function calls can be mispredicted for this reason. A program with many branches and function calls in the critical part of the code can therefore suffer from mispredictions.
 
-#note: 但是如果打开的话浮点数转到整数时间应该还好，文章里面没有说到，但是我估计应该是在2-10个时钟周期左右
+64位系统下面Linux和Windows的传参方式对比。相比32位，64位有更多的寄存器可以用来传递参数。
 
-If there are floating point-to-integer conversions in the critical part of a code then it is
-important to do something about it. Possible solutions are:
-- Avoid the conversions by using different types of variables.
-- Move the conversions out of the innermost loop by storing intermediate results as floating point.
-- Use 64-bit mode or enable the SSE2 instruction set (requires a microprocessor that supports this).
-- Use rounding instead of truncation and make a round function using assembly language. See page 144 for details about rounding.
+Parameter transfer is more efficient in 64-bit mode than in 32-bit mode, and more efficient in 64-bit Linux than in 64-bit Windows. In 64-bit Linux, the first six integer parameters and the first eight floating point parameters are transferred in registers, totaling up to fourteen register parameters. In 64-bit Windows, the first four parameters are transferred in registers, regardless of whether they are integers or floating point numbers. Therefore, 64-bit Linux is more efficient than 64-bit Windows if functions have more than four parameters. There is no difference between 32-bit Linux and 32-bit Windows in this respect.
 
-*** Branches and switch statements
-A branch instruction takes typically 0 - 2 clock cycles in the case that the microprocessor
-has made the right prediction. The time it takes to recover from a branch misprediction is
-approximately 12 - 25 clock cycles, depending on the processor. This is called the branch
-misprediction penalty.（分支预测正确跳转占用0-2个时钟周期，而错误的话占用12-25个时钟周期）
+The number of registers available for floating point and vector variables is 8 registers in 32- bit mode, and 16 registers in 64-bit mode. It is further increased to 32 registers in 64 bit mode when the AVX512 instruction set is enabled. A high number of registers improves the performance because the compiler can store variables in registers rather than in memory.
 
-*** Functions
-Function calls may slow down a program for the following reasons:
-- The function call makes the microprocessor jump to a different code address and back again. This may take up to 4 clock cycles. In most cases the microprocessor is able to overlap the call and return operations with other calculations to save time.
-- The code cache works less efficiently if the code is fragmented and scattered around in memory.（代码指令分散不利于cache）
-- Function parameters are stored on the stack in 32-bit mode. Storing the parameters on the stack and reading them again takes extra time. The delay is significant if a parameter is part of a critical dependency chain, especially on the Pentium 4 processor.（没有足够寄存器传递函数参数）
-- Extra time is needed for setting up a stack frame, saving and restoring registers, and possibly save exception handling information.（建立堆栈和保存寄存器）
-- Each function call statement occupies a space in the branch target buffer (BTB). Contentions in the BTB can cause branch mispredictions if the critical part of a program has many calls and branches.
+上下文切换开销是显著的。系统在会分配给前台任务时间片是30ms，后台任务时间片10ms。这个数量级别可以作为参考。
 
-The following methods may be used for reducing the time spent on function calls in the critical part of a program.
-- Avoid unnecessary functions
-- Use inline functions
-- Avoid nested function calls in the innermost loop
-- Use macros instead of functions
-- Use fastcall functions
-- Make functions local
-- Use whole program optimization
-- Use 64-bit mode
-
-Parameter transfer is more efficient in 64-bit mode than in 32-bit mode, and more efficient in
-64-bit Linux than in 64-bit Windows. In 64-bit Linux, the first six integer parameters and the
-first eight floating point parameters are transferred in registers, totaling up to fourteen
-register parameters. In 64-bit Windows, the first four parameters are transferred in registers,
-regardless of whether they are integers or floating point numbers. Therefore, 64-bit Linux is
-more efficient than 64-bit Windows if functions have more than four parameters. There is no
-difference between 32-bit Linux and 32-bit Windows in this respect.（64位系统允许使用更多寄存器来传递函数参数）
+Threads are used for doing two or more jobs simultaneously or seemingly simultaneously. Modern CPUs have multiple cores that makes it possible to run multiple threads simultaneously. Each thread will get time slices of typically 30 ms for foreground jobs and 10 ms for background jobs when there are more threads than CPU cores. The context switches after each time slice are quite costly because all caches have to adapt to the new context. It is possible to reduce the number of context switches by making longer time slices. This will make applications run faster at the cost of longer response times for user input.
 
 ** Optimizations in the compiler
 *** How compilers optimize
