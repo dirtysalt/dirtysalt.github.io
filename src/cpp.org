@@ -135,7 +135,7 @@ c++0x(--std=c++0x)在语言层面上支持static_assert.
 *** renew static_cast
 学习C的时候总是认为强转不过就是二进制层面的强转。开始学习C++之后就认为C语言的强转对应的就是reinterpret_cast.而static_cast和reinterpret_cast的差别不过就是static_cast可以做一些类型上面的检查，所以在大多数的时候都习惯使用reinterpret_cast而非static_cast.直到在编写itachi（一个异步网络编程框架）的时候，才发现并不是这么回事。下面的例子是我遇到问题的一个抽象。
 
-**** 正确的例子
+**** 问题抽象
 #+BEGIN_SRC C++
 #include <cstdio>
 struct A{
@@ -168,7 +168,7 @@ int main() {
 
 在onComplete这里我们希望处理一个A*抽象类型。假设我们从外围上面保证传入onComplete是一个B或者是B的子类型。
 
-**** 当处理多继承时
+**** 多重继承
 处理B类型没有问题，但是处理B的子类型的话，那么上面代码可能就会出现问题。因为对于B子类型而言的话很可能在 *对象模型* 之前添加了一些字段，按照reintrepret_cast语义的话是直接二进制映射，字段没有虚方法所以是直接按照偏移来取的，因此可能存在问题。但是看看下面这个例子
 #+BEGIN_SRC C++
 #include <cstdio>
@@ -208,7 +208,7 @@ c:0xbfff9a9c c.g:0xbfff9aa0
 
 问题出来了，并不像我们想的那样，pb->g和c.g的地址是一样的。但是神奇的是，o和c的地址是不一样的。这是为什么呢？原因就在于static_cast.在传参的时候，根据形参和实参之间的类型信息来进行指针的转换。 *也就是说，static_cast能够正确处理类型系统。而这点reintrepret_cast是做不到的。*
 
-**** 应该怎么做
+**** 正确使用cast
 *因为自己也缺乏C++对象模型方面的知识，所以也没有办法从底层解释原因。* 但是结论却非常简单，就是应该尽量地执行static_cast而非reinterpret_cast. reinterpret_cast对于继承方面基本没有做任何事情，而使用static_cast的话则能够检测到类型系统，然后根据类型系统来进行正确的转换。 要是想对于static_cast有更多认识的话，需要了解C++对象模型的实现。
 
 下面我总结了一下各种cast应该使用的场景：
@@ -531,26 +531,13 @@ class B{
 
 之后我在想，虽然这个方式不错消除继承完全按照基于对象的方式编程，但是如果对于对象所需要的接口非常多的话，并且虚函数本身就是语言内置的特性，相对来说使用起来会更加方便。下面是可编译的示例代码之后我在想，虽然这个方式不错消除继承完全按照基于对象的方式编程，但是如果对于对象所需要的接口非常多的话，并且虚函数本身就是语言内置的特性，相对来说使用起来会更加方便。
 
-具体代码可以参考 [[file:codes/cc/misc/test_bind.cc][code on github]]
-
-*** boost::spirit
-今天被Dr. Yang推荐使用boost::spirit，模板编程实现的语法解析器。Dr. Yang推荐我看看hypertable里面实现的hql，里面就是使用spirit实现的hql(hypertable query language)，在src/cc/Hypertable/Lib/HqlParser.h里面。粗看一下功能还是非常强大的，对于很多使用flex/bison完成的工作都可以通过spirit来完成。看上去是LALR解析器，现在不太清楚就是如果出现shift/reduce或者是reduce/reduce冲突的话spirit是怎么解决的。#note:应该是LL(1)解析器
-
-对于action的话需要单独编写function object来完成，operator()是这个grammar对应的字符串。定义ParserState来构建语法树是一个好主意。对于里面更多的细节现在还是不太了解，关于入门使用可以查看代码中的链接或者documentation.
-
-具体代码可以参考 [[file:codes/cc/misc/test_spirit.cc][code on github]]
-
-*** boost::property_tree
-http://www.boost.org/doc/libs/1_58_0/doc/html/property_tree.html
-
-用作配置文件不错. 具体代码可以参考 [[file:codes/cc/misc/test_ptree.cc][code on github]]
-
 *** boost::python
 http://www.boost.org/doc/libs/1_58_0/libs/python/doc/index.html
 
 编写Python Extension. 具体代码可以参考 [[file:codes/cc/misc/test_pye.cc][code on github]]
 
 *** logging
+
 @2015-07-26 最近一段时间使用C++编写Python扩展时候，发现原来的日志库(easyloggingpp)封装存在一些问题。修改完成日志库的封装之后，顺便就看了一下C/C++下面有什么可用的日志库。我粗略地看了下面几种，然后总结了一下优缺点以及自己的想法。
 - https://github.com/easylogging/easyloggingpp easylogging++
   - 一个头文件，可以很容易集成
