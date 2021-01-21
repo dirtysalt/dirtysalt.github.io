@@ -1,0 +1,166 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<title>矩阵转置的cache分析</title>
+<meta  http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta  name="generator" content="Org-mode" />
+<meta  name="author" content="dirtysalt" />
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content">
+<h1 class="title">矩阵转置的cache分析</h1>
+<p>
+最近在看一本关于C/C++性能优化的书，里面用矩阵转置说明了cpu cache使用效率问题，我也按照这个例子自己做了一个实验并进行了分析。完整的代码和说明也都放在 <a href="https://github.com/dirtysalt/codes/tree/master/cc/MatrixTranspose">Github</a>, 这里就把说明直接搬过来吧。
+</p>
+
+<p>
+转置的核心代码非常简单，改进的方式就是不要试图把整行进行转置，而是对一个区域进行转置。对一个区域进行转置的好处是，按照跳行方式访问的那些行，在接下来还可以继续从cache里面访问到。
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-cpp"><span class="org-type">void</span> <span class="org-function-name">Trans</span>() {
+    <span class="org-keyword">for</span>(<span class="org-type">int</span> <span class="org-variable-name">i</span>=1;i&lt;N;i++) {
+        <span class="org-keyword">for</span>(<span class="org-type">int</span> <span class="org-variable-name">j</span>=0;j&lt;i;j++) {
+            <span class="org-type">int</span> <span class="org-variable-name">x</span> = data[i][j];
+            data[i][j] = data[j][i];
+            data[j][i] = x;
+        }
+    }
+}
+
+<span class="org-type">void</span> <span class="org-function-name">FastTrans</span>(<span class="org-keyword">const</span> <span class="org-type">int</span> <span class="org-variable-name">stride</span>) {
+    <span class="org-keyword">for</span>(<span class="org-type">int</span> <span class="org-variable-name">i</span>=1;i&lt;N;i+=stride) {
+        <span class="org-type">int</span> <span class="org-variable-name">toi</span> = min(N, i+stride);
+        <span class="org-keyword">for</span>(<span class="org-type">int</span> <span class="org-variable-name">j</span>=0;j&lt;i;j+=stride) {
+            <span class="org-keyword">for</span> (<span class="org-type">int</span> <span class="org-variable-name">ii</span>=i;ii&lt;toi;ii++) {
+                <span class="org-type">int</span> <span class="org-variable-name">toj</span> = min(ii, j+stride);
+                <span class="org-keyword">for</span>(<span class="org-type">int</span> <span class="org-variable-name">jj</span>=j;jj&lt;toj;jj++) {
+                    <span class="org-type">int</span> <span class="org-variable-name">x</span> = data[ii][jj];
+                    data[ii][jj] = data[jj][ii];
+                    data[jj][ii] = x;
+                }
+            }
+        }
+    }
+}
+</pre>
+</div>
+
+
+<p>
+下面是运行结果，其中FAST是使用 <code>stride=8</code> 跑出来的
+</p>
+
+<pre class="example">
+YAN007 :: ~/shared/MatrixTranspose ‹master*› » ./a.out
+[SLOW, S=8] N = 1010, took: 1533ms, avg 1502.79ns/N
+[FAST, S=8] N = 1010, took: 1582ms, avg 1550.83ns/N
+[SLOW, S=8] N = 1024, took: 10529ms, avg 10041.2ns/N
+[FAST, S=8] N = 1024, took: 2382ms, avg 2271.65ns/N
+[SLOW, S=8] N = 1030, took: 1628ms, avg 1534.55ns/N
+[FAST, S=8] N = 1030, took: 1467ms, avg 1382.79ns/N
+</pre>
+
+<p>
+此时stride设置是8，可以看到效果还是不错的，对于N=1030有所改进，对于N=1024来说提升就特别大。
+</p>
+
+<p>
+如果cache size = 64KB, ways = 4, line size = 64, 矩阵是1024 * 1024的话，那么：
+</p>
+<ol class="org-ol">
+<li>相邻两个row, 地址差距是 1024 * 4 = 4kB
+</li>
+<li>cache size = 64KB, line size = 64, ways = 4, 那么一共有256个slots
+</li>
+<li>所以理论上两个row都会落在一个slot上，但是因为ways=4, 所以可以忍受4个冲突。
+</li>
+</ol>
+
+<p>
+不过如果是使用SLOW的方法，cache是没有办法忍受冲突的，因此是按照行扫描下来的，然后继续从0行开始扫描，而此时缓存已经全部被换出了。
+</p>
+
+<p>
+在Linux下面可以查看cache的配置
+</p>
+
+<pre class="example">
+YAN007 :: ~/shared/MatrixTranspose ‹master*› » getconf -a | grep CACHE
+LEVEL1_ICACHE_SIZE                 32768
+LEVEL1_ICACHE_ASSOC                8
+LEVEL1_ICACHE_LINESIZE             64
+LEVEL1_DCACHE_SIZE                 32768
+LEVEL1_DCACHE_ASSOC                8
+LEVEL1_DCACHE_LINESIZE             64
+LEVEL2_CACHE_SIZE                  1048576
+LEVEL2_CACHE_ASSOC                 16
+LEVEL2_CACHE_LINESIZE              64
+LEVEL3_CACHE_SIZE                  20185088
+LEVEL3_CACHE_ASSOC                 11
+LEVEL3_CACHE_LINESIZE              64
+LEVEL4_CACHE_SIZE                  0
+LEVEL4_CACHE_ASSOC                 0
+LEVEL4_CACHE_LINESIZE              0
+</pre>
+
+<p>
+这里看L1D和L2配置，好像L3的效果就不明显了。
+</p>
+<ul class="org-ul">
+<li>L1D：32KB，8ways，64B
+</li>
+<li>L2: 1024KB, 16ways, 64B
+</li>
+</ul>
+
+<p>
+处理1024*1024的矩阵，从L1D上看最多承受8个冲突，从L2上看最多承受64个冲突。然后因为line size = 64B, 最多可以放入16个int.
+如果我们想提高L1D的cache命中率，stride就不能超过8个，考虑到按照行本身需要占用1个cache line, 所以stride估计设置成为7个是最好的。
+</p>
+
+<p>
+下面是 <code>stride=7</code> 的效果
+</p>
+<pre class="example">
+YAN007 :: ~/shared/MatrixTranspose ‹master*› » ./a.out
+[SLOW, S=7] N = 1010, took: 1513ms, avg 1483.19ns/N
+[FAST, S=7] N = 1010, took: 1637ms, avg 1604.74ns/N
+[SLOW, S=7] N = 1024, took: 10520ms, avg 10032.7ns/N
+[FAST, S=7] N = 1024, took: 2339ms, avg 2230.64ns/N
+[SLOW, S=7] N = 1030, took: 1627ms, avg 1533.6ns/N
+[FAST, S=7] N = 1030, took: 1490ms, avg 1404.47ns/N
+</pre>
+
+<p>
+下面是 <code>stride=6</code> 的效果
+</p>
+<pre class="example">
+YAN007 :: ~/shared/MatrixTranspose ‹master*› » ./a.out
+[SLOW, S=6] N = 1010, took: 1528ms, avg 1497.89ns/N
+[FAST, S=6] N = 1010, took: 1620ms, avg 1588.08ns/N
+[SLOW, S=6] N = 1024, took: 10528ms, avg 10040.3ns/N
+[FAST, S=6] N = 1024, took: 2398ms, avg 2286.91ns/N
+[SLOW, S=6] N = 1030, took: 1635ms, avg 1541.14ns/N
+[FAST, S=6] N = 1030, took: 1507ms, avg 1420.49ns/N
+</pre>
+
+<p>
+下面是 <code>stride=9</code> 的效果，这个估计会稍微查一些，因为在处理一个stride的时候回产生 <code>stride</code> 次cache miss
+</p>
+
+<pre class="example">
+YAN007 :: ~/shared/MatrixTranspose ‹master*› » ./a.out
+[SLOW, S=9] N = 1010, took: 1514ms, avg 1484.17ns/N
+[FAST, S=9] N = 1010, took: 1531ms, avg 1500.83ns/N
+[SLOW, S=9] N = 1024, took: 10612ms, avg 10120.4ns/N
+[FAST, S=9] N = 1024, took: 3489ms, avg 3327.37ns/N
+[SLOW, S=9] N = 1030, took: 1653ms, avg 1558.11ns/N
+[FAST, S=9] N = 1030, took: 1450ms, avg 1366.76ns/N
+</pre>
+</div>
+</body>
+</html>
