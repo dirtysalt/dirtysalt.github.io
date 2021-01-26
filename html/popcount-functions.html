@@ -1,0 +1,239 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<title>几个PopCount函数的实现</title>
+<meta  http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta  name="generator" content="Org-mode" />
+<meta  name="author" content="dirtysalt" />
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content">
+<h1 class="title">几个PopCount函数的实现</h1>
+<p>
+从 《Beautiful Code》这本书里面看到的一章《The Quest for an Accelerated Population Count》by Henrry S.Warren, Jr.他也是《Hacker Delight》的作者，那本书里面也收集了各种计算技巧，有时间可以拿来翻翻。这篇文章讲的就是如何计算一个整数中bit=1的数量。
+</p>
+
+<p>
+最简单的写法是循环32次，稍微好点的做法是提前判断是否为0，但是不知道branch predication的副作用有多大。如果值范围是可以固定的话，那么最好还是使用固定循环次数的写法，这样会更加有时间保证。
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-cpp"><span class="org-type">uint32_t</span> <span class="org-function-name">popcount11</span>(<span class="org-type">uint32_t</span> <span class="org-variable-name">x</span>) {
+    <span class="org-type">uint32_t</span> <span class="org-variable-name">ans</span> = 0;
+    <span class="org-keyword">while</span> (x) {
+        ans += x &amp; 0x1;
+        x = x &gt;&gt; 1;
+    }
+    <span class="org-keyword">return</span> ans;
+}
+</pre>
+</div>
+
+<p>
+如果采用分治思想的话，那么可以写成下面这样的代码，好处是没有循环分支，并且指令数量也更少了。
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-cpp"><span class="org-type">uint32_t</span> <span class="org-function-name">_popcount21</span>(<span class="org-type">uint32_t</span> <span class="org-variable-name">x</span>) {
+    x = (<span class="org-type">x</span> &amp; 0x55555555) + ((<span class="org-type">x</span> &amp; 0xaaaaaaaa) &gt;&gt; 1);
+    x = (<span class="org-type">x</span> &amp; 0x33333333) + ((<span class="org-type">x</span> &amp; 0xcccccccc) &gt;&gt; 2);
+    x = (<span class="org-type">x</span> &amp; 0x0f0f0f0f) + ((<span class="org-type">x</span> &amp; 0xf0f0f0f0) &gt;&gt; 4);
+    x = (<span class="org-type">x</span> &amp; 0x00ff00ff) + ((<span class="org-type">x</span> &amp; 0xff00ff00) &gt;&gt; 8);
+    x = (<span class="org-type">x</span> &amp; 0x0000ffff) + ((<span class="org-type">x</span> &amp; 0xffff0000) &gt;&gt; 16);
+    <span class="org-keyword">return</span> x;
+}
+</pre>
+</div>
+
+<p>
+上面那个版本，其实和下面这个版本是等价的，好处是涉及到的常量少了，可能指令会更加精简。
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-cpp"><span class="org-type">uint32_t</span> <span class="org-function-name">popcount21</span>(<span class="org-type">uint32_t</span> <span class="org-variable-name">x</span>) {
+    x = (<span class="org-type">x</span> &amp; 0x55555555) + ((x &gt;&gt; 1) &amp; 0x55555555);
+    x = (<span class="org-type">x</span> &amp; 0x33333333) + ((x &gt;&gt; 2) &amp; 0x33333333);
+    x = (<span class="org-type">x</span> &amp; 0x0f0f0f0f) + ((x &gt;&gt; 4) &amp; 0x0f0f0f0f);
+    x = (<span class="org-type">x</span> &amp; 0x00ff00ff) + ((x &gt;&gt; 8) &amp; 0x00ff00ff);
+    x = (<span class="org-type">x</span> &amp; 0x0000ffff) + ((x &gt;&gt; 16) &amp; 0x0000ffff);
+    <span class="org-keyword">return</span> x;
+}
+</pre>
+</div>
+
+<p>
+但是如果仔细观察的话，可以发现从 <code>x&gt;&gt;4</code> 这里开始，其实相加就已经不会出现溢出了。因为high bits最多有4个1, low bits最多有4个1，
+相加起来最多8个1， 完全可以放在4个bits里面，只不过最后我们需要在取个低位。所以上面的代码可以简化为下面这样
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-cpp"><span class="org-type">uint32_t</span> <span class="org-function-name">__popcount21</span>(<span class="org-type">uint32_t</span> <span class="org-variable-name">x</span>) {
+    <span class="org-comment-delimiter">// </span><span class="org-comment">&#36825;&#37324;&#21487;&#20197;&#20551;&#35774;&#20998;&#21035;&#26159;0&#65292;1&#30340;&#24773;&#20917;</span>
+    <span class="org-comment-delimiter">// </span><span class="org-comment">&#22914;&#26524;&#26159;11&#30340;&#35805;&#65292;&#37027;&#20040;11-01 = 10 = 2</span>
+    <span class="org-comment-delimiter">// </span><span class="org-comment">10 - 01 = 01 = 1</span>
+    <span class="org-comment-delimiter">// </span><span class="org-comment">0x &#36825;&#20010;&#23601;&#26159; x</span>
+    x = x - ((x &gt;&gt; 1) &amp; 0x55555555);
+    x = (<span class="org-type">x</span> &amp; 0x33333333) + ((<span class="org-type">x</span> &amp; 0xcccccccc) &gt;&gt; 2);
+    x = (x + (x &gt;&gt; 4)) &amp; 0x0f0f0f0f;
+    x = x + (x &gt;&gt; 8);
+    x = x + (x &gt;&gt; 16);
+    <span class="org-comment-delimiter">// </span><span class="org-comment">&#26368;&#21518;&#19968;&#27425; low bits &#26368;&#22810; 16, &#23601;&#26159; 10000</span>
+    <span class="org-comment-delimiter">// </span><span class="org-comment">high bits &#26368;&#22810; 16&#65292;&#20063;&#26159; 10000</span>
+    <span class="org-comment-delimiter">// </span><span class="org-comment">&#25152;&#20197;&#26368;&#22810;&#23601;&#26159; 100000</span>
+    <span class="org-keyword">return</span> x &amp; 0x3f;
+}
+</pre>
+</div>
+
+<hr  />
+
+<p>
+上面的思想可以扩展到两个数，以及4个数，只要在合适的机会下面将两个数直接相加就好。
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-cpp"><span class="org-type">uint32_t</span> <span class="org-function-name">popcount22</span>(<span class="org-type">uint32_t</span> <span class="org-variable-name">x</span>, <span class="org-type">uint32_t</span> <span class="org-variable-name">y</span>) {
+    x = (<span class="org-type">x</span> &amp; 0x55555555) + ((<span class="org-type">x</span> &amp; 0xaaaaaaaa) &gt;&gt; 1);
+    x = (<span class="org-type">x</span> &amp; 0x33333333) + ((<span class="org-type">x</span> &amp; 0xcccccccc) &gt;&gt; 2);
+
+    y = (<span class="org-type">y</span> &amp; 0x55555555) + ((<span class="org-type">y</span> &amp; 0xaaaaaaaa) &gt;&gt; 1);
+    y = (<span class="org-type">y</span> &amp; 0x33333333) + ((<span class="org-type">y</span> &amp; 0xcccccccc) &gt;&gt; 2);
+
+    x += y;
+    x = (<span class="org-type">x</span> &amp; 0x0f0f0f0f) + ((<span class="org-type">x</span> &amp; 0xf0f0f0f0) &gt;&gt; 4);
+    x = (<span class="org-type">x</span> &amp; 0x00ff00ff) + ((<span class="org-type">x</span> &amp; 0xff00ff00) &gt;&gt; 8);
+    x = (<span class="org-type">x</span> &amp; 0x0000ffff) + ((<span class="org-type">x</span> &amp; 0xffff0000) &gt;&gt; 16);
+    <span class="org-keyword">return</span> x;
+}
+
+<span class="org-type">uint32_t</span> <span class="org-function-name">popcount24</span>(<span class="org-type">uint32_t</span> <span class="org-variable-name">x</span>, <span class="org-type">uint32_t</span> <span class="org-variable-name">y</span>, <span class="org-type">uint32_t</span> <span class="org-variable-name">a</span>, <span class="org-type">uint32_t</span> <span class="org-variable-name">b</span>) {
+    x = (<span class="org-type">x</span> &amp; 0x55555555) + ((<span class="org-type">x</span> &amp; 0xaaaaaaaa) &gt;&gt; 1);
+    y = (<span class="org-type">y</span> &amp; 0x55555555) + ((<span class="org-type">y</span> &amp; 0xaaaaaaaa) &gt;&gt; 1);
+    a = (<span class="org-type">a</span> &amp; 0x55555555) + ((<span class="org-type">a</span> &amp; 0xaaaaaaaa) &gt;&gt; 1);
+    b = (<span class="org-type">b</span> &amp; 0x55555555) + ((<span class="org-type">b</span> &amp; 0xaaaaaaaa) &gt;&gt; 1);
+    x = (<span class="org-type">x</span> &amp; 0x33333333) + ((<span class="org-type">x</span> &amp; 0xcccccccc) &gt;&gt; 2);
+    y = (<span class="org-type">y</span> &amp; 0x33333333) + ((<span class="org-type">y</span> &amp; 0xcccccccc) &gt;&gt; 2);
+    a = (<span class="org-type">a</span> &amp; 0x33333333) + ((<span class="org-type">a</span> &amp; 0xcccccccc) &gt;&gt; 2);
+    b = (<span class="org-type">b</span> &amp; 0x33333333) + ((<span class="org-type">b</span> &amp; 0xcccccccc) &gt;&gt; 2);
+
+    x += y;
+    a += b;
+
+    x = (<span class="org-type">x</span> &amp; 0x0f0f0f0f) + ((<span class="org-type">x</span> &amp; 0xf0f0f0f0) &gt;&gt; 4);
+    a = (<span class="org-type">a</span> &amp; 0x0f0f0f0f) + ((<span class="org-type">a</span> &amp; 0xf0f0f0f0) &gt;&gt; 4);
+
+    x += a;
+    x = (<span class="org-type">x</span> &amp; 0x00ff00ff) + ((<span class="org-type">x</span> &amp; 0xff00ff00) &gt;&gt; 8);
+    x = (<span class="org-type">x</span> &amp; 0x0000ffff) + ((<span class="org-type">x</span> &amp; 0xffff0000) &gt;&gt; 16);
+    <span class="org-keyword">return</span> x;
+}
+</pre>
+</div>
+
+<p>
+有了两个数的popcount求和，可以在上面做出扩展，比如求解 <code>pop(x) - pop(y)</code>, 这个式子可以变为 <code>pop(x) - (32 - pop(~y)) =&gt; pop(x) + pop(~y) - 32</code>
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-cpp"><span class="org-comment-delimiter">// </span><span class="org-comment">pop(x) - pop(y) = pop(x) - (32 - pop(~y)) = pop(x) + pop(y) - 32</span>
+<span class="org-type">int</span> <span class="org-function-name">popDiff</span>(<span class="org-type">uint32_t</span> <span class="org-variable-name">x</span>, <span class="org-type">uint32_t</span> <span class="org-variable-name">y</span>) {
+    x = x - ((x &gt;&gt; 1) &amp; 0x55555555);
+    x = (<span class="org-type">x</span> &amp; 0x33333333) + ((x &gt;&gt; 2) &amp; 0x33333333);
+    y = ~y;
+    y = y - ((y &gt;&gt; 1) &amp; 0x55555555);
+    y = (<span class="org-type">y</span> &amp; 0x33333333) + ((y &gt;&gt; 2) &amp; 0x33333333);
+
+    x += y;
+    x = (x + (x &gt;&gt; 4)) &amp; 0x0f0f0f0f;
+    x = (x + (x &gt;&gt; 8));
+    x = (x + (x &gt;&gt; 16));
+    <span class="org-keyword">return</span> x &amp; 0x0000007f - 32;
+}
+</pre>
+</div>
+
+<p>
+此外还有个高效实现来比较较两个数的popcount，首先使用bits进行抵消，然后不断地去clear lsb, 然后看谁先为0.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-cpp"><span class="org-type">int</span> <span class="org-function-name">popCompare</span>(<span class="org-type">uint32_t</span> <span class="org-variable-name">xp</span>, <span class="org-type">uint32_t</span> <span class="org-variable-name">yp</span>) {
+    <span class="org-type">unsigned</span> <span class="org-variable-name">x</span>, <span class="org-variable-name">y</span>;
+    x = xp &amp; ~yp;
+    y = yp &amp; ~xp;
+    <span class="org-keyword">while</span> (1) {
+        <span class="org-comment-delimiter">// </span><span class="org-comment">if y == 0 then 0</span>
+        <span class="org-comment-delimiter">// </span><span class="org-comment">else &lt; 0</span>
+        <span class="org-keyword">if</span> (x == 0) <span class="org-keyword">return</span> y | -y;
+        <span class="org-keyword">if</span> (y == 0) <span class="org-keyword">return</span> 1;
+        x = x &amp; (x - 1);  <span class="org-comment-delimiter">// </span><span class="org-comment">clear lsb</span>
+        y = y &amp; (y - 1);
+    }
+}
+</pre>
+</div>
+
+<hr  />
+
+<p>
+还有使用avx512 vpopcount dq指令的实现，因为我的CPU不支持，所以也没有运行，不知道实现是否正确以及效果如何。
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-cpp"><span class="org-comment-delimiter">// </span><span class="org-comment">don't use it. I don't have any cpu support avx512 vpopcnt dq.</span>
+<span class="org-comment-delimiter">// </span><span class="org-comment">https://gcc.gnu.org/onlinedocs/gcc/x86-Options.html</span>
+<span class="org-comment-delimiter">// </span><span class="org-comment">g++ mm.cpp -g -W -Wall -mavx512f -mavx512vpopcntdq</span>
+<span class="org-type">uint32_t</span> <span class="org-function-name">avx512_vpopcnt</span>(<span class="org-keyword">const</span> <span class="org-type">uint32_t</span>* <span class="org-variable-name">data</span>, <span class="org-type">size_t</span> <span class="org-variable-name">size</span>) {
+    <span class="org-type">uint32_t</span> <span class="org-variable-name">ans</span> = 0;
+    <span class="org-type">uint64_t</span> <span class="org-variable-name">start</span> = (<span class="org-type">uint64_t</span>)data;
+    <span class="org-keyword">if</span> ((start % 64) != 0) {
+        <span class="org-type">size_t</span> <span class="org-variable-name">rem</span> = (start % 64) / 4;
+        start = (start + 63) / 64 * 64;
+        size -= rem;
+        FORI(i, rem) ans += popcount21(data[i]);
+    }
+
+    <span class="org-keyword">const</span> <span class="org-type">uint8_t</span>* <span class="org-variable-name">ptr</span> = (<span class="org-type">uint8_t</span>*)start;
+    <span class="org-keyword">const</span> <span class="org-type">uint8_t</span>* <span class="org-variable-name">end</span> = ptr + size;
+    <span class="org-keyword">const</span> <span class="org-type">size_t</span> <span class="org-variable-name">chunks</span> = size / 64;
+
+    <span class="org-comment-delimiter">// </span><span class="org-comment">count using AVX512 registers</span>
+    <span class="org-type">__m512i</span> <span class="org-variable-name">accumulator</span> = _mm512_setzero_si512();
+    <span class="org-keyword">for</span> (<span class="org-type">size_t</span> <span class="org-variable-name">i</span> = 0; i &lt; chunks; i++, ptr += 64) {
+        <span class="org-comment-delimiter">// </span><span class="org-comment">Note: a short chain of dependencies, likely unrolling will be needed.</span>
+        <span class="org-keyword">const</span> <span class="org-type">__m512i</span> <span class="org-variable-name">v</span> = _mm512_loadu_si512((<span class="org-keyword">const</span> <span class="org-type">__m512i</span>*)ptr);
+        <span class="org-keyword">const</span> <span class="org-type">__m512i</span> <span class="org-variable-name">p</span> = _mm512_popcnt_epi64(v);
+
+        accumulator = _mm512_add_epi64(accumulator, p);
+    }
+
+    <span class="org-comment-delimiter">// </span><span class="org-comment">horizontal sum of a register</span>
+    <span class="org-type">uint64_t</span> <span class="org-variable-name">tmp</span>[8] <span class="org-keyword">__attribute__</span>((aligned(64)));
+    _mm512_store_si512((<span class="org-type">__m512i</span>*)tmp, accumulator);
+
+    <span class="org-keyword">for</span> (<span class="org-type">size_t</span> <span class="org-variable-name">i</span> = 0; i &lt; 8; i++) {
+        ans += (<span class="org-type">uint32_t</span>)tmp[i];
+    }
+
+    <span class="org-comment-delimiter">// </span><span class="org-comment">popcount the tail</span>
+    <span class="org-keyword">while</span> (ptr + 4 &lt; end) {
+        ans += popcount21(*(<span class="org-type">uint32_t</span>*)(ptr));
+        ptr += 4;
+    }
+    <span class="org-keyword">return</span> ans;
+}
+</pre>
+</div>
+</div>
+</body>
+</html>
