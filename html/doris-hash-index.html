@@ -1,0 +1,157 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<title>Doris Hash Index 分析</title>
+<meta  http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta  name="generator" content="Org-mode" />
+<meta  name="author" content="dirtysalt" />
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content">
+<h1 class="title">Doris Hash Index 分析</h1>
+<p>
+<a href="https://github.com/apache/incubator-doris/commit/73999974332362a3874bedb7d64cbd3f177718ec">https://github.com/apache/incubator-doris/commit/73999974332362a3874bedb7d64cbd3f177718ec</a>
+</p>
+
+<p>
+Doris Hash Index 使用方式和实现都非常意思：
+</p>
+<ul class="org-ul">
+<li>开放式散列表，key是uint64_t, value是uint32_t.
+</li>
+<li>内部不存储这个key, 但是会存储某些特征（具体来说就是key的低8位）来帮助做相等性检测。
+</li>
+<li>因为只使用key的某些特征做相等性检测，所以拿到的values都是candidates，之后需要外部在做相等性检测。
+</li>
+<li>散列表里面一个bucket大小固定，最多存储12个uint32_t.（为什么这么设计可以看后面分析）
+</li>
+</ul>
+
+<hr  />
+
+<p>
+先从bucket数据结构开始分析，结构名称叫做 <code>HashChunk</code>. 它有下面这些特征：
+</p>
+<ul class="org-ul">
+<li>整体大小64个字节(12 + 4 + 12 * 4)，这也是现代CPU的cacheline大小。
+</li>
+<li>在64字节对齐，除了避免false-sharing问题之外，还要确保之后可以使用SSE的对齐加载指令。
+</li>
+<li>tags和values分离，tags用来做快速检测，可以一条指令加载进来。
+</li>
+</ul>
+
+<div class="org-src-container">
+
+<pre class="src src-cpp"><span class="org-keyword">struct</span> <span class="org-type">alignas</span>(64) HashChunk {
+    <span class="org-keyword">static</span> <span class="org-keyword">const</span> <span class="org-type">uint32_t</span> <span class="org-variable-name">CAPACITY</span> = 12;
+    <span class="org-type">uint8_t</span> <span class="org-variable-name">tags</span>[12];
+    <span class="org-constant">std</span>::<span class="org-type">atomic</span>&lt;<span class="org-type">uint32_t</span>&gt; <span class="org-variable-name">size</span>;
+    <span class="org-type">uint32_t</span> <span class="org-variable-name">values</span>[12];
+};
+</pre>
+</div>
+
+<hr  />
+
+<p>
+上面 <code>HashChunk</code> 的这些设计都是为了可以快速根据key查找candidates. 下面是相关代码片段，这里省去了重新散列的过程，只看如何搜索一个HashChunk. 里面涉及到的SSE指令，可以在这里查询到含义以及伪代码 <a href="https://www.laruence.com/sse/">https://www.laruence.com/sse/</a>
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-cpp"><span class="org-type">uint64_t</span> <span class="org-constant">HashIndex</span>::<span class="org-function-name">find</span>(<span class="org-type">uint64_t</span> <span class="org-variable-name">key_hash</span>, <span class="org-constant">std</span>::<span class="org-type">vector</span>&lt;<span class="org-type">uint32_t</span>&gt;* <span class="org-variable-name">entries</span>) <span class="org-keyword">const</span> {
+    <span class="org-type">uint64_t</span> <span class="org-variable-name">tag</span> = <span class="org-constant">std</span>::max((<span class="org-type">uint64_t</span>)1, <span class="org-type">key_hash</span> &amp; 0xff);
+    <span class="org-type">uint64_t</span> <span class="org-variable-name">pos</span> = (key_hash &gt;&gt; 8) &amp; _chunk_mask;
+    <span class="org-type">uint64_t</span> <span class="org-variable-name">orig_pos</span> = pos;
+<span class="org-preprocessor">#ifdef</span> __SSE2__
+    <span class="org-keyword">auto</span> <span class="org-variable-name">tests</span> = _mm_set1_epi8(<span class="org-keyword">static_cast</span>&lt;<span class="org-type">uint8_t</span>&gt;(tag));
+    <span class="org-keyword">while</span> (<span class="org-constant">true</span>) {
+        <span class="org-comment-delimiter">// </span><span class="org-comment">get corresponding chunk</span>
+        <span class="org-type">HashChunk</span>&amp; <span class="org-variable-name">chunk</span> = _chunks[pos];
+        <span class="org-type">uint32_t</span> <span class="org-variable-name">sz</span> = chunk.size;
+        <span class="org-comment-delimiter">// </span><span class="org-comment">load tags</span>
+        <span class="org-keyword">auto</span> <span class="org-variable-name">tags</span> = _mm_load_si128(<span class="org-keyword">reinterpret_cast</span>&lt;<span class="org-type">__m128i</span>*&gt;(chunk.tags));
+        <span class="org-keyword">auto</span> <span class="org-variable-name">eqs</span> = _mm_cmpeq_epi8(tags, tests);
+        <span class="org-comment-delimiter">// </span><span class="org-comment">check tag equality and store equal tag positions into masks</span>
+        <span class="org-type">uint32_t</span> <span class="org-variable-name">mask</span> = _mm_movemask_epi8(eqs) &amp; 0xfff;
+        <span class="org-comment-delimiter">// </span><span class="org-comment">iterator over mask and put candidates into entries</span>
+        <span class="org-keyword">while</span> (mask != 0) {
+            <span class="org-type">uint32_t</span> <span class="org-variable-name">i</span> = __builtin_ctz(mask);
+            mask &amp;= (mask - 1);
+            entries-&gt;emplace_back(chunk.values[i]);
+        }
+        <span class="org-comment-delimiter">// </span><span class="org-comment">... rehash</span>
+    }
+}
+</pre>
+</div>
+
+<p>
+说明如下：
+</p>
+<ul class="org-ul">
+<li>tag就是key_hash的特征，而pos就是初始搜索bucket的位置
+</li>
+<li><code>auto tests = _mm_set1_epi8</code> 是将8bit tag复制16份，放在一个128bit的寄存器当中。
+</li>
+<li><code>auto tags = _mm_load_si128</code> 是将这个chunk.tags字段载入。tags是12个8bit, 并且在64字节上对齐，所以可以使用对齐加载指令。
+</li>
+<li><code>auto eqs = _mm_cmpeq_epi8</code> 这个是对比 tests 和 tags, 按照8个bit进行对比，一条指令对比16次。
+<ul class="org-ul">
+<li>如果8bit相等，那么结果是0xff
+</li>
+<li>如果8bit不等，那么结果就是0x0
+</li>
+</ul>
+</li>
+<li><code>uint32_t mask = _mm_movemask_epi8</code> 将eqs的中每个8bit的最高位收集起来。下面是几个例子
+<ul class="org-ul">
+<li>0x ff 00 ff 00 ff 00 ff 00 -&gt; 10101010
+</li>
+<li>0x 00 ff ff 00 ff 00 00 ff -&gt; 01101001
+</li>
+</ul>
+</li>
+</ul>
+
+<hr  />
+
+<p>
+接着根据mask就知道，那些位置上的tags是相等的，那么我们就选择这些位置上的values.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-cpp"><span class="org-keyword">while</span> (mask != 0) {
+   <span class="org-type">uint32_t</span> <span class="org-variable-name">i</span> = __builtin_ctz(mask);
+   mask &amp;= (mask - 1);
+   <span class="org-comment-delimiter">// </span><span class="org-comment">use ith.</span>
+}
+</pre>
+</div>
+
+<p>
+说明如下：
+</p>
+<ul class="org-ul">
+<li><code>__builtin_ctz</code> 是计算有多少个trailing zeros，比如
+<ul class="org-ul">
+<li>ctz(11000) = 3
+</li>
+<li>ctz(11001) = 0
+</li>
+<li>这个函数等价于 <code>__builtin_ffs(x) - 1</code>
+</li>
+<li>这个函数等价于 <code>__builtin_popcount(x ^ (x-1))-1</code>
+</li>
+</ul>
+</li>
+<li>至于 <code>mask&amp;(mask-1)</code> 就是清除最低位置的1bit
+</li>
+</ul>
+</div>
+</body>
+</html>
