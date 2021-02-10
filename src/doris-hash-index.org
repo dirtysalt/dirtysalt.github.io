@@ -1,0 +1,87 @@
+#+title: Doris Hash Index 分析
+
+https://github.com/apache/incubator-doris/commit/73999974332362a3874bedb7d64cbd3f177718ec
+
+Doris Hash Index 使用方式和实现都非常意思：
+- 开放式散列表，key是uint64_t, value是uint32_t.
+- 内部不存储这个key, 但是会存储某些特征（具体来说就是key的低8位）来帮助做相等性检测。
+- 因为只使用key的某些特征做相等性检测，所以拿到的values都是candidates，之后需要外部在做相等性检测。
+- 散列表里面一个bucket大小固定，最多存储12个uint32_t.（为什么这么设计可以看后面分析）
+
+----------
+
+先从bucket数据结构开始分析，结构名称叫做 =HashChunk=. 它有下面这些特征：
+- 整体大小64个字节(12 + 4 + 12 * 4)，这也是现代CPU的cacheline大小。
+- 在64字节对齐，除了避免false-sharing问题之外，还要确保之后可以使用SSE的对齐加载指令。
+- tags和values分离，tags用来做快速检测，可以一条指令加载进来。
+
+#+BEGIN_SRC cpp
+struct alignas(64) HashChunk {
+    static const uint32_t CAPACITY = 12;
+    uint8_t tags[12];
+    std::atomic<uint32_t> size;
+    uint32_t values[12];
+};
+#+END_SRC
+
+----------
+
+上面 =HashChunk= 的这些设计都是为了可以快速根据key查找candidates. 下面是相关代码片段，这里省去了重新散列的过程，只看如何搜索一个HashChunk. 里面涉及到的SSE指令，可以在这里查询到含义以及伪代码 https://www.laruence.com/sse/
+
+#+BEGIN_SRC cpp
+uint64_t HashIndex::find(uint64_t key_hash, std::vector<uint32_t>* entries) const {
+    uint64_t tag = std::max((uint64_t)1, key_hash & 0xff);
+    uint64_t pos = (key_hash >> 8) & _chunk_mask;
+    uint64_t orig_pos = pos;
+#ifdef __SSE2__
+    auto tests = _mm_set1_epi8(static_cast<uint8_t>(tag));
+    while (true) {
+        // get corresponding chunk
+        HashChunk& chunk = _chunks[pos];
+        uint32_t sz = chunk.size;
+        // load tags
+        auto tags = _mm_load_si128(reinterpret_cast<__m128i*>(chunk.tags));
+        auto eqs = _mm_cmpeq_epi8(tags, tests);
+        // check tag equality and store equal tag positions into masks
+        uint32_t mask = _mm_movemask_epi8(eqs) & 0xfff;
+        // iterator over mask and put candidates into entries
+        while (mask != 0) {
+            uint32_t i = __builtin_ctz(mask);
+            mask &= (mask - 1);
+            entries->emplace_back(chunk.values[i]);
+        }
+        // ... rehash
+    }
+}
+#+END_SRC
+
+说明如下：
+- tag就是key_hash的特征，而pos就是初始搜索bucket的位置
+- =auto tests = _mm_set1_epi8= 是将8bit tag复制16份，放在一个128bit的寄存器当中。
+- =auto tags = _mm_load_si128= 是将这个chunk.tags字段载入。tags是12个8bit, 并且在64字节上对齐，所以可以使用对齐加载指令。
+- =auto eqs = _mm_cmpeq_epi8= 这个是对比 tests 和 tags, 按照8个bit进行对比，一条指令对比16次。
+  - 如果8bit相等，那么结果是0xff
+  - 如果8bit不等，那么结果就是0x0
+- =uint32_t mask = _mm_movemask_epi8= 将eqs的中每个8bit的最高位收集起来。下面是几个例子
+  - 0x ff 00 ff 00 ff 00 ff 00 -> 10101010
+  - 0x 00 ff ff 00 ff 00 00 ff -> 01101001
+
+-------------------
+
+接着根据mask就知道，那些位置上的tags是相等的，那么我们就选择这些位置上的values.
+
+#+BEGIN_SRC cpp
+while (mask != 0) {
+   uint32_t i = __builtin_ctz(mask);
+   mask &= (mask - 1);
+   // use ith.
+}
+#+END_SRC
+
+说明如下：
+- =__builtin_ctz= 是计算有多少个trailing zeros，比如
+  - ctz(11000) = 3
+  - ctz(11001) = 0
+  - 这个函数等价于 =__builtin_ffs(x) - 1=
+  - 这个函数等价于 =__builtin_popcount(x ^ (x-1))-1=
+- 至于 =mask&(mask-1)= 就是清除最低位置的1bit
