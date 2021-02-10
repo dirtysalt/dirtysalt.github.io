@@ -1,0 +1,259 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<title>SIMD代码片段分析</title>
+<meta  http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta  name="generator" content="Org-mode" />
+<meta  name="author" content="dirtysalt" />
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content">
+<h1 class="title">SIMD代码片段分析</h1>
+<p>
+过去一直想收集些自己曾经看过的SIMD代码，觉得这些代码写出来都非常有意思。按照我粗浅的理解，SIMD设计初衷有两个：数据并行化以及减少分支操作。数据并行化这个自不必说，在许多代码下面如果分支预测不好的话，CPU的深度流水线就没有什么用途，造成的misprediction penalty是非常高的。所以在设计和使用SIMD指令的时候，脑子里面一定要将程序设计里面的分支跳转全部忘掉，而是想如何能够使用mask, and, or这些bit操作技巧来得到计算结果。
+</p>
+
+<hr  />
+
+<p>
+下面两个代码片段来自惠新宸老师的博客，链接如下：
+</p>
+<ul class="org-ul">
+<li><a href="https://www.laruence.com/2020/03/09/5412.html">使用SSE2指令集加速字符替换 - 风雪之隅</a>
+</li>
+<li><a href="https://www.laruence.com/2020/06/16/5916.html">使用SSE2指令高效实现strtolower - 风雪之隅</a>
+</li>
+</ul>
+
+<p>
+我把代码复制下来了，博客上有关于这段代码的解释，我就不再这里赘述了。在replace函数里面可以计算替换了多少个字符，
+不过这个操作代价有点高，相比替换操作来说 "__builtin_popcount" 这个操作可以占到超过1/2的时间。
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-cpp"><span class="org-type">int</span> <span class="org-function-name">StringReplace1</span>(<span class="org-type">char</span>* <span class="org-variable-name">s</span>, <span class="org-type">size_t</span> <span class="org-variable-name">sz</span>, <span class="org-type">char</span> <span class="org-variable-name">x</span>, <span class="org-type">char</span> <span class="org-variable-name">y</span>) {
+    <span class="org-type">int</span> <span class="org-variable-name">ans</span> = 0;
+    <span class="org-type">size_t</span> <span class="org-variable-name">i</span> = 0;
+    <span class="org-type">__m128i</span> <span class="org-variable-name">search</span> = _mm_set1_epi8(x);
+    <span class="org-type">__m128i</span> <span class="org-variable-name">delta</span> = _mm_set1_epi8(y - x);
+    <span class="org-comment-delimiter">// </span><span class="org-comment">unaligned.</span>
+    <span class="org-keyword">for</span>(;(i+16)&lt;sz;i+=16) {
+        <span class="org-type">__m128i</span> <span class="org-variable-name">d</span> = _mm_loadu_si128((<span class="org-type">__m128i</span>*)(s+i));
+        <span class="org-type">__m128i</span> <span class="org-variable-name">mask</span> = _mm_cmpeq_epi8(d, search);
+        <span class="org-type">int</span> <span class="org-variable-name">ret</span> = _mm_movemask_epi8(mask);
+        <span class="org-keyword">if</span> (ret) {
+            <span class="org-type">__m128i</span> <span class="org-variable-name">add</span> = _mm_and_si128(mask, delta);
+            <span class="org-type">__m128i</span> <span class="org-variable-name">res</span> = _mm_add_epi8(add, d);
+            _mm_storeu_si128((<span class="org-type">__m128i</span>*)(s+i), res);
+            <span class="org-comment-delimiter">//            </span><span class="org-comment">ans += __builtin_popcount(ret);</span>
+        }
+    }
+    <span class="org-keyword">for</span>(;i&lt;sz;i++) {
+        <span class="org-keyword">if</span>(s[i] == x) {
+            s[i] = y;
+            <span class="org-comment-delimiter">// </span><span class="org-comment">ans += 1;</span>
+        }
+    }
+    <span class="org-keyword">return</span> ans;
+}
+</pre>
+</div>
+
+<p>
+测试代码可以看 <a href="https://github.com/dirtysalt/codes/tree/master/cc/misc/StringReplaceTest.cpp">这里</a>, 粘贴一些运行时间。运行时间分为 sparse 和 dense两种模式，sparse触发替换比较少的，dense则是比较多的。可以预测到，dense模式下面分支预测比较好，所以运行时间相比sparse更短。
+</p>
+
+<pre class="example">
+YAN007 :: ~/shared » ./a.out
+Replace0: mode=sparse, sz=32(0,0) timer=1ms
+Replace1: mode=sparse, sz=32(0,0), timer=0ms
+Replace0: mode=sparse, sz=128(0,0) timer=5ms
+Replace1: mode=sparse, sz=128(0,0), timer=1ms
+Replace0: mode=sparse, sz=1024(0,0) timer=42ms
+Replace1: mode=sparse, sz=1024(0,0), timer=3ms
+Replace0: mode=sparse, sz=10240(0,0) timer=408ms
+Replace1: mode=sparse, sz=10240(0,0), timer=28ms
+Replace0: mode=sparse, sz=20480(0,0) timer=820ms
+Replace1: mode=sparse, sz=20480(0,0), timer=55ms
+Replace0: mode=dense, sz=32(0,0) timer=1ms
+Replace1: mode=dense, sz=32(0,0), timer=0ms
+Replace0: mode=dense, sz=128(0,0) timer=5ms
+Replace1: mode=dense, sz=128(0,0), timer=0ms
+Replace0: mode=dense, sz=1024(0,0) timer=31ms
+Replace1: mode=dense, sz=1024(0,0), timer=3ms
+Replace0: mode=dense, sz=10240(0,0) timer=307ms
+Replace1: mode=dense, sz=10240(0,0), timer=25ms
+Replace0: mode=dense, sz=20480(0,0) timer=617ms
+Replace1: mode=dense, sz=20480(0,0), timer=51ms
+</pre>
+
+<p>
+至于stirng tolowe/upper这个函数，思想就是拿每个字符去和'A', 'Z'比较，如果处于这个中间的话，那么就直接+32. 因为SSE2只有cmpeq和cmpgt, 没有cmpge,cmple，所以在阈值选择上需要+1/-1. 这个函数的效果相比naive的for循环使用，也是好得多的。
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-cpp"><span class="org-type">void</span> <span class="org-function-name">StringLower1</span>(<span class="org-type">char</span>* <span class="org-variable-name">s</span>, <span class="org-type">size_t</span> <span class="org-variable-name">sz</span>) {
+    <span class="org-type">size_t</span> <span class="org-variable-name">i</span> = 0;
+    <span class="org-type">__m128i</span> <span class="org-variable-name">a</span> = _mm_set1_epi8(64);
+    <span class="org-type">__m128i</span> <span class="org-variable-name">z</span> = _mm_set1_epi8(91);
+    <span class="org-type">__m128i</span> <span class="org-variable-name">delta</span> = _mm_set1_epi8(32);
+    <span class="org-comment-delimiter">// </span><span class="org-comment">unaligned.</span>
+    <span class="org-keyword">for</span>(;(i+16)&lt;sz;i+=16) {
+        <span class="org-type">__m128i</span> <span class="org-variable-name">d</span> = _mm_loadu_si128((<span class="org-type">__m128i</span>*)(s+i));
+        <span class="org-type">__m128i</span> <span class="org-variable-name">x</span> = _mm_cmpgt_epi8(d, a);
+        <span class="org-type">__m128i</span> <span class="org-variable-name">y</span> = _mm_cmpgt_epi8(z, d);
+        <span class="org-type">__m128i</span> <span class="org-variable-name">z</span> = _mm_and_si128(x, y);
+        <span class="org-type">__m128i</span> <span class="org-variable-name">z2</span> = _mm_and_si128(z, delta);
+        <span class="org-type">__m128i</span> <span class="org-variable-name">res</span> = _mm_add_epi8(d, z2);
+        _mm_storeu_si128((<span class="org-type">__m128i</span>*)(s+i), res);
+    }
+    <span class="org-keyword">for</span>(;i&lt;sz;i++) {
+        <span class="org-keyword">if</span> (s[i] &gt;= 65 &amp;&amp; s[i] &lt;= 90) {
+            s[i] += 32;
+        }
+    }
+}
+</pre>
+</div>
+
+<hr  />
+
+<p>
+下面两个代码片段来自RapidJSON:
+</p>
+<ul class="org-ul">
+<li><a href="https://github.com/Tencent/rapidjson/blob/master/include/rapidjson/writer.h">https://github.com/Tencent/rapidjson/blob/master/include/rapidjson/writer.h</a>
+</li>
+<li><a href="https://github.com/Tencent/rapidjson/blob/master/include/rapidjson/reader.h">https://github.com/Tencent/rapidjson/blob/master/include/rapidjson/reader.h</a>
+</li>
+</ul>
+
+<p>
+其中writer中的实现是 <code>ScanWriteUnescapedString</code> 复制一个字符串直到出现某些字符，而reader中的实现是 <code>SkipWhitespace_SIMD</code> 扫描到最近一个空格。两个函数有点类似，reader中使用了比较高级的 <code>_mm_cmpistri</code> 指令，所以这里我不选择reader中的函数，只看看writer中的函数。
+</p>
+
+<p>
+下面是这段代码，稍微有点长，可以分为下面几个部分阅读：
+</p>
+<ul class="org-ul">
+<li>进行16bytes的对齐
+</li>
+<li>处理前面非对齐的部分
+</li>
+<li>处理中间对齐的部分（主要代码）
+</li>
+</ul>
+
+<p>
+处理中间对齐的部分是这样的：
+</p>
+<ul class="org-ul">
+<li>t1 = (s == dq('"'))
+</li>
+<li>t2 = (s == bs('\\'))
+</li>
+<li>t3 = (s == space(' '))
+</li>
+<li>x = t1 | t2 | t3
+</li>
+<li>如果x!=0说明有某个字符出现等值了
+</li>
+<li>等值的位置在最低1bit上，可以通过 <code>__builtin_ffs</code> 拿到，那么只需要复制1bit之前的字符就行
+</li>
+<li>如果x=0说明没有任何字符出现，那么就可以直接通过 <code>_mm_storeu_si128</code> 去复制。
+</li>
+</ul>
+
+<p>
+这种操作让人联想到了是否可以使用 SIMD的load/store 来加速memcpy呢？后面可以做做实验。
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-cpp"><span class="org-keyword">template</span>&lt;&gt;
+<span class="org-keyword">inline</span> <span class="org-type">bool</span> <span class="org-constant">Writer</span>&lt;StringBuffer&gt;::<span class="org-function-name">ScanWriteUnescapedString</span>(<span class="org-type">StringStream</span>&amp; <span class="org-variable-name">is</span>, <span class="org-type">size_t</span> <span class="org-variable-name">length</span>) {
+    <span class="org-keyword">if</span> (length &lt; 16)
+        <span class="org-keyword">return</span> RAPIDJSON_LIKELY(is.Tell() &lt; length);
+
+    <span class="org-keyword">if</span> (<span class="org-negation-char">!</span>RAPIDJSON_LIKELY(is.Tell() &lt; length))
+        <span class="org-keyword">return</span> <span class="org-constant">false</span>;
+
+    <span class="org-keyword">const</span> <span class="org-type">char</span>* <span class="org-variable-name">p</span> = is.src_;
+    <span class="org-keyword">const</span> <span class="org-type">char</span>* <span class="org-variable-name">end</span> = is.head_ + length;
+    <span class="org-keyword">const</span> <span class="org-type">char</span>* <span class="org-variable-name">nextAligned</span> = <span class="org-keyword">reinterpret_cast</span>&lt;<span class="org-keyword">const</span> <span class="org-type">char</span>*&gt;((<span class="org-keyword">reinterpret_cast</span>&lt;<span class="org-type">size_t</span>&gt;(p) + 15) &amp; <span class="org-keyword">static_cast</span>&lt;<span class="org-type">size_t</span>&gt;(~15));
+    <span class="org-keyword">const</span> <span class="org-type">char</span>* <span class="org-variable-name">endAligned</span> = <span class="org-keyword">reinterpret_cast</span>&lt;<span class="org-keyword">const</span> <span class="org-type">char</span>*&gt;(<span class="org-keyword">reinterpret_cast</span>&lt;<span class="org-type">size_t</span>&gt;(end) &amp; <span class="org-keyword">static_cast</span>&lt;<span class="org-type">size_t</span>&gt;(~15));
+    <span class="org-keyword">if</span> (nextAligned &gt; end)
+        <span class="org-keyword">return</span> <span class="org-constant">true</span>;
+
+    <span class="org-keyword">while</span> (p != nextAligned)
+        <span class="org-keyword">if</span> (*p &lt; 0x20 || *p == <span class="org-string">'\"'</span> || *p == <span class="org-string">'\\'</span>) {
+            is.src_ = p;
+            <span class="org-keyword">return</span> RAPIDJSON_LIKELY(is.Tell() &lt; length);
+        }
+        <span class="org-keyword">else</span>
+            os_-&gt;PutUnsafe(*p++);
+
+    <span class="org-comment-delimiter">// </span><span class="org-comment">The rest of string using SIMD</span>
+    <span class="org-keyword">static</span> <span class="org-keyword">const</span> <span class="org-type">char</span> <span class="org-variable-name">dquote</span>[16] = { <span class="org-string">'\"'</span>, <span class="org-string">'\"'</span>, <span class="org-string">'\"'</span>, <span class="org-string">'\"'</span>, <span class="org-string">'\"'</span>, <span class="org-string">'\"'</span>, <span class="org-string">'\"'</span>, <span class="org-string">'\"'</span>, <span class="org-string">'\"'</span>, <span class="org-string">'\"'</span>, <span class="org-string">'\"'</span>, <span class="org-string">'\"'</span>, <span class="org-string">'\"'</span>, <span class="org-string">'\"'</span>, <span class="org-string">'\"'</span>, <span class="org-string">'\"'</span> };
+    <span class="org-keyword">static</span> <span class="org-keyword">const</span> <span class="org-type">char</span> <span class="org-variable-name">bslash</span>[16] = { <span class="org-string">'\\'</span>, <span class="org-string">'\\'</span>, <span class="org-string">'\\'</span>, <span class="org-string">'\\'</span>, <span class="org-string">'\\'</span>, <span class="org-string">'\\'</span>, <span class="org-string">'\\'</span>, <span class="org-string">'\\'</span>, <span class="org-string">'\\'</span>, <span class="org-string">'\\'</span>, <span class="org-string">'\\'</span>, <span class="org-string">'\\'</span>, <span class="org-string">'\\'</span>, <span class="org-string">'\\'</span>, <span class="org-string">'\\'</span>, <span class="org-string">'\\'</span> };
+    <span class="org-keyword">static</span> <span class="org-keyword">const</span> <span class="org-type">char</span> <span class="org-variable-name">space</span>[16]  = { 0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x1F };
+    <span class="org-keyword">const</span> <span class="org-type">__m128i</span> <span class="org-variable-name">dq</span> = _mm_loadu_si128(<span class="org-keyword">reinterpret_cast</span>&lt;<span class="org-keyword">const</span> <span class="org-type">__m128i</span> *&gt;(&amp;dquote[0]));
+    <span class="org-keyword">const</span> <span class="org-type">__m128i</span> <span class="org-variable-name">bs</span> = _mm_loadu_si128(<span class="org-keyword">reinterpret_cast</span>&lt;<span class="org-keyword">const</span> <span class="org-type">__m128i</span> *&gt;(&amp;bslash[0]));
+    <span class="org-keyword">const</span> <span class="org-type">__m128i</span> <span class="org-variable-name">sp</span> = _mm_loadu_si128(<span class="org-keyword">reinterpret_cast</span>&lt;<span class="org-keyword">const</span> <span class="org-type">__m128i</span> *&gt;(&amp;space[0]));
+
+    <span class="org-keyword">for</span> (; p != endAligned; p += 16) {
+        <span class="org-keyword">const</span> <span class="org-type">__m128i</span> <span class="org-variable-name">s</span> = _mm_load_si128(<span class="org-keyword">reinterpret_cast</span>&lt;<span class="org-keyword">const</span> <span class="org-type">__m128i</span> *&gt;(p));
+        <span class="org-keyword">const</span> <span class="org-type">__m128i</span> <span class="org-variable-name">t1</span> = _mm_cmpeq_epi8(s, dq);
+        <span class="org-keyword">const</span> <span class="org-type">__m128i</span> <span class="org-variable-name">t2</span> = _mm_cmpeq_epi8(s, bs);
+        <span class="org-keyword">const</span> <span class="org-type">__m128i</span> <span class="org-variable-name">t3</span> = _mm_cmpeq_epi8(_mm_max_epu8(s, sp), sp); <span class="org-comment-delimiter">// </span><span class="org-comment">s &lt; 0x20 &lt;=&gt; max(s, 0x1F) == 0x1F</span>
+        <span class="org-keyword">const</span> <span class="org-type">__m128i</span> <span class="org-variable-name">x</span> = _mm_or_si128(_mm_or_si128(t1, t2), t3);
+        <span class="org-type">unsigned</span> <span class="org-type">short</span> <span class="org-variable-name">r</span> = <span class="org-keyword">static_cast</span>&lt;<span class="org-type">unsigned</span> <span class="org-type">short</span>&gt;(_mm_movemask_epi8(x));
+        <span class="org-keyword">if</span> (RAPIDJSON_UNLIKELY(r != 0)) {   <span class="org-comment-delimiter">// </span><span class="org-comment">some of characters is escaped</span>
+            <span class="org-type">SizeType</span> <span class="org-variable-name">len</span>;
+<span class="org-preprocessor">#ifdef</span> _MSC_VER         <span class="org-comment-delimiter">// </span><span class="org-comment">Find the index of first escaped</span>
+            <span class="org-type">unsigned</span> <span class="org-type">long</span> <span class="org-variable-name">offset</span>;
+            _BitScanForward(&amp;offset, r);
+            len = offset;
+<span class="org-preprocessor">#else</span>
+            len = <span class="org-keyword">static_cast</span>&lt;<span class="org-type">SizeType</span>&gt;(__builtin_ffs(r) - 1);
+<span class="org-preprocessor">#endif</span>
+            <span class="org-type">char</span>* <span class="org-variable-name">q</span> = <span class="org-keyword">reinterpret_cast</span>&lt;<span class="org-type">char</span>*&gt;(os_-&gt;PushUnsafe(len));
+            <span class="org-keyword">for</span> (<span class="org-type">size_t</span> <span class="org-variable-name">i</span> = 0; i &lt; len; i++)
+                q[i] = p[i];
+
+            p += len;
+            <span class="org-keyword">break</span>;
+        }
+        _mm_storeu_si128(<span class="org-keyword">reinterpret_cast</span>&lt;<span class="org-type">__m128i</span> *&gt;(os_-&gt;PushUnsafe(16)), s);
+    }
+
+    is.src_ = p;
+    <span class="org-keyword">return</span> RAPIDJSON_LIKELY(is.Tell() &lt; length);
+}
+</pre>
+</div>
+
+<hr  />
+<p>
+用 SIMD 来加速memcpy是否可行呢？ 测试代码可以看 <a href="https://github.com/dirtysalt/codes/tree/master/cc/misc/MemcopyTest.cpp">这里</a>, 从结果上看没有 <code>std::memcpy</code> 效果好。
+</p>
+
+<pre class="example">
+Memcopy: mode=dense, sz=32 timer=2ms
+std::memcpy: mode=dense, sz=32, timer=0ms
+Memcopy: mode=dense, sz=128 timer=3ms
+std::memcpy: mode=dense, sz=128, timer=0ms
+Memcopy: mode=dense, sz=1024 timer=7ms
+std::memcpy: mode=dense, sz=1024, timer=3ms
+Memcopy: mode=dense, sz=10240 timer=50ms
+std::memcpy: mode=dense, sz=10240, timer=21ms
+Memcopy: mode=dense, sz=20480 timer=170ms
+std::memcpy: mode=dense, sz=20480, timer=115ms
+</pre>
+</div>
+</body>
+</html>
