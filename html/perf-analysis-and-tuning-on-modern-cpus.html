@@ -1,0 +1,639 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<title>Performance Analysis and Tuning on Modern CPUs</title>
+<meta  http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta  name="generator" content="Org-mode" />
+<meta  name="author" content="dirtysalt" />
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content">
+<h1 class="title">Performance Analysis and Tuning on Modern CPUs</h1>
+<div id="table-of-contents">
+<h2>Table of Contents</h2>
+<div id="text-table-of-contents">
+<ul>
+<li><a href="#sec-1">1. CPU流水线</a></li>
+<li><a href="#sec-2">2. Intel Skylake</a></li>
+<li><a href="#sec-3">3. Performance Monitoring Counter(PMC)</a></li>
+<li><a href="#sec-4">4. Dynamic Frequencey Scaling(DFS)</a></li>
+<li><a href="#sec-5">5. Simultaneous Multithreading(SMT)</a></li>
+<li><a href="#sec-6">6. 系统时钟和CPU时钟</a></li>
+<li><a href="#sec-7">7. 物理内存和Cache</a></li>
+<li><a href="#sec-8">8. Top-Down Microarchitecture Analysis(TMA)</a></li>
+<li><a href="#sec-9">9. CPU Front-End Optimization</a></li>
+</ul>
+</div>
+</div>
+<p>
+<a href="https://easyperf.net/">https://easyperf.net/</a>
+</p>
+
+<p>
+<a href="https://book.easyperf.net/perf_book">https://book.easyperf.net/perf_book</a>
+</p>
+
+<div id="outline-container-sec-1" class="outline-2">
+<h2 id="sec-1"><span class="section-number-2">1</span> CPU流水线</h2>
+<div class="outline-text-2" id="text-1">
+<p>
+因为有推测执行功能，所以实际执行的指令，比最后commit的指令是要更多的。我们把实际实行的指令叫做executed instruction, 而最后面commit的指令则叫做retired instruction.
+在大部分性能分析工具中，我们看到的instructions, 应该就是retired的，因为这个部分才是真正对外visible的。
+</p>
+
+<p>
+CPU基本流水线分为下面5个步骤：
+</p>
+<ol class="org-ol">
+<li>Instruction fetch (IF)
+</li>
+<li>Instruction decode (ID)
+</li>
+<li>Execute (EXE)
+</li>
+<li>Memory access (MEM)
+</li>
+<li>Write back (WB)
+</li>
+</ol>
+
+<p>
+下面几个因素/风险会阻碍流水线，降低retired instruction的速度：
+</p>
+<ol class="org-ol">
+<li>structural hazard 使用相同的资源造成的危险
+</li>
+<li>data hazard 因为数据依赖造成的危险，包括：
+<ul class="org-ul">
+<li>read-after-write: y = x + 1; z = y + 1; 使用bypassing以及OOO技术来解决
+</li>
+<li>write-after-read: y = x + 1; x = z + 1; 使用寄存器重命名来解决
+</li>
+<li>write-after-write: y = x + 1; y = z + 1; 使用寄存器重命名来解决
+</li>
+</ul>
+</li>
+<li>control hazard 分支代码造成的危险，可以使用推测执行来解决
+</li>
+</ol>
+
+<p>
+为了减少流水线的block, 提升ILP(instruction level parallelism), CPU上发展了众多技术解决这些hazard。基本上也可以认为，在CPU上发展出来的各种各样的技术，本质上都是为了解决流水线问题和提升ILP设计出来的。
+</p>
+
+<p>
+现代CPU的流水线还是超标量(superscalar)的，也就是可以同时执行多条指令。在某个时期，Intel CPU设计出一种叫做VLIW(verl long instruction word)的架构，也就是Intel Itanium。
+它试图将可以同时执行的多条指令放在一起，而如何选择可以同时执行的多条指令的工作则交给编译器来完成。但是这种工作会加重编译器的负担，编译器本身也没有办法可以很好地选择那些指令可以很好地并行执行，所以据说这个架构不是特别成功。
+</p>
+
+<p>
+<img src="images/cpu-concept-of-OOO.png" alt="cpu-concept-of-OOO.png" /> <img src="images/cpu-concept-of-superscalar.png" alt="cpu-concept-of-superscalar.png" />
+</p>
+
+<p>
+x86指令级是CISC的，但是在内部执行的时候，会将这些指令按照RISC风格的更短小指令来执行，这些更加短小的指令或者是操作就叫做uops(micro-ops). 单纯地引入uops还不够，在设计上还将一个pipeline分成了多个slots，
+每个slot相当于一个uops的流水线。几乎现代的CPU的pipeline宽度都是4，也就是说有4个slots. 这种pipeline slots可以认为更加细粒度的超标量。
+</p>
+</div>
+</div>
+
+<div id="outline-container-sec-2" class="outline-2">
+<h2 id="sec-2"><span class="section-number-2">2</span> Intel Skylake</h2>
+<div class="outline-text-2" id="text-2">
+<p>
+Intel Skylake的具体配置如下，从中可以看到典型的CPU设计参数：
+</p>
+<ul class="org-ul">
+<li>内部被解码成为uops执行
+</li>
+<li>8路超标量，支持OOO
+</li>
+<li>L1I, L1D 都是8路32KB，L2是8路1MB
+</li>
+<li>L1,L2都是独立于每个core的。
+</li>
+</ul>
+
+<p>
+通常来说cache line size是64Bytes。通常L1, L2都是独立于每个core的，访问延迟相比L3会更低，所以许多cache locality的优化都着眼于L2而不是L3.
+</p>
+
+<blockquote>
+<p>
+The block diagram in figure 14 shows the details of Intel’s 6th generation core, Skylake, that was announced in 2015 and is widely spread all over the world. The Skylake core is split into an in-order front-end that fetches and decodes x86 instructions into u-ops and an 8-way superscalar, out-of-order backend.
+</p>
+
+<p>
+The core supports 2-way SMT. It has a 32KB, 8-way first-level instruction cache (L1 I-cache), and a 32KB, 8-way first-level data cache (L1 D-cache). The L1 caches are backed up by a unified 1MB second-level cache, the L2 cache. The L1 and L2 caches are private to each core.
+</p>
+</blockquote>
+
+<p>
+下面是Intel Skylake的内部结构图
+</p>
+
+
+<div class="figure">
+<p><img src="images/intel-skylake-block-diagram.png" alt="intel-skylake-block-diagram.png" />
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-sec-3" class="outline-2">
+<h2 id="sec-3"><span class="section-number-2">3</span> Performance Monitoring Counter(PMC)</h2>
+<div class="outline-text-2" id="text-3">
+<p>
+CPU性能监控单元(Performance Monitoring Unit) 用来对各种CPU内部事件事件进行计数，比如分支预测，retired指令数量，cache miss等等，由此来做性能分析。
+linux下面 <code>perf</code> 这样的工具，应该就使用到了PMU。下图是PMU, event, PMC以及其他特性之间的关系。
+</p>
+
+
+<div class="figure">
+<p><img src="images/intel-cpu-pmu.png" alt="intel-cpu-pmu.png" />
+</p>
+</div>
+
+<p>
+CPU的性能计数器(Performance Monitoring Counters, PMC)由几个特殊的寄存器(MSR, Model Specific Register)来实现，书上说是48bit wide, 但是因为是和
+model相关的，所以其实数量和大小可能随model变化。在内核空间下面可以使用指令 <code>RDMSR</code> 和 <code>WRMSR</code> 来访问这些寄存器。
+</p>
+
+<p>
+Last Branch Record是一个register ring buffer结构(capacity = 32)，每次执行分支跳转的时候会记录&lt;timestamp, from, to, predict&gt;等信息。根据这些运行时的分支跳转信息，
+可以看到：那些代码块执行时间比较长，那些地方的分支预测率比较差，那些地方的分支跳转比较多等信息。
+</p>
+
+
+<div class="figure">
+<p><img src="images/cpu-concept-of-pmc.png" alt="cpu-concept-of-pmc.png" />
+</p>
+</div>
+
+<p>
+通过 <code>cpuid</code> 工具可以查看到本地是否支持PMU。除此之外，还可以看到CPU的许多参数，是个非常好的工具。很可惜我的虚拟机什么都没有支持。
+</p>
+
+<pre class="example">
+dirlt@vps:~$ cpuid
+   L2 unified cache information (0x80000006/ecx):
+      line size (bytes) = 0x40 (64)
+      lines per tag     = 0x0 (0)
+      associativity     = 8-way (6)
+      size (KB)         = 0x100 (256)
+
+   Architecture Performance Monitoring Features (0xa/eax):
+      version ID                               = 0x0 (0)
+      number of counters per logical processor = 0x0 (0)
+      bit width of counter                     = 0x0 (0)
+      length of EBX bit vector                 = 0x0 (0)
+   Architecture Performance Monitoring Features (0xa/ebx):
+      core cycle event not available           = false
+      instruction retired event not available  = false
+      reference cycles event not available     = false
+      last-level cache ref event not available = false
+      last-level cache miss event not avail    = false
+      branch inst retired event not available  = false
+      branch mispred retired event not avail   = false
+   Architecture Performance Monitoring Features (0xa/edx):
+      number of fixed counters    = 0x0 (0)
+      bit width of fixed counters = 0x0 (0)
+</pre>
+
+<p>
+因为PMC寄存器数量有限，如果同时想查看多个events的话，那么就需要使用multiplexing + scaling events的方法，本质上就是按照比例收集各个events。
+</p>
+
+
+<div class="figure">
+<p><img src="images/perf-events-multiplex-to-pmc.png" alt="perf-events-multiplex-to-pmc.png" />
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-sec-4" class="outline-2">
+<h2 id="sec-4"><span class="section-number-2">4</span> Dynamic Frequencey Scaling(DFS)</h2>
+<div class="outline-text-2" id="text-4">
+<p>
+Dynamic Frequency Scaling(DFS)，动态改变执行频率。
+</p>
+<ul class="org-ul">
+<li>在Intel上称为"Turbo Boost"技术，设置选项是 /sys/devices/system/cpu/intel_pstate/no_turbo
+</li>
+<li>在AMD上称为"Turbo Core"技术，设置选项是 /sys/devices/system/cpu/cpufreq/boost
+</li>
+</ul>
+
+<p>
+下面是一个执行的例子来说明频率发生改变。
+</p>
+
+<pre class="example">
+# TurboBoost enabled
+$ cat /sys/devices/system/cpu/intel_pstate/no_turbo
+0
+$ perf stat -e task-clock,cycles -- ./a.exe
+11984.691958 task-clock (msec) # 1.000 CPUs utilized 32,427,294,227 cycles # 2.706 GHz
+11.989164338 seconds time elapsed
+
+# TurboBoost disabled
+$ echo 1 | sudo tee /sys/devices/system/cpu/intel_pstate/no_turbo 1
+$ perf stat -e task-clock,cycles -- ./a.exe
+13055.200832 task-clock (msec) # 0.993 CPUs utilized 29,946,969,255 cycles # 2.294 GHz
+13.142983989 seconds time elapsed
+</pre>
+
+<p>
+既然有超频，那么在超频下和基准情况下面，运行某段程序得到的cpu cycles就是不同的，超频下面会更多。
+我们将基准情况下面得到的cpu cycles称为reference cycles(参考cycles), 而实际运行的成为core cycles.
+这样一来，turbo util = core cycles / ref cycles.
+</p>
+
+<pre class="example">
+$ perf stat -e cycles,ref-cycles ./a.exe
+43340884632 cycles # 3.97 GHz
+37028245322 ref-cycles # 3.39 GHz
+      10,899462364 seconds time elapsed
+</pre>
+</div>
+</div>
+
+<div id="outline-container-sec-5" class="outline-2">
+<h2 id="sec-5"><span class="section-number-2">5</span> Simultaneous Multithreading(SMT)</h2>
+<div class="outline-text-2" id="text-5">
+<p>
+Simultaneous Multithreading(SMT) 是超线程技术，在一个Core上有两个相同的架构单元比如执行流水线，但是共享某些组件比如ALU,Caches等等。
+使用SMT的好处是，如果两个线程在执行的时候使用了不同的组件的话，那么更加有效地利用资源。但是使用SMT可能会对性能有不可预期的影响，所以我们有时候需要关闭SMT。
+</p>
+
+<p>
+在Linux上，如果使用了SMT，那么一个物理core会被当做两个虚拟cores. 如何查看哪两个虚拟cores同属一个物理core, 可以通过选项 "sys/devices/system/cpu/cpuN/topology/thread_siblings_list" 查看。
+确定虚拟cores之间的关系后，就可以将某个虚拟core关闭，这样就相当于关闭了SMT，可以通过选项 "/sys/devices/system/cpu/cpuX/online" 来关闭。此外我们也可以在BIOS里面把SMT关闭掉。
+</p>
+
+<p>
+下面是一个查看关系和关闭SMT的例子。
+</p>
+
+<pre class="example">
+# all 8 HW threads enabled:
+$ lscpu
+...
+CPU(s): 8
+On-line CPU(s) list: 0-7
+...
+$ cat /sys/devices/system/cpu/cpu0/topology/thread_siblings_list 0,4
+$ cat /sys/devices/system/cpu/cpu1/topology/thread_siblings_list
+1,5
+$ cat /sys/devices/system/cpu/cpu2/topology/thread_siblings_list 2,6
+$ cat /sys/devices/system/cpu/cpu3/topology/thread_siblings_list 3,7
+# Disabling SMT on core 0
+$ echo 0 | sudo tee /sys/devices/system/cpu/cpu4/online 0
+$ lscpu
+CPU(s): 8
+On-line CPU(s) list: 0-3,5-7
+Off-line CPU(s) list: 4
+...
+$ cat /sys/devices/system/cpu/cpu0/topology/thread_siblings_list
+0
+</pre>
+</div>
+</div>
+
+<div id="outline-container-sec-6" class="outline-2">
+<h2 id="sec-6"><span class="section-number-2">6</span> 系统时钟和CPU时钟</h2>
+<div class="outline-text-2" id="text-6">
+<p>
+在计时上我们可以选择两类时钟：一个是系统提供的高精度时钟，比如Linux下面的clock_gettime system call，以及C++提供的标准库std::chrono.
+另外一个则是CPU提供的time stamp counter(TSC)时间戳计数器。两个始终都是单调递增的。TSC相比系统的高精度时钟开销更小，大约需要20+ CPU cycles，高精度始终需要的cycles大约是它的10倍多，
+所以TSC比较适合测量那些本身耗时就比较短的代码片段。
+</p>
+
+<p>
+TSC有个重要特性就是，它是独立于CPU frequency的，也就是说即便是在CPU超频的情况下面，得到的也是normalized之后的结果。[注：这个数字，就是在超频一节，提到的reference cycles]
+</p>
+
+<p>
+下面是我自己写的例程，在MacOS上可以编译运行。我不知道这样解释tsc diff是否正确，输出结果上存在20%的差距。
+</p>
+
+<p>
+clokc diff = 88405377(HZ=2000000000, T=44.203 ms), sys ns = 35.443 ms
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-cpp"><span class="org-preprocessor">#include</span> <span class="org-string">&lt;cstdio&gt;</span>
+<span class="org-preprocessor">#include</span> <span class="org-string">&lt;cassert&gt;</span>
+<span class="org-preprocessor">#include</span> <span class="org-string">&lt;chrono&gt;</span>
+<span class="org-preprocessor">#include</span> <span class="org-string">&lt;sys/types.h&gt;</span>
+<span class="org-preprocessor">#include</span> <span class="org-string">&lt;sys/sysctl.h&gt;</span>
+
+<span class="org-type">uint64_t</span> <span class="org-function-name">get_cpu_freq</span>(<span class="org-type">void</span>)
+{
+    <span class="org-type">uint64_t</span> <span class="org-variable-name">freq</span> = 0;
+    <span class="org-type">size_t</span> <span class="org-variable-name">size</span> = <span class="org-keyword">sizeof</span>(freq);
+
+    <span class="org-keyword">if</span> (sysctlbyname(<span class="org-string">"hw.cpufrequency"</span>, &amp;freq, &amp;size, <span class="org-constant">NULL</span>, 0) &lt; 0)
+    {
+        perror(<span class="org-string">"sysctl"</span>);
+    }
+    <span class="org-keyword">return</span> freq;
+}
+
+<span class="org-type">void</span> <span class="org-function-name">Test</span>(<span class="org-type">int</span> <span class="org-variable-name">x</span>) {
+    <span class="org-type">int</span> <span class="org-variable-name">a</span> = __builtin_ctz(x);
+    <span class="org-type">int</span> <span class="org-variable-name">b</span> = __builtin_ffs(x) - 1;
+    <span class="org-type">int</span> <span class="org-variable-name">c</span> = __builtin_popcount(x ^ (x -1)) - 1;
+    <span class="org-comment-delimiter">// </span><span class="org-comment">printf("%d %d %d %d\n", a, b, c, x);</span>
+    assert(a == b);
+    assert(b == c);
+}
+
+<span class="org-type">uint64_t</span> <span class="org-keyword">inline</span> time_sys_ns() {
+    <span class="org-keyword">return</span> <span class="org-constant">std</span>::<span class="org-constant">chrono</span>::duration_cast&lt;<span class="org-constant">std</span>::<span class="org-constant">chrono</span>::nanoseconds&gt;
+        (<span class="org-constant">std</span>::<span class="org-constant">chrono</span>::<span class="org-constant">steady_clock</span>::now().time_since_epoch()).count();
+}
+<span class="org-type">uint64_t</span> <span class="org-keyword">inline</span> time_cpu_tsc() {
+    <span class="org-keyword">return</span> __rdtsc();
+}
+
+
+<span class="org-type">int</span> <span class="org-function-name">main</span>() {
+    <span class="org-type">uint64_t</span> <span class="org-variable-name">sa</span> = time_sys_ns();
+    <span class="org-type">uint64_t</span> <span class="org-variable-name">ca</span> = time_cpu_tsc();
+    <span class="org-keyword">for</span>(<span class="org-type">int</span> <span class="org-variable-name">i</span>=1;i&lt;10000000;i++) {
+        Test(i);
+    }
+    <span class="org-type">uint64_t</span> <span class="org-variable-name">sb</span> = time_sys_ns();
+    <span class="org-type">uint64_t</span> <span class="org-variable-name">cb</span> = time_cpu_tsc();
+    <span class="org-type">uint64_t</span> <span class="org-variable-name">freq</span> = get_cpu_freq();
+    printf(<span class="org-string">"clokc diff = %lld(HZ=%lld, T=%.3f ms), sys ns = %.3f ms\n"</span>, cb - ca, freq, (cb - ca) * 1000.0f / freq, (sb - sa) * 1e-6);
+    <span class="org-keyword">return</span> 0;
+}
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-sec-7" class="outline-2">
+<h2 id="sec-7"><span class="section-number-2">7</span> 物理内存和Cache</h2>
+<div class="outline-text-2" id="text-7">
+<p>
+最近几代常用内存的性能如下表，其中MT/s(million transfer per sec).
+</p>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="left" />
+
+<col  class="right" />
+
+<col  class="right" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="left">DDR Generaition</th>
+<th scope="col" class="right">Highest Data Rate(MT/s)</th>
+<th scope="col" class="right">Typycal Read Latency(ns)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="left">DDR3</td>
+<td class="right">2133</td>
+<td class="right">10.3</td>
+</tr>
+
+<tr>
+<td class="left">DDR4</td>
+<td class="right">3200</td>
+<td class="right">12.5</td>
+</tr>
+
+<tr>
+<td class="left">DDR5</td>
+<td class="right">6400</td>
+<td class="right">14</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+还有某些内存带宽更高的DRAM技术比如GDDR(Graphics DDR)和HBM(High Bandwidth Memory), 但是它们和DDR是不兼容的。
+</p>
+
+<p>
+可以看到传输速率在提升，但是延迟基本没有什么变化。现代CPU通常支持多个独立的memory channels, 而一个memory channel的宽度是32bit or 64bit.
+如果以64bit计算，主板上有4个memory channels的话，那么DDR4最高传输速率是在3.2G * 4 * 8 = 102.4GB/s. (也不知道这样计算的对不对）
+</p>
+
+<p>
+我看了一下我的macbook air, DDR3-1600(1600MT/s), 我不知道memory channel的情况，假设只有一个64bit channel, 那么peak bandwidth应该就是12.8GB/s.
+写了个小程序来做测试，只能做到一半 <code>bandwidth = 6.653GB/s</code> ，不知道是否可以认为channel应该是32bit而不是64bit.
+</p>
+
+<div class="org-src-container">
+
+<pre class="src src-cpp"><span class="org-type">int</span> <span class="org-function-name">main</span>() {
+    <span class="org-keyword">const</span> <span class="org-type">int</span> <span class="org-variable-name">N</span> = 32 * 1024 * 1024;
+    <span class="org-type">char</span>* <span class="org-variable-name">src</span> = <span class="org-keyword">new</span> <span class="org-type">char</span>[N];
+    <span class="org-type">char</span>* <span class="org-variable-name">dst</span> = <span class="org-keyword">new</span> <span class="org-type">char</span>[N];
+    <span class="org-constant">std</span>::memset(src, 0x7f, N);
+    <span class="org-keyword">const</span> <span class="org-type">int</span> <span class="org-variable-name">T</span> = 300;
+    <span class="org-type">uint64_t</span> <span class="org-variable-name">start</span> = time_sys_ns();
+    <span class="org-keyword">for</span>(<span class="org-type">int</span> <span class="org-variable-name">i</span>=0;i&lt;T;i++) {
+        <span class="org-constant">std</span>::memcpy(dst, src, N);
+    }
+    <span class="org-type">uint64_t</span> <span class="org-variable-name">end</span> = time_sys_ns();
+    <span class="org-type">uint64_t</span> <span class="org-variable-name">dur</span> = end - start;
+    <span class="org-type">uint64_t</span> <span class="org-variable-name">size</span> = (<span class="org-type">uint64_t</span>)<span class="org-type">N</span> * <span class="org-variable-name">T</span>;
+    <span class="org-comment-delimiter">// </span><span class="org-comment">to avoid optimization loop</span>
+    printf(<span class="org-string">"dst[0] = %d\n"</span>, dst[0]);
+    printf(<span class="org-string">"dur = %lld ns, size = %lld, bandwidth = %.3fGB/s"</span>, dur, size , <span class="org-type">size</span> * 1.0f/ dur);
+    <span class="org-keyword">return</span> 0;
+}
+</pre>
+</div>
+
+<p>
+下图是各级cache的延迟对比，习惯上把Main上面一个cache叫做LLC(last level cache).
+</p>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="left" />
+
+<col  class="left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="left">Cache</th>
+<th scope="col" class="left">latency</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="left">L1</td>
+<td class="left">4cycles(1ns)</td>
+</tr>
+
+<tr>
+<td class="left">L2</td>
+<td class="left">10-25cycles(5-10ns)</td>
+</tr>
+
+<tr>
+<td class="left">L3</td>
+<td class="left">~40cycles(20ns)</td>
+</tr>
+
+<tr>
+<td class="left">Main</td>
+<td class="left">200+cycles(100ns)</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+如果按照TMA进行分类的话，在L1I造成的cache miss会被归类为front-end stall(因为获取指令造成的停顿），而data miss则会被归类为back-end stall(因为执行和取内存造成的停顿）。
+</p>
+
+<p>
+使用 <code>perf</code> 工具我们可以查看到各个level造成的cache miss, 还可以查看mispredicted branch.
+</p>
+
+<pre class="example">
+// L1 miss and hit
+$ perf stat -e mem_load_retired.fb_hit,mem_load_retired.l1_miss, mem_load_retired.l1_hit,mem_inst_retired.all_loads -- a.exe
+29580 mem_load_retired.fb_hit
+19036 mem_load_retired.l1_miss
+497204 mem_load_retired.l1_hit
+546230 mem_inst_retired.all_loads
+
+// L2 miss and hit
+$ perf stat -e mem_load_retired.l1_miss, mem_load_retired.l2_hit,mem_load_retired.l2_miss -- a.exe
+19521 mem_load_retired.l1_miss
+12360 mem_load_retired.l2_hit
+7188 mem_load_retired.l2_miss
+
+// mispredicted branch.
+$ perf stat -e branches,branch-misses -- a.exe
+358209 branches
+14026 branch-misses # 3,92% of all branches
+</pre>
+</div>
+</div>
+<div id="outline-container-sec-8" class="outline-2">
+<h2 id="sec-8"><span class="section-number-2">8</span> Top-Down Microarchitecture Analysis(TMA)</h2>
+<div class="outline-text-2" id="text-8">
+<p>
+TMA(top-down microarchitecture analysis) 自顶向下-微架构-分析方法，是中系统化分析性能瓶颈的方法。
+</p>
+
+<p>
+大致流程是：首先确定uop是否已经分配？如果没有分配的话，说明pipeline出现了stall. pipeline stall可能出现在取指和解码阶段(front-end)，或者是执行和内存操作阶段(back-end)。
+如果uop分配了的话，那么说说明pipeline是没有被stall的，那么可以看看retired instruction。如果retired比较差的话，那么就说明分支预测出现问题，否则就需要选择更加高效的指令。
+</p>
+
+
+<div class="figure">
+<p><img src="images/cpu-concept-of-tma.png" alt="cpu-concept-of-tma.png" />
+</p>
+</div>
+
+<p>
+确定了是哪个阶段出现问题，就可以尝试在下图中寻找具体的解决办法。
+</p>
+
+
+<div class="figure">
+<p><img src="images/the-tma-hierarchy-of-performance-bottlenecks.png" alt="the-tma-hierarchy-of-performance-bottlenecks.png" />
+</p>
+</div>
+
+<p>
+branch misprediction大约需要耗费15-20个cycles. 作者的个人经验是，"bad speculation"的比例大约在5-10%，只有高于10%的时候才需要关心这块。
+</p>
+</div>
+</div>
+
+<div id="outline-container-sec-9" class="outline-2">
+<h2 id="sec-9"><span class="section-number-2">9</span> CPU Front-End Optimization</h2>
+<div class="outline-text-2" id="text-9">
+<p>
+关于cpu front-end optimization, 主要就是优化指令数据的布局，提高cache利用率。包括：
+</p>
+<ul class="org-ul">
+<li>basic block placement. 分支代码常用的分支部分放在一起
+</li>
+<li>basic block alignment. 这个后面说说
+</li>
+<li>function splitting. 将hot/cold code分开
+</li>
+<li>function grouping. 将多个小函数进行内联(compiler), 将hot code放在一起(linker)
+</li>
+</ul>
+
+<p>
+关于basic block alignment，尤其是loop alignment. 以下面这段代码为例
+</p>
+
+<pre class="example">
+00000000004046a0 &lt;_Z14benchmark_funcPi&gt;: 4046a0: mov rax,0xffffffffffffff80 4046a7: vpcmpeqd ymm0,ymm0,ymm0
+4046ab: nop DWORD PTR [rax+rax*1+0x0]
+4046b0: vmovdqu ymm1,YMMWORD PTR [rdi+rax*1+0x80] # loop begins
+4046b9: vpsubd ymm1,ymm1,ymm0
+4046bd: vmovdqu YMMWORD PTR [rdi+rax*1+0x80],ymm1
+4046c6: add rax,0x20
+4046ca: jne 4046b0 # loop ends
+4046cc:  vzeroupper
+4046cf:  ret
+</pre>
+
+<p>
+循环开始地址是 0x4046b0, 这个地址没有和 64Bytes 对齐，而64bytes通常是cache line size. 也就是指令的cache locality做的不是特别好。
+解决办法就是使用nop做padding，虽然nop指令不会使用任何资源，但是却会耗费IF,ID这两部。
+</p>
+
+
+<div class="figure">
+<p><img src="images/loop-alignment-comparison.png" alt="loop-alignment-comparison.png" />
+</p>
+</div>
+
+<p>
+关于function grouping示意图下图，办法就是根据过去的运行信息，在link阶段改进代码布局
+</p>
+
+
+<div class="figure">
+<p><img src="images/grouping-hot-functions.png" alt="grouping-hot-functions.png" />
+</p>
+</div>
+
+<p>
+根据过去的运行信息进行优化也称为PGO(profile guided optimization)
+</p>
+
+<blockquote>
+<p>
+It is not uncommon to see real workloads performance increase by up to 15% from using Profile Guided Optimizations. PGO does not only improve inlining and code placement but also improves register allocation and more.
+</p>
+
+<p>
+In the mid-2018, Facebook open-sourced its binary relinker tool called BOLT. BOLT works on the already compiled binary. It first disassembles the code, then it uses profile information to do various layout transformations (including basic blocks reordering, function splitting, and grouping) and generates optimized binary [Panchenko et al., 2018]. A similar tool was developed at Google called Propeller, which serves a similar purpose as BOLT but claim certain advantages over it. It is possible to integrate optimizing relinker into the build system and enjoy an extra 5-10% performance speedup from the optimized code layout. The only thing one needs to worry about is to have a representative and meaningful workload for collecting profiling information.
+</p>
+</blockquote>
+</div>
+</div>
+</div>
+</body>
+</html>
