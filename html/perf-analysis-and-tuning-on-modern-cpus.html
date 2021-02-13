@@ -120,6 +120,16 @@ Intel Skylake的具体配置如下，从中可以看到典型的CPU设计参数�
 通常来说cache line size是64Bytes。通常L1, L2都是独立于每个core的，访问延迟相比L3会更低，所以许多cache locality的优化都着眼于L2而不是L3.
 </p>
 
+<p>
+下面是Intel Skylake的内部结构图
+</p>
+
+
+<div class="figure">
+<p><img src="images/intel-skylake-block-diagram.png" alt="intel-skylake-block-diagram.png" />
+</p>
+</div>
+
 <blockquote>
 <p>
 The block diagram in figure 14 shows the details of Intel’s 6th generation core, Skylake, that was announced in 2015 and is widely spread all over the world. The Skylake core is split into an in-order front-end that fetches and decodes x86 instructions into u-ops and an 8-way superscalar, out-of-order backend.
@@ -131,16 +141,54 @@ The core supports 2-way SMT. It has a 32KB, 8-way first-level instruction cache 
 </blockquote>
 
 <p>
-下面是Intel Skylake的内部结构图
+CPU的设计分为front-end和back-end. front-end专注在取指令和解码，而back-end专注在执行和内存操作上。我摘录了书中一些我看的懂的内容，即便如此有些东西也是似懂非懂。
+之前接触到的CPU方面的术语集中在backend上，比如ROB, RS. ROB管理了指令执行的相互依赖以及寄存器重命名，它确保retired的顺序是程序执行顺序。RS则负责资源管理，一旦uop需要使用的资源可用，
+那么RS就可以安排uop进行执行，根据uop使用到的资源被提交到不同的port上。
 </p>
 
-
-<div class="figure">
-<p><img src="images/intel-skylake-block-diagram.png" alt="intel-skylake-block-diagram.png" />
+<blockquote>
+<p>
+<b>Front-End</b>
 </p>
+
+<p>
+The CPU Front-End consists of a number of data structures that serve the main goal to efficiently fetch and decode instructions from memory. Its main purpose is to feed prepared instructions to the CPU Back-End, which is responsible for the actual execution of instructions.
+</p>
+
+<p>
+The CPU Front-End fetches 16 bytes per cycle of x86 instructions from the L1 I-cache. This is shared among the two threads, so each thread gets 16 bytes every other cycle. These are complex, variable-length x86 instructions. The pre-decode and decode stages of the pipeline convert these complex x86 instructions into micro Ops (UOPs, see section 4.4) that are queued into the Allocation Queue (IDQ).
+</p>
+
+<p>
+<b>Back-End</b>
+</p>
+
+<p>
+The CPU Back-End employs an Out-Of-Order engine that executes instructions and stores results.
+</p>
+
+<p>
+The heart of the CPU backend is the 224 entry ReOrder buffer (ROB). This unit handles data dependencies. The ROB maps the architecture-visible registers to the physical registers used in the scheduler/reservation station unit. ROB also provides register renaming and tracks speculative execution. ROB entries are always retired in program order.
+</p>
+
+<p>
+The Reservation Station/Scheduler (RS) is the structure that tracks the availability of all resources for a given UOP and dispatches the UOP to the assigned port once it is ready. The core is 8-way superscalar. Thus the RS can dispatch up to 8 UOPs per cycle.
+As shown in figure 14, each dispatch port supports different operations:
+</p>
+<ul class="org-ul">
+<li>Ports 0, 1, 5, and 6 provide all the integer, FP, and vector ALU. UOPs dispatched to those ports do not require memory operations.
+</li>
+<li>Ports 2 and 3 are used for address generation and for load operations.
+</li>
+<li>Port 4 is used for store operations.
+</li>
+<li>Port 7 is used for address generation.
+</li>
+</ul>
+</blockquote>
 </div>
 </div>
-</div>
+
 
 <div id="outline-container-sec-3" class="outline-2">
 <h2 id="sec-3"><span class="section-number-2">3</span> Performance Monitoring Counter(PMC)</h2>
