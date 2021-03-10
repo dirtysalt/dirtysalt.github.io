@@ -634,7 +634,7 @@ auto A::foo() -> B { return B(); }
 
 *** lambda expression(lambda表达式，匿名函数)
 
-语法大致是这样的[capture](parameters) [suffix-return-type] { body }. 就像之前说的那样，C++11类型推导能力非常强大，所以suffix-return-type通常是可选的。
+语法大致是这样的[capture](parameters) [-> suffix-return-type] { body }. 就像之前说的那样，C++11类型推导能力非常强大，所以suffix-return-type通常是可选的。
 - capture 是指我们需要捕获哪些外部变量
 - parameters 则是匿名函数的参数列表
 - body 则是匿名函数的函数体
@@ -685,7 +685,7 @@ int main() {
 
 右值引用比较奇怪的一个地方是，你可以认为它是一个非常容易挥发的东西。因为一旦你使用A&& a = foo();获得右值引用的时候，其实你已经获得了左值a（并且发生了copy ctor或者是move ctor, 这个根据是否有move ctor决定的）. 只有在move ctor或者是move assignment时候我们才能够瞬间捕获到右值引用。想要把一个左值变为右值可以使用std::move函数。下面是我的实验代码，可以加深理解。
 
-UPDATE@2021: 右值引用的类型写为 =A&& x=. 而 =std::move= 这个操作就是将类型从A类型变为A的右值引用类型。引入右值引用类型的目的是节省对象的拷贝开销，然后开发者可以在构造函数里面指明，如果是move语义的话应该如何进行对象构造。本质来说，就是允许开发者告诉编译器，我是希望copy还是move对象。下面的例子我觉得还是有些问题，并没有把问题说清楚。
+UPDATE@2021: 右值引用的类型写为 =A&& x=. 而 =std::move= 这个操作就是将类型从A类型变为A的右值引用类型。引入右值引用类型的目的是节省对象的拷贝开销，然后开发者可以在构造函数里面指明，如果是move语义的话应该如何进行对象构造。本质来说，就是允许开发者告诉编译器，我是希望copy还是move对象。
 
 #+BEGIN_SRC C++
 #include <cstdio>
@@ -702,44 +702,73 @@ using namespace std;
 class A {
   public:
     int v;
-    A(): v(123) {
-        cout << "ctor" << endl;
+    string s;
+    A(int v, string s){
+        this -> v = v;
+        this -> s = s;
+        // cout << "ctor" << endl;
     }
     A(const A& x) {
-        cout << "copy ctor" << endl;
+        this->v = x.v;
+        this->s = x.s;
+        cout << "copy ctor:";
         cout << &x << " -> " << this << endl;
+    }
+    A& operator=(const A& x) {
+        this->v = x.v;
+        this->s = std::move(x.s);
+        cout << "copy operator=:";
+        cout << &x << " -> " << this << endl;
+        return *this;
     }
 #ifdef cxx0x
     A(A&& x) {
-        cout << "move ctor" << endl;
+        this->v = x.v;
+        this->s = std::move(x.s);
+        cout << "move ctor:";
         cout << &x << " -> " << this << endl;
+    }
+    A& operator=(A&& x) {
+        this->v = x.v;
+        this->s = std::move(x.s);
+        cout << "move operator=:";
+        cout << &x << " -> " << this << endl;
+        return *this;
     }
 #endif
 };
 
 // 这里增加条件语句，可以使得编译器不会直接在返回地址上开辟对象A
-// 从而达到实验目的，否则只会调用一次ctor而不会调用copy ctor/move ctor.
+// 从而达到实验目的，否则只会调用一次ctor（内部的）而不会调用copy ctor/move ctor.
 static int x = 0;
 A bar() {
+    A a(10, "hello, world");
+    A b(20, "hello, worldb");
     if (x == 0) {
-        A a;
         cout << "inside bar: " << &a << endl;
         return a;
     } else {
-        return A();
+        cout << "inside bar: " << &b << endl;
+        return b;
     }
-    // return A();
 }
 
 #ifdef cxx0x
 int foo1() {
     cout << "----- foo1(test c++0x) -----" << endl;
-    A&& pa = bar();
-    // 虽然这里写的是&&, 但是实际上效果等同于A pa = bar();
-    // 这个pa已经在stack上分配出来了. 这里甚至都没有调用构造函数。
+    A pa(bar()); // move ctor
     cout << "pa = " << &pa << "/" << &(pa.v) << endl;
 
     cout << "-----" << endl;
+    A pa2(10, "s");
+    pa2 = bar(); // move ctor and move operator=
+    cout << "pa = " << &pa2 << "/" << &(pa2.v) << endl;
+
+
+    cout << "-----" << endl;
+    if (std::is_same<decltype(pa), A&&>::value) {
+        cout << "same type" << endl;
+    }
     A pb = pa; // copy ctor.
     cout << "pb = " << &pb << endl;
 
@@ -751,10 +780,17 @@ int foo1() {
 #endif
 
 int foo2() {
-    cout << "----- foo2(test c++03) ----" << endl;
-    // move ctor in c++0x.
-    // copy ctor in c++03.
-    A pa = bar(); // 不知道为什么都没有调用构造函数
+    cout << "----- foo2(test c++03&0x) ----" << endl;
+    // move ctor at c++0x
+    // copy ctor at c++03
+    A pa = bar();
+    cout << "pa = " << &pa << "/" << &(pa.v) << endl;
+
+    // move ctor / move operator= in c++0x.
+    // copy ctor / copy operator= in c++03.
+    cout << "-----" << endl;
+    A pa2(10, "s");
+    pa2 = bar();
     cout << "pa = " << &pa << "/" << &(pa.v) << endl;
 
     cout << "-----" << endl;
@@ -770,4 +806,59 @@ int main() {
 #endif
     foo2();
 }
+
 #+END_SRC
+
+
+针对上面的代码分别使用c++2a和c++03选项进行编译，主要是看foo2的输出上的差异。使用c++2a编译的输出结果如下，可以看到大部分地方都使用到了move操作。
+
+#+BEGIN_EXAMPLE
+mac :: ~/utils » g++ test2.cpp -std=c++2a ; ./a.out
+----- foo1(test c++0x) -----
+inside bar: 0x7ffee2b658d8
+move ctor:0x7ffee2b658d8 -> 0x7ffee2b65a40
+pa = 0x7ffee2b65a40/0x7ffee2b65a40
+-----
+inside bar: 0x7ffee2b658d8
+move ctor:0x7ffee2b658d8 -> 0x7ffee2b659d8
+move operator=:0x7ffee2b659d8 -> 0x7ffee2b65a10
+pa = 0x7ffee2b65a10/0x7ffee2b65a10
+-----
+copy ctor:0x7ffee2b65a40 -> 0x7ffee2b659b8
+pb = 0x7ffee2b659b8
+-----
+move ctor:0x7ffee2b659b8 -> 0x7ffee2b65998
+pc = 0x7ffee2b65998
+
+
+----- foo2(test c++03&0x) ----
+inside bar: 0x7ffee2b65908
+move ctor:0x7ffee2b65908 -> 0x7ffee2b65a40
+pa = 0x7ffee2b65a40/0x7ffee2b65a40
+-----
+inside bar: 0x7ffee2b65908
+move ctor:0x7ffee2b65908 -> 0x7ffee2b659d8
+move operator=:0x7ffee2b659d8 -> 0x7ffee2b65a10
+pa = 0x7ffee2b65a40/0x7ffee2b65a40
+-----
+copy ctor:0x7ffee2b65a40 -> 0x7ffee2b659b8
+pb = 0x7ffee2b659b8
+#+END_EXAMPLE
+
+而使用c++03编译的输出结果如下，可以看到foo2大部分地方都是copy操作。
+
+#+BEGIN_EXAMPLE
+mac :: ~/utils » g++ test2.cpp -std=c++03 ; ./a.out
+----- foo2(test c++03&0x) ----
+inside bar: 0x7ffee9f60918
+copy ctor:0x7ffee9f60918 -> 0x7ffee9f60a50
+pa = 0x7ffee9f60a50/0x7ffee9f60a50
+-----
+inside bar: 0x7ffee9f60918
+copy ctor:0x7ffee9f60918 -> 0x7ffee9f609e8
+copy operator=:0x7ffee9f609e8 -> 0x7ffee9f60a20
+pa = 0x7ffee9f60a50/0x7ffee9f60a50
+-----
+copy ctor:0x7ffee9f60a50 -> 0x7ffee9f609c8
+pb = 0x7ffee9f609c8
+#+END_EXAMPLE
