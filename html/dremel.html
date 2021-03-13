@@ -56,11 +56,11 @@
 <ul class="org-ul">
 <li>This paper describes a system called Dremel1 that supports inter-active analysis of very large datasets over shared clusters of com-modity machines. （允许在廉价的集群上面进行大规模数据的交互式分析）
 </li>
-<li>Unlike traditional databases, it is capable of op-erating on in situ nested data. In situ refers to the ability to access data ‘in place’, e.g., in a distributed file system（支持在in-place的嵌套数据，这点和传统的关系型数据库不太一样）
+<li>Unlike traditional databases, it is capable of op-erating on in situ nested data. In situ refers to the ability to access data ‘in place’, e.g., in a distributed file system（支持原生嵌套数据，这点和传统的关系型数据库不太一样。可能传统关系数据库对这类嵌套数据没有特别好的支持）
 </li>
-<li>Dremel can execute many queries over such data that would ordinarily require a sequence of MapReduce jobs, but at a fraction of the execution time. （dremel所作的工作非常类似于多个MR一起工作，但是时间远远比这些MR一起执行要少）
+<li>Dremel can execute many queries over such data that would ordinarily require a sequence of MapReduce jobs, but at a fraction of the execution time. （dremel所作的工作非常类似于多个MR一起工作，但是时间远远比这些MR一起执行要少，这类还是归结于其MPP结构，许多中间结果其实是不用到磁盘上的）
 </li>
-<li>Dremel is not intended as a replacement for MR and is often used in conjunction with it to analyze outputs of MR pipelines or rapidly prototype larger computations.（dremel定位来说不是MR的replacement，并且经常和MR配合使用）
+<li>Dremel is not intended as a replacement for MR and is often used in conjunction with it to analyze outputs of MR pipelines or rapidly prototype larger computations.（dremel定位来说不是MR的replacement，并且经常和MR配合使用。MPP在执行shuffle的时候，其实是可以依赖MR的）
 </li>
 </ul>
 
@@ -104,7 +104,7 @@
 </li>
 <li>Second, Dremel provides a high-level, SQL-like language to express ad hoc queries. In contrast to layers such as Pig and Hive, it executes queries natively without translating them into MR jobs. （提供了SQL-like的查询语言，和Pig以及Hive不太一样的是，dremel直接执行而没有转换成为MR jobs）
 </li>
-<li>Lastly, and importantly, Dremel uses a column-striped storage representation, which enables it to read less data from secondary storage and reduce CPU cost due to cheaper compression. Column stores have been adopted for analyzing relational data but to the best of our knowledge have not been extended to nested data mod-els. The columnar storage format that we present is supported by many data processing tools at Google, including MR, Sawzall , and FlumeJava. （使用了列式存储，使得查询的话可以只是读取部分数据，减少IO以及CPU时间。列式存储广泛用于关系数据模型但是没有用于嵌套数据模型）
+<li>Lastly, and importantly, Dremel uses a column-striped storage representation, which enables it to read less data from secondary storage and reduce CPU cost due to cheaper compression. Column stores have been adopted for analyzing relational data but to the best of our knowledge have not been extended to nested data mod-els. The columnar storage format that we present is supported by many data processing tools at Google, including MR, Sawzall , and FlumeJava. （使用了列式存储，使得查询的话可以只是读取部分数据，减少IO以及CPU时间。列式存储广泛用于关系数据模型但是没有用于嵌套数据模型） 支持嵌套数据的列式存储以及分析是dremel的很大一个亮点，并且SQL query出来的结果也可以是嵌套数据。
 </li>
 </ul>
 </div>
@@ -114,7 +114,7 @@
 <h2 id="sec-3"><span class="section-number-2">3</span> Background</h2>
 <div class="outline-text-2" id="text-3">
 <p>
-下图表示行式存储和列式存储的区别
+行式和列式存储
 </p>
 
 
@@ -129,7 +129,7 @@
 <h2 id="sec-4"><span class="section-number-2">4</span> Data Model</h2>
 <div class="outline-text-2" id="text-4">
 <p>
-in a short word, "protobuf"
+<a href="https://github.com/protocolbuffers/protobuf">https://github.com/protocolbuffers/protobuf</a>
 </p>
 </div>
 </div>
@@ -141,9 +141,9 @@ in a short word, "protobuf"
 这节讲的内容主要就是说，如何在行式存储和为列式存储之间无损地进行转换。
 </p>
 <ul class="org-ul">
-<li>Splitting Records into Columns
+<li>Splitting Records into Columns 【把记录拆分成为列】
 </li>
-<li>Record Assembly
+<li>Record Assembly【将多列组合成为记录】
 </li>
 </ul>
 
@@ -197,7 +197,7 @@ in a short word, "protobuf"
 </p>
 
 <p>
-#note: now see <a href="parquet.html">Parquet</a>
+NOTE：这节我看的也是云里雾里的。这个存储格式在内叫做ColumnIO，开源实现有 <a href="parquet.html">Parquet</a>。
 </p>
 </div>
 </div>
@@ -208,10 +208,8 @@ in a short word, "protobuf"
 <div id="outline-container-sec-7" class="outline-2">
 <h2 id="sec-7"><span class="section-number-2">7</span> Query Execution</h2>
 <div class="outline-text-2" id="text-7">
-<hr  />
-
 <p>
-Tree architecture. Dremel uses a multi-level serving tree to execute queries (see Figure 7). A root server receives incoming queries, reads metadata from the tables, and routes the queries to the next level in the serving tree. The leaf servers communicate with the storage layer or access the data on local disk.
+类似搜索引擎的树形架构，特征就是fanout比较大，可以做到特别高的并行度
 </p>
 
 
@@ -221,18 +219,11 @@ Tree architecture. Dremel uses a multi-level serving tree to execute queries (se
 </div>
 
 <p>
-The execution model presented above is well-suited for aggregation queries returning small and medium-sized results, which are a very common class of interactive queries. Large aggregations and other classes of queries may need to rely on execution mechanisms known from parallel DBMSs and MR. （需要注意的是，这种模型只是适合返回中小规模数据聚合结果，因为这个是交互式查询里面最典型的场景。而对于需要返回大规模数据的话，还是使用并行数据库或者是MR会更好）
-</p>
-
-<hr  />
-
-<p>
 Query dispatcher. Dremel is a multi-user system, i.e., usually several queries are executed simultaneously. A query dispatcher schedules queries based on their priorities and balances the load. Its other important role is to provide fault tolerance when one server becomes much slower than others or a tablet replica becomes un-reachable. （一方面可以用来处理优先级以及平衡负载，另外一方面可以用来监控哪些server运行比较慢来完成容错处理。文中提到的模型类似于threadpool机制，每个server上面启动多少个thread，每个thread相当于一个slot。和MR差别就是，因为这个thread可以执行任何工作，所以可以把thread看作slot，而在MR里面只能将process看做slot）
 </p>
 
 <p>
-During query ex-ecution, the query dispatcher computes a histogram of tablet pro-cessing times. If a tablet takes a disproportionately long time to process, it reschedules it on another server. Some tablets may need
-to be redispatched multiple times.（在执行过程中，dispatcher会绘制每个tablet处理时间的直方图。如果某个tablet处理时间过长的话，那么会被reschedule到其他server上面的slot，对于一个tablet可能会被reschedule多次）
+During query ex-ecution, the query dispatcher computes a histogram of tablet pro-cessing times. If a tablet takes a disproportionately long time to process, it reschedules it on another server. Some tablets may needto b e redispatched multiple times.（在执行过程中，dispatcher会绘制每个tablet处理时间的直方图。如果某个tablet处理时间过长的话，那么会被reschedule到其他server上面的slot，对于一个tablet可能会被reschedule多次）. 【不知道这个算不算是work-stealing机制】
 </p>
 
 <p>
@@ -240,7 +231,7 @@ The leaf servers read stripes of nested data in columnar represen-tation. The bl
 </p>
 
 <p>
-The query dispatcher honors a parameter that specifies the min-imum percentage of tablets that must be scanned before returning a result. As we demonstrate shortly, setting such parameter to a lower value (e.g., 98% instead of 100%) can often speed up execu-tion significantly, especially when using smaller replication factors.（允许指定某个tablet返回部分数据。通过将这个比例调低可以很大程度上加快执行速度，尤其是对于small-replication factor的tablet来说（这点也还算比较好理解，对于多副本来说如果某个副本读取速度慢的话，可以转向其他的副本读取，可以加快速度。如果只有一个副本的话，而这个副本disk有问题或者是本身的IO util就比较高，那么读取时间就会偏长）
+The query dispatcher honors a parameter that specifies the min-imum percentage of tablets that must be scanned before returning a result. As we demonstrate shortly, setting such parameter to a lower value (e.g., 98% instead of 100%) can often speed up execu-tion significantly, especially when using smaller replication factors.（允许指定某个tablet返回部分数据。通过将这个比例调低可以很大程度上加快执行速度，尤其是对于small-replication factor的tablet来说. small-replication factor的tablet很容易受到straggler影响，所以针对这种情况可以指定扫描到一定程度就停止）
 </p>
 </div>
 </div>
@@ -268,15 +259,15 @@ Dremel scans quadrillions of records per month. Figure 15 shows the query respon
 </li>
 <li>MR can benefit from columnar storage just like a DBMS.
 </li>
-<li>Record assembly and parsing are expensive. Software layers (beyond the query processing layer) need to be optimized to directly consume column-oriented data.（行式和列式存储之间的转换代价非常大）
+<li>Record assembly and parsing are expensive. Software layers (beyond the query processing layer) need to be optimized to directly consume column-oriented data.（行式和列式存储之间的转换代价非常大，所以针对列式存储的native操作十分必要）
 </li>
 <li>MR and query processing can be used in a complementary fashion; one layer’s output can feed another’s input.
 </li>
 <li>In a multi-user environment, a larger system can benefit from economies of scale while offering a qualitatively better user experience.
 </li>
-<li>If trading speed against accuracy is acceptable, a query can be terminated much earlier and yet see most of the data.（只有一小部分的查询时间非常长）
+<li>If trading speed against accuracy is acceptable, a query can be terminated much earlier and yet see most of the data.（只有一小部分数据的查询时间非常长，如果可以把这部分数据舍弃掉，那么延迟可以减少许多）
 </li>
-<li>The bulk of a web-scale dataset can be scanned fast. Getting to the last few percent within tight time bounds is hard.（并且这小部分的查询时间非常难以保证）
+<li>The bulk of a web-scale dataset can be scanned fast. Getting to the last few percent within tight time bounds is hard.（针对web-scale dataset是可以做到快速扫描的，但是小部分数据的查询时间非常难以保证）
 </li>
 <li>Dremel’s codebase is dense; it comprises less than 100K lines of C++, Java, and Python code.（10w行代码）
 </li>
