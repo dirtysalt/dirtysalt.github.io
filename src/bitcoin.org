@@ -32,6 +32,8 @@ file:images/bitcoin-ts.png
 
 file:images/bitcoin-latest-blocks.png file:images/bitcoin-trxs-in-block.png
 
+可以看到full-node上是可以检查到每个地址上的bitcoin的数量的，所以从某个地址转移到另外一个地址是会进行校验的。
+
 ** Proof-of-Work
 To implement a distributed timestamp server on a peer-to-peer basis, we will need to use a proof-of-work system similar to Adam Back's Hashcash, rather than newspaper or Usenet posts. The proof-of-work involves scanning for a value that when hashed, such as with SHA-256, the hash begins with a number of zero bits. The average work required is exponential in the number of zero bits required and can be verified by executing a single hash. # 但是在投递出去之前, block-hash必须以一定的0开头(通过在block里面增加一个字段来影响hash). 这个工作和0的数量成指数级关系, 但是却可以很容易被验证.
 
@@ -42,7 +44,7 @@ file:images/bitcoin-pow-chain.png
 
 file:images/bitcoin-block.png
 
-#note: 可以看到hash是以0开头并且有nonce字段.
+可以看到hash是以0开头并且有nonce字段.
 
 The proof-of-work also solves the problem of determining representation in majority decision making. If the majority were based on one-IP-address-one-vote, it could be subverted by anyone able to allocate many IPs. Proof-of-work is essentially one-CPU-one-vote. The majority decision is represented by the longest chain, which has the greatest proof-of-work effort invested in it. If a majority of CPU power is controlled by honest nodes, the honest chain will grow the fastest and outpace any competing chains. To modify a past block, an attacker would have to redo the proof-of-work of the block and all blocks after it and then catch up with and surpass the work of the honest nodes. We will show later that the probability of a slower attacker catching up diminishes exponentially as subsequent blocks are added. # POW也解决了如何定义大多数参与者的问题. 通过IP不是一个可靠办法. CPU也就是计算运力是一个可行办法. 后面会证明一个slower attacker试图超越可信计算集群的概率.
 
@@ -57,9 +59,9 @@ The steps to run the network are as follows:
 - Nodes accept the block only if all transactions in it are valid and not already spent. # 如果认为block里面所有trxs有效的话, 那么就会挂载到pow-chain之后.
 - Nodes express their acceptance of the block by working on creating the next block in the chain, using the hash of the accepted block as the previous hash. #之后block的加工就会都以这个pow-chain为准.
 
-Nodes always consider the longest chain to be the correct one and will keep working on extending it. If two nodes broadcast different versions of the next block simultaneously, some nodes may receive one or the other first. In that case, they work on the first one they received, but save the other branch in case it becomes longer. The tie will be broken when the next proof-of-work is found and one branch becomes longer; the nodes that were working on the other branch will then switch to the longer one. # 过去分支会保存起来等待有一天变长(可能会定期删除)
+Nodes always consider the longest chain to be the correct one and will keep working on extending it. If two nodes broadcast different versions of the next block simultaneously, some nodes may receive one or the other first. In that case, they work on the first one they received, but save the other branch in case it becomes longer. The tie will be broken when the next proof-of-work is found and one branch becomes longer; the nodes that were working on the other branch will then switch to the longer one. # 过去分支会保存起来等待有一天变长(可能会定期删除) 如果不巧地work在不是longest-chain上的话，那么工作就算白干了。
 
-New transaction broadcasts do not necessarily need to reach all nodes. As long as they reach many nodes, they will get into a block before long. Block broadcasts are also tolerant of dropped messages. If a node does not receive a block, it will request it when it receives the next block and realizes it missed one. # 可以发现是否缺失blocks.
+New transaction broadcasts do not necessarily need to reach all nodes. As long as they reach many nodes, they will get into a block before long. Block broadcasts are also tolerant of dropped messages. If a node does not receive a block, it will request it when it receives the next block and realizes it missed one. # 可以发现是否缺失blocks. 如果丢失blocks的话需要和full-node进行同步。
 
 ** Incentive
 By convention, the first transaction in a block is a special transaction that starts a new coin owned by the creator of the block. This adds an incentive for nodes to support the network, and provides a way to initially distribute coins into circulation, since there is no central authority to issue them. The steady addition of a constant of amount of new coins is analogous to gold miners expending resources to add gold to circulation. In our case, it is CPU time and electricity that is expended. # 按照惯例block里面第一个trx比较特殊, 这个trx是用来生产coin的. 一方面可以鼓励节点来支撑整个网络, 另外一个方面可以增发coin到流通中.
@@ -70,7 +72,7 @@ The incentive may help encourage nodes to stay honest. If a greedy attacker is a
 
 file:images/bitcoin-trxs-in-block.png
 
-#note: 注意第一个trx. 25btc是挖矿的奖励, 0.1341997btc是手续费
+注意第一个trx. 25btc是挖矿的奖励, 0.1341997btc是手续费
 
 ** Reclaiming Disk Space
 通过组织成为Merkel-Tree格式我们可以删除部分不需要的branches上的数据来节省空间. 兼顾灵活性和效率.
@@ -79,15 +81,17 @@ file:images/bitcoin-merkel-tree.png
 
 A block header with no transactions would be about 80 bytes. If we suppose blocks are generated every 10 minutes, 80 bytes * 6 * 24 * 365 = 4.2MB per year. With computer systems typically selling with 2GB of RAM as of 2008, and Moore's Law predicting current growth of 1.2GB per year, storage should not be a problem even if the block headers must be kept in memory.
 
+如果这样的话，是不是要对当前数据库状态做个snapshot？
+
 ** Simplified Payment Verification
 It is possible to verify payments without running a full network node. A user only needs to keep a copy of the block headers of the longest proof-of-work chain, which he can get by querying network nodes until he's convinced he has the longest chain, and obtain the Merkle branch linking the transaction to the block it's timestamped in. He can't check the transaction for himself, but by linking it to a place in the chain, he can see that a network node has accepted it, and blocks added after it further confirm the network has accepted it. # 我们不要运行full-network节点也可以查询交易是否完成, 只需要同步pow-chain并且查询trx是否在上面即可.
 
 file:images/bitcoin-spv.png
 
-As such, the verification is reliable as long as honest nodes control the network, but is more vulnerable if the network is overpowered by an attacker. While network nodes can verify transactions for themselves, the simplified method can be fooled by an attacker's fabricated transactions for as long as the attacker can continue to overpower the network. One strategy to protect against this would be to accept alerts from network nodes when they detect an invalid block, prompting the user's software to download the full block and alerted transactions to confirm the inconsistency. Businesses that receive frequent payments will probably still want to run their own nodes for more independent security and quicker verification. # 如果大部分节点都是可信的话, 那么验证是可靠的. 但是如果attacker控制网络大部分节点的话... 
+As such, the verification is reliable as long as honest nodes control the network, but is more vulnerable if the network is overpowered by an attacker. While network nodes can verify transactions for themselves, the simplified method can be fooled by an attacker's fabricated transactions for as long as the attacker can continue to overpower the network. One strategy to protect against this would be to accept alerts from network nodes when they detect an invalid block, prompting the user's software to download the full block and alerted transactions to confirm the inconsistency. Businesses that receive frequent payments will probably still want to run their own nodes for more independent security and quicker verification. # 如果大部分节点都是可信的话, 那么验证是可靠的. 但是如果attacker控制网络大部分节点的话...
 
 ** Combining and Splitting Value
-一个trx可以包含许多input和许多output. trx里面涉及的coin都会被打上编号(trx-id, #-of-output). 
+一个trx可以包含许多input和最多两个output. 这个功能主要就是用来铸币（mint coin）把大量的小钱汇集起来，不过这个操作容易被人窥探到隐私。
 
 file:images/bitcoin-trx-detail.png
 
@@ -96,7 +100,54 @@ file:images/bitcoin-trx-detail.png
 在网站 http://blockexplorer.com/ 上可以追踪这些coin的流动情况
 
 ** Privacy
-As an additional firewall, a new key pair should be used for each transaction to keep them from being linked to a common owner. Some linking is still unavoidable with multi-input transactions, which necessarily reveal that their inputs were owned by the same owner. The risk is that if the owner of a key is revealed, linking could reveal other transactions that belonged to the same owner. # 即使为每次trx都生成key-pair, multi-input trxs还是可以跟踪到owner情况.
+As an additional firewall, a new key pair should be used for each transaction to keep them from being linked to a common owner. Some linking is still unavoidable with multi-input transactions, which necessarily reveal that their inputs were owned by the same owner. The risk is that if the owner of a key is revealed, linking could reveal other transactions that belonged to the same owner. # 即使为每次trx都生成key-pair, multi-input/combining trxs还是可以跟踪到owner情况. 所以尽可能低不要把所有的bitoins放在一个key下。
 
 ** Calculations
+这个部分是计算一次支付后，如果attack有一定概率可以跑赢主干网络的话，在等待多少个blocks之后确认比较安全。
+
+第一个是如果q=0.1/0.3, 那么等待z个网络之后被反超的概率分布。q=0.1大约在3个blocks出来之后被反超的概率就是0.013，这个就非常小了。而q=0.3则需要等到大约15个blocks出来。
+
+#+BEGIN_EXAMPLE
+q=0.1
+ z=0 P=1.0000000
+ z=1 P=0.2045873
+ z=2 P=0.0509779
+ z=3 P=0.0131722
+ z=4 P=0.0034552
+ z=5 P=0.0009137
+ z=6 P=0.0002428
+ z=7 P=0.0000647
+ z=8 P=0.0000173
+ z=9 P=0.0000046
+ z=10 P=0.0000012
+
+q=0.3
+ z=0 P=1.0000000
+ z=5 P=0.1773523
+ z=10 P=0.0416605
+ z=15 P=0.0101008
+ z=20 P=0.0024804
+ z=25 P=0.0006132
+ z=30 P=0.0001522
+ z=35 P=0.0000379
+ z=40 P=0.0000095
+ z=45 P=0.0000024
+ z=50 P=0.0000006
+#+END_EXAMPLE
+
+换个角度，如果我们希望被反超的概率P<0.01的话，那么需要等待多少个blocks出来
+
+#+BEGIN_EXAMPLE
+P < 0.001
+ q=0.10 z=5
+ q=0.15 z=8
+ q=0.20 z=11
+ q=0.25 z=15
+ q=0.30 z=24
+ q=0.35 z=41
+ q=0.40 z=89
+ q=0.45 z=340
+#+END_EXAMPLE
+
+
 ** Conclusion
