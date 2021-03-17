@@ -22,6 +22,7 @@
 <li><a href="#sec-3-1">3.1. RDD Abstraction</a></li>
 <li><a href="#sec-3-2">3.2. Spark Programming Interface</a></li>
 <li><a href="#sec-3-3">3.3. Advantages of the RDD Model</a></li>
+<li><a href="#sec-3-4">3.4. Applications Not Suitable for RDDs</a></li>
 </ul>
 </li>
 <li><a href="#sec-4">4. Spark Programming Interface</a>
@@ -52,59 +53,67 @@
 <div id="outline-container-sec-1" class="outline-2">
 <h2 id="sec-1"><span class="section-number-2">1</span> Abstract</h2>
 <div class="outline-text-2" id="text-1">
-<ul class="org-ul">
-<li>We present Resilient Distributed Datasets (RDDs), a dis- tributed memory abstraction that lets programmers per- form in-memory computations on large clusters in a fault-tolerant manner.
+<p>
+主要针对两类计算：迭代计算和交互分析，而这些都是针对批处理设计出来的系统的软肋。
+</p>
+
+<ol class="org-ol">
+<li>We present Resilient Distributed Datasets (RDDs), a distributed memory abstraction that lets programmers perform in-memory computations on large clusters in a fault-tolerant manner.
 </li>
-<li>RDDs are motivated by two types of applications that current computing frameworks han- dle inefficiently: <b>iterative algorithms and interactive data mining tools.</b>
+<li>RDDs are motivated by two types of applications that current computing frameworks handle inefficiently: <b>iterative algorithms and interactive data mining tools.</b>
 </li>
-<li>In both cases, keeping data in memory can improve performance by an order of magnitude. To achieve fault tolerance efficiently, RDDs provide a restricted form of shared memory, based on coarse- grained transformations rather than fine-grained updates to shared state.
+<li>In both cases, keeping data in memory can improve performance by an order of magnitude. To achieve fault tolerance efficiently, RDDs provide a restricted form of shared memory, based on coarse-grained transformations rather than fine-grained updates to shared state. （关注于粗粒度的transformation，这点有点函数式编程和过程式编程的差异）
 </li>
-<li>However, we show that RDDs are expres- sive enough to capture a wide class of computations, in- cluding recent specialized programming models for iter- ative jobs, such as Pregel, and new applications that these models do not capture.
+<li>However, we show that RDDs are expressive enough to capture a wide class of computations, including recent specialized programming models for iterative jobs, such as Pregel, and new applications that these models do not capture.
 </li>
-</ul>
+</ol>
 </div>
 </div>
 
 <div id="outline-container-sec-2" class="outline-2">
 <h2 id="sec-2"><span class="section-number-2">2</span> Introduction</h2>
 <div class="outline-text-2" id="text-2">
-<ul class="org-ul">
-<li>Although current frameworks provide numerous ab- stractions for accessing a cluster’s computational re- sources, they lack abstractions for leveraging distributed memory. This makes them inefficient for an important class of emerging applications: those that reuse interme- diate results across multiple computations.（缺少有效使用分布式内存的抽象）
+<p>
+当前分布式计算几个比较大的问题：
+</p>
+<ol class="org-ol">
+<li>Although current frameworks provide numerous abstractions for accessing a cluster’s computational resources, they lack abstractions for leveraging distributed memory. This makes them inefficient for an important class of emerging applications: those that reuse intermediate results across multiple computations.（缺少有效使用分布式内存的抽象）
 </li>
-<li>Data reuse is common in many iterative machine learning and graph algorithms, including PageRank, K-means clustering, and logistic regression. Another compelling use case is interactive data mining, where a user runs multiple ad- hoc queries on the same subset of the data.
+<li>Data reuse is common in many iterative machine learning and graph algorithms, including PageRank, K-means clustering, and logistic regression. Another compelling use case is interactive data mining, where a user runs multiple adhoc queries on the same subset of the data.（没有办法重复地使用数据）
 </li>
-<li>Unfortu- nately, in most current frameworks, the only way to reuse data between computations (e.g., between two MapRe- duce jobs) is to write it to an external stable storage sys- tem, e.g., a distributed file system. This incurs substantial overheads due to data replication, disk I/O, and serializa-tion, which can dominate application execution times.（而现在对于数据的重用都是依赖于外部持久化系统比如分布式文件系统，data replication, disk I/O, 序列化都带来比较大的overhead)
+<li>Unfortunately, in most current frameworks, the only way to reuse data between computations (e.g., between two MapReduce jobs) is to write it to an external stable storage system, e.g., a distributed file system. This incurs substantial overheads due to data replication, disk I/O, and serializa-tion, which can dominate application execution times.（而现在对于数据的重用都是依赖于外部持久化系统比如分布式文件系统，data replication, disk I/O, 序列化都带来比较大的overhead)
 </li>
-<li>Recognizing this problem, researchers have developed specialized frameworks for some applications that re- quire data reuse. For example, Pregel is a system for iterative graph computations that keeps intermediate data in memory, while HaLoop offers an iterative MapRe- duce interface. However, these frameworks only support specific computation patterns (e.g., looping a series of MapReduce steps), and perform data sharing implicitly for these patterns. They do not provide abstractions for more general reuse, e.g., to let a user load several datasets into memory and run ad-hoc queries across them.
+<li>Recognizing this problem, researchers have developed specialized frameworks for some applications that require data reuse. For example, Pregel is a system for iterative graph computations that keeps intermediate data in memory, while HaLoop offers an iterative MapReduce interface. However, these frameworks only support specific computation patterns (e.g., looping a series of MapReduce steps), and perform data sharing implicitly for these patterns. They do not provide abstractions for more general reuse, e.g., to let a user load several datasets into memory and run ad-hoc queries across them.（针对特定场景设计系统，而没有通用的方案）
 </li>
-</ul>
+</ol>
 
-<hr  />
 
-<ul class="org-ul">
-<li>In this paper, we propose a new abstraction called re- silient distributed datasets (RDDs) that enables efficient data reuse in a broad range of applications. RDDs are
-<ul class="org-ul">
+<p>
+In this paper, we propose a new abstraction called resilient distributed datasets (RDDs) that enables efficient data reuse in a broad range of applications. RDDs are
+</p>
+<ol class="org-ol">
 <li>fault-tolerant,
 </li>
-<li>parallel data structures that let users ex- plicitly persist intermediate results in memory,
+<li>parallel data structures that let users explicitly persist intermediate results in memory,
 </li>
 <li>control their partitioning to optimize data placement,
 </li>
 <li>and ma-nipulate them using a rich set of operators.
 </li>
-</ul>
+</ol>
+
+
+<p>
+The main challenge in designing RDDs is defining a programming interface that can provide fault tolerance efficiently.
+</p>
+<ol class="org-ol">
+<li>Existing abstractions for in-memory storage on clusters, such as distributed shared memory, keyvalue stores, databases, and Piccolo, offer an interface based on fine-grained updates to mutable state (e.g., cells in a table). With this interface, the only ways to provide fault tolerance are to replicate the data across machines or to log updates across machines. Both approaches are expensive for data-intensive workloads, as they require copying large amounts of data over the cluster network, whose bandwidth is far lower than that of RAM, and they incur substantial storage overhead.（允许细粒度地来更新状态，所以应对failover的实现办法只能够是replication)
 </li>
-<li>The main challenge in designing RDDs is defining a programming interface that can provide fault tolerance efficiently.
-<ul class="org-ul">
-<li>Existing abstractions for in-memory storage on clusters, such as distributed shared memory, key- value stores, databases, and Piccolo, offer an interface based on fine-grained updates to mutable state (e.g., cells in a table). With this interface, the only ways to provide fault tolerance are to replicate the data across machines or to log updates across machines. Both ap- proaches are expensive for data-intensive workloads, as they require copying large amounts of data over the clus- ter network, whose bandwidth is far lower than that of RAM, and they incur substantial storage overhead.（允许细粒度地来更新状态，所以应对failover的实现办法只能够是replication)
+<li>In contrast to these systems, RDDs provide an interface based on coarse-grained transformations (e.g., map, filter and join) that apply the same operation to many data items. This allows them to efficiently provide fault tolerance by logging the transformations used to build a dataset (its lineage) rather than the actual data. If a partition of an RDD is lost, the RDD has enough information about how it was derived from other RDDs to recompute just that partition. Thus, lost data can be recovered, often quite quickly, without requiring costly replication.(而RDD只允许粗粒度地更新状态，所以可以通过重算来处理failover)
 </li>
-<li>In contrast to these systems, RDDs provide an inter- face based on coarse-grained transformations (e.g., map, filter and join) that apply the same operation to many data items. This allows them to efficiently provide fault tolerance by logging the transformations used to build a dataset (its lineage) rather than the actual data. If a parti- tion of an RDD is lost, the RDD has enough information about how it was derived from other RDDs to recompute just that partition. Thus, lost data can be recovered, often quite quickly, without requiring costly replication.(而RDD只允许粗粒度地更新状态，所以可以通过重算来处理failover)
+<li>Although an interface based on coarse-grained transformations may at first seem limited, RDDs are a good fit for many parallel applications, because these applications naturally apply the same operation to multiple data items. Indeed, we show that RDDs can efficiently express many cluster programming models that have so far been proposed as separate systems.
 </li>
-</ul>
-</li>
-<li>Although an interface based on coarse-grained trans- formations may at first seem limited, RDDs are a good fit for many parallel applications, because these appli- cations naturally apply the same operation to multiple data items. Indeed, we show that RDDs can efficiently express many cluster programming models that have so far been proposed as separate systems.
-</li>
-</ul>
+</ol>
 </div>
 </div>
 
@@ -114,14 +123,14 @@
 </div><div id="outline-container-sec-3-1" class="outline-3">
 <h3 id="sec-3-1"><span class="section-number-3">3.1</span> RDD Abstraction</h3>
 <div class="outline-text-3" id="text-3-1">
-<ul class="org-ul">
-<li>Formally, an RDD is a read-only, partitioned collection of records. RDDs can only be created through determin- istic operations on either (1) data in stable storage or (2) other RDDs. We call these operations transformations to differentiate them from other operations on RDDs. Ex- amples of transformations include map, filter, and join.
+<ol class="org-ol">
+<li>Formally, an RDD is a read-only, partitioned collection of records. RDDs can only be created through deterministic operations on either (1) data in stable storage or (2) other RDDs. We call these operations transformations to differentiate them from other operations on RDDs. Examples of transformations include map, filter, and join. （输入可以是持久介质以及其他RDD，包括一些变化操作）
 </li>
-<li>RDDs do not need to be materialized at all times. In- stead, an RDD has enough information about how it was derived from other datasets (its lineage) to compute its partitions from data in stable storage. This is a power- ful property: in essence, a program cannot reference an RDD that it cannot reconstruct after a failure.
+<li>RDDs do not need to be materialized at all times. Instead, an RDD has enough information about how it was derived from other datasets (its lineage) to compute its partitions from data in stable storage. This is a powerful property: in essence, a program cannot reference an RDD that it cannot reconstruct after a failure.
 </li>
-<li>Finally, users can control two other aspects of RDDs: persistence and partitioning. Users can indicate which RDDs they will reuse and choose a storage strategy for them (e.g., in-memory storage). They can also ask that an RDD’s elements be partitioned across machines based on a key in each record. This is useful for placement op- timizations, such as ensuring that two datasets that will be joined together are hash-partitioned in the same way.(用户可以控制持久化以及分片策略）
+<li>Finally, users can control two other aspects of RDDs: persistence and partitioning. Users can indicate which RDDs they will reuse and choose a storage strategy for them (e.g., in-memory storage). They can also ask that an RDD’s elements be partitioned across machines based on a key in each record. This is useful for placement optimizations, such as ensuring that two datasets that will be joined together are hash-partitioned in the same way.(用户可以控制持久化以及分片策略，改变分片策略对做join会很有帮助，可以做到co-partitioned join)
 </li>
-</ul>
+</ol>
 </div>
 </div>
 
@@ -131,14 +140,14 @@
 <div id="outline-container-sec-3-3" class="outline-3">
 <h3 id="sec-3-3"><span class="section-number-3">3.3</span> Advantages of the RDD Model</h3>
 <div class="outline-text-3" id="text-3-3">
-<ul class="org-ul">
-<li>The main difference between RDDs and DSM is that RDDs can only be created (“written”) through coarse- grained transformations, while DSM allows reads and writes to each memory location. This restricts RDDs to applications that perform bulk writes, but allows for more efficient fault tolerance. In particular, RDDs do not need to incur the overhead of checkpointing, as they can be recovered using lineage. Furthermore, only the lost partitions of an RDD need to be recomputed upon fail- ure, and they can be recomputed in parallel on different nodes, without having to roll back the whole program.
+<ol class="org-ol">
+<li>The main difference between RDDs and DSM is that RDDs can only be created (“written”) through coarsegrained transformations, while DSM allows reads and writes to each memory location. This restricts RDDs to applications that perform bulk writes, but allows for more efficient fault tolerance. In particular, RDDs do not need to incur the overhead of checkpointing, as they can be recovered using lineage. Furthermore, only the lost partitions of an RDD need to be recomputed upon failure, and they can be recomputed in parallel on different nodes, without having to roll back the whole program.（不用去做checkpoint就可以做到fault-tolerant）
 </li>
-<li>A second benefit of RDDs is that their immutable na- ture lets a system mitigate slow nodes (stragglers) by run- ning backup copies of slow tasks as in MapReduce. Backup tasks would be hard to implement with DSM, as the two copies of a task would access the same memory locations and interfere with each other’s updates. （可以很容易地复制计算单元，来处理出现straggler的情况）
+<li>A second benefit of RDDs is that their immutable nature lets a system mitigate slow nodes (stragglers) by running backup copies of slow tasks as in MapReduce. Backup tasks would be hard to implement with DSM, as the two copies of a task would access the same memory locations and interfere with each other’s updates. （可以很容易地复制计算单元，来处理出现straggler的情况）
 </li>
-<li>Finally, RDDs provide two other benefits over DSM. First, in bulk operations on RDDs, a runtime can sched-ule tasks based on data locality to improve performance. Second, RDDs degrade gracefully when there is not enough memory to store them, as long as they are only being used in scan-based operations. Partitions that do not fit in RAM can be stored on disk and will provide similar performance to current data-parallel systems.
+<li>Finally, RDDs provide two other benefits over DSM. First, in bulk operations on RDDs, a runtime can schedule tasks based on data locality to improve performance. Second, RDDs degrade gracefully when there is not enough memory to store them, as long as they are only being used in scan-based operations. Partitions that do not fit in RAM can be stored on disk and will provide similar performance to current data-parallel systems.
 </li>
-</ul>
+</ol>
 
 
 <div class="figure">
@@ -147,7 +156,22 @@
 </div>
 </div>
 </div>
+
+<div id="outline-container-sec-3-4" class="outline-3">
+<h3 id="sec-3-4"><span class="section-number-3">3.4</span> Applications Not Suitable for RDDs</h3>
+<div class="outline-text-3" id="text-3-4">
+<p>
+因为RDD是粗粒度的fault-tolerant，所以就不太适合需要精细控制fault-tolerant的场景，比如OLTP以及存储系统等。
+</p>
+
+<p>
+As discussed in the Introduction, RDDs are best suited for batch applications that apply the same operation to all elements of a dataset. In these cases, RDDs can efficiently remember each transformation as one step in a lineage graph and can recover lost partitions without having to log large amounts of data. RDDs would be less suitable for applications that make asynchronous finegrained updates to shared state, such as a storage system for a web application or an incremental web crawler. For these applications, it is more efficient to use systems that perform traditional update logging and data checkpointing, such as databases, RAMCloud <sup><a id="fnr.1" name="fnr.1" class="footref" href="#fn.1">1</a></sup>, Percolator <sup><a id="fnr.2" name="fnr.2" class="footref" href="#fn.2">2</a></sup> and Piccolo <sup><a id="fnr.3" name="fnr.3" class="footref" href="#fn.3">3</a></sup>. Our goal is to provide an efficient programming model for batch analytics and leave these asynchronous applications to specialized systems.
+</p>
 </div>
+</div>
+</div>
+
+
 <div id="outline-container-sec-4" class="outline-2">
 <h2 id="sec-4"><span class="section-number-2">4</span> Spark Programming Interface</h2>
 <div class="outline-text-2" id="text-4">
@@ -182,12 +206,24 @@ Table 2 lists the main RDD transformations and actions available in Spark. We gi
 <h2 id="sec-5"><span class="section-number-2">5</span> Representing RDDs</h2>
 <div class="outline-text-2" id="text-5">
 <p>
-One of the challenges in providing RDDs as an abstrac- tion is choosing a representation for them that can track lineage across a wide range of transformations. Ideally, a system implementing RDDs should provide as rich a set of transformation operators as possible (e.g., the ones in Table 2), and let users compose them in arbitrary ways. We propose a simple graph-based representation for RDDs that facilitates these goals. We have used this representation in Spark to support a wide range of trans- formations without adding special logic to the scheduler for each one, which greatly simplified the system design.
+One of the challenges in providing RDDs as an abstraction is choosing a representation for them that can track lineage across a wide range of transformations. Ideally, a system implementing RDDs should provide as rich a set of transformation operators as possible (e.g., the ones in Table 2), and let users compose them in arbitrary ways. We propose a simple graph-based representation for RDDs that facilitates these goals. We have used this representation in Spark to support a wide range of transformations without adding special logic to the scheduler for each one, which greatly simplified the system design.
 </p>
 
 <p>
-In a nutshell, we propose representing each RDD through a common interface that exposes five pieces of information: a set of partitions, which are atomic pieces of the dataset; a set of dependencies on parent RDDs; a function for computing the dataset based on its par- ents; and metadata about its partitioning scheme and data placement.
+In a nutshell, we propose representing each RDD through a common interface that exposes five pieces of information:
 </p>
+<ul class="org-ul">
+<li>a set of partitions, which are atomic pieces of the dataset;
+</li>
+<li>a set of dependencies on parent RDDs;
+</li>
+<li>a function for computing the dataset based on its parents;
+</li>
+<li>and metadata about its partitioning scheme
+</li>
+<li>and data placement.
+</li>
+</ul>
 
 
 <div class="figure">
@@ -199,17 +235,25 @@ In a nutshell, we propose representing each RDD through a common interface that 
 For example, an RDD representing an HDFS file has a partition for each block of the file and knows which machines each block is on. Meanwhile, the result of a map on this RDD has the same partitions, but applies the map function to the parent’s data when computing its elements.
 </p>
 
+<p>
+我的理解是，RDD里面每个partition都要能够知道自己如何可以被计算出来。
+</p>
+
 <hr  />
 
 <p>
-The most interesting question in designing this inter- face is how to represent dependencies between RDDs. We found it both sufficient and useful to classify depen- dencies into two types:
+操作按照是否需要shuffle分为了两类，并且按照这两类划分成为不同的stages.
 </p>
-<ul class="org-ul">
-<li><b>narrow dependencies(ND), where each partition of the parent RDD is used by at most one parti- tion of the child RDD, （一个partition只会被child RDD中的一个partition所使用）</b>
+
+<p>
+The most interesting question in designing this interface is how to represent dependencies between RDDs. We found it both sufficient and useful to classify dependencies into two types:
+</p>
+<ol class="org-ol">
+<li><b>narrow dependencies(ND), where each partition of the parent RDD is used by at most one partition of the child RDD, （一个partition只会被child RDD中的一个partition所使用）</b>
 </li>
-<li><b>wide dependencies(WD), where multi- ple child partitions may depend on it.（一个partition会被child RDD中的多个partition所使用）</b>
+<li><b>wide dependencies(WD), where multiple child partitions may depend on it.（一个partition会被child RDD中的多个partition所使用）</b>
 </li>
-</ul>
+</ol>
 <p>
 For example, map leads to a narrow dependency, while join leads to to wide dependencies (unless the parents are hash-partitioned). Figure 4 shows other examples.
 </p>
@@ -223,28 +267,28 @@ For example, map leads to a narrow dependency, while join leads to to wide depen
 <p>
 This distinction is useful for two reasons.
 </p>
-<ul class="org-ul">
-<li>First, narrow dependencies allow for pipelined execution on one clus- ter node, which can compute all the parent partitions. For example, one can apply a map followed by a filter on an element-by-element basis. In contrast, wide dependen- cies require data from all parent partitions to be available and to be shuffled across the nodes using a MapReduce- like operation. (ND的结果RDD，每个partition在单个节点上面使用pipeline方式完成，各个partition的计算可以完全parallel. 而WD的结果RDD则需要parent RDD全部计算完成才能够计算）
+<ol class="org-ol">
+<li>First, narrow dependencies allow for pipelined execution on one cluster node, which can compute all the parent partitions. For example, one can apply a map followed by a filter on an element-by-element basis. In contrast, wide dependencies require data from all parent partitions to be available and to be shuffled across the nodes using a MapReducelike operation. (ND的结果RDD，每个partition在单个节点上面使用pipeline方式完成，各个partition的计算可以完全parallel. 而WD的结果RDD则需要parent RDD全部计算完成才能够计算）
 </li>
 <li>Second, recovery after a node failure is more efficient with a narrow dependency, as only the lost parent partitions need to be recomputed, and they can be recomputed in parallel on different nodes. In contrast, in a lineage graph with wide dependencies, a single failed node might cause the loss of some partition from all the ancestors of an RDD, requiring a complete re-execution.（ND比较容易recover只需要重新计算对应的parent RDD partition即可，而WD的recovery相对困难是因为需要从所有的parent RDD partition获取数据）
 </li>
-</ul>
+</ol>
 
 <hr  />
 
 <p>
-This common interface for RDDs made it possible to implement most transformations in Spark in less than 20 lines of code. Indeed, even new Spark users have imple- mented new transformations (e.g., sampling and various types of joins) without knowing the details of the sched- uler. We sketch some RDD implementations below.
+This common interface for RDDs made it possible to implement most transformations in Spark in less than 20 lines of code. Indeed, even new Spark users have implemented new transformations (e.g., sampling and various types of joins) without knowing the details of the scheduler. We sketch some RDD implementations below.
 </p>
 <ul class="org-ul">
 <li>HDFS files: The input RDDs in our samples have been files in HDFS. For these RDDs, partitions returns one partition for each block of the file (with the block’s offset stored in each Partition object), preferredLocations gives the nodes the block is on, and iterator reads the block.
 </li>
 <li>map: Calling map on any RDD returns a MappedRDD object. This object has the same partitions and preferred locations as its parent, but applies the function passed to map to the parent’s records in its iterator method.
 </li>
-<li>union: Calling union on two RDDs returns an RDD whose partitions are the union of those of the parents. Each child partition is computed through a narrow de- pendency on the corresponding parent.
+<li>union: Calling union on two RDDs returns an RDD whose partitions are the union of those of the parents. Each child partition is computed through a narrow dependency on the corresponding parent.
 </li>
 <li>sample: Sampling is similar to mapping, except that the RDD stores a random number generator seed for each partition to deterministically sample parent records.
 </li>
-<li>join: Joining two RDDs may lead to either two nar- row dependencies (if they are both hash/range partitioned with the same partitioner), two wide dependencies, or a mix (if one parent has a partitioner and one does not). In either case, the output RDD has a partitioner (either one inherited from the parents or a default hash partitioner).
+<li>join: Joining two RDDs may lead to either two narrow dependencies (if they are both hash/range partitioned with the same partitioner), two wide dependencies, or a mix (if one parent has a partitioner and one does not). In either case, the output RDD has a partitioner (either one inherited from the parents or a default hash partitioner).
 </li>
 </ul>
 
@@ -273,7 +317,16 @@ scala&gt; rdd.partitions.size
 res42: Int = 10
 
 scala&gt; rdd.partitions
-res43: Array[org.apache.spark.Partition] = Array(org.apache.spark.rdd.HadoopPartition@99c, org.apache.spark.rdd.HadoopPartition@99d, org.apache.spark.rdd.HadoopPartition@99e, org.apache.spark.rdd.HadoopPartition@99f, org.apache.spark.rdd.HadoopPartition@9a0, org.apache.spark.rdd.HadoopPartition@9a1, org.apache.spark.rdd.HadoopPartition@9a2, org.apache.spark.rdd.HadoopPartition@9a3, org.apache.spark.rdd.HadoopPartition@9a4, org.apache.spark.rdd.HadoopPartition@9a5)
+res43: Array[org.apache.spark.Partition] = Array(org.apache.spark.rdd.HadoopPartition@99c,
+ org.apache.spark.rdd.HadoopPartition@99d,
+ org.apache.spark.rdd.HadoopPartition@99e,
+ org.apache.spark.rdd.HadoopPartition@99f,
+ org.apache.spark.rdd.HadoopPartition@9a0,
+ org.apache.spark.rdd.HadoopPartition@9a1,
+ org.apache.spark.rdd.HadoopPartition@9a2,
+ org.apache.spark.rdd.HadoopPartition@9a3,
+ org.apache.spark.rdd.HadoopPartition@9a4,
+ org.apache.spark.rdd.HadoopPartition@9a5)
 
 scala&gt; rdd.partitions(0).index
 res44: Int = 0
@@ -305,7 +358,7 @@ res48: Option[org.apache.spark.Partitioner] = None
 <h2 id="sec-6"><span class="section-number-2">6</span> Implementation</h2>
 <div class="outline-text-2" id="text-6">
 <p>
-We have implemented Spark in about 14,000 lines of Scala. The system runs over the Mesos cluster man- ager, allowing it to share resources with Hadoop, MPI and other applications. Each Spark program runs as a separate Mesos application, with its own driver (mas- ter) and workers, and resource sharing between these ap- plications is handled by Mesos. Spark can read data from any Hadoop input source (e.g., HDFS or HBase) using Hadoop’s existing input plugin APIs, and runs on an unmodified version of Scala.
+We have implemented Spark in about 14,000 lines of Scala. The system runs over the Mesos cluster manager, allowing it to share resources with Hadoop, MPI and other applications. Each Spark program runs as a separate Mesos application, with its own driver (master) and workers, and resource sharing between these applications is handled by Mesos. Spark can read data from any Hadoop input source (e.g., HDFS or HBase) using Hadoop’s existing input plugin APIs, and runs on an unmodified version of Scala.
 </p>
 </div>
 
@@ -313,7 +366,7 @@ We have implemented Spark in about 14,000 lines of Scala. The system runs over t
 <h3 id="sec-6-1"><span class="section-number-3">6.1</span> Job Scheduling</h3>
 <div class="outline-text-3" id="text-6-1">
 <p>
-Overall, our scheduler is similar to Dryad’s, but it additionally takes into account which partitions of per-sistent RDDs are available in memory. Whenever a user runs an action (e.g., count or save) on an RDD, the sched- uler examines that RDD’s lineage graph to build a DAG of stages to execute, as illustrated in Figure 5. <b>Each stage contains as many pipelined transformations with narrow dependencies as possible. The boundaries of the stages are the shuffle operations required for wide dependen- cies, or any already computed partitions that can short- circuit the computation of a parent RDD.</b> The scheduler then launches tasks to compute missing partitions from each stage until it has computed the target RDD.（wild dependencies是每个stage的边界，stage内部都是narrow dependencies)
+Overall, our scheduler is similar to Dryad’s, but it additionally takes into account which partitions of per-sistent RDDs are available in memory. Whenever a user runs an action (e.g., count or save) on an RDD, the scheduler examines that RDD’s lineage graph to build a DAG of stages to execute, as illustrated in Figure 5. <b>Each stage contains as many pipelined transformations with narrow dependencies as possible. The boundaries of the stages are the shuffle operations required for wide dependencies, or any already computed partitions that can shortcircuit the computation of a parent RDD.</b> The scheduler then launches tasks to compute missing partitions from each stage until it has computed the target RDD.（wild dependencies是每个stage的边界，stage内部都是narrow dependencies)
 </p>
 
 
@@ -335,12 +388,13 @@ For wide dependencies (i.e., shuffle dependencies), we currently materialize int
 <div id="outline-container-sec-6-2" class="outline-3">
 <h3 id="sec-6-2"><span class="section-number-3">6.2</span> Interpreter Integration</h3>
 <div class="outline-text-3" id="text-6-2">
-<ul class="org-ul">
-<li>Scala includes an interactive shell similar to those of Ruby and Python. Given the low latencies attained with in-memory data, we wanted to let users run Spark inter- actively from the interpreter to query big datasets.
-</li>
-<li>The Scala interpreter normally operates by compiling a class for each line typed by the user, loading it into the JVM, and invoking a function on it. This class in- cludes a singleton object that contains the variables or functions on that line and runs the line’s code in an ini- tialize method. For example, if the user types var x = 5 followed by println(x), the interpreter defines a class called Line1 containing x and causes the second line to compile to println(Line1.getInstance().x).（这是scala REPL实现原理？）
-</li>
-</ul>
+<p>
+Scala includes an interactive shell similar to those of Ruby and Python. Given the low latencies attained with in-memory data, we wanted to let users run Spark interactively from the interpreter to query big datasets.
+</p>
+
+<p>
+The Scala interpreter normally operates by compiling a class for each line typed by the user, loading it into the JVM, and invoking a function on it. This class includes a singleton object that contains the variables or functions on that line and runs the line’s code in an initialize method. For example, if the user types var x = 5 followed by println(x), the interpreter defines a class called Line1 containing x and causes the second line to compile to println(Line1.getInstance().x).（这是scala REPL实现原理？）
+</p>
 
 <p>
 We made two changes to the interpreter in Spark:
@@ -348,9 +402,10 @@ We made two changes to the interpreter in Spark:
 <ol class="org-ol">
 <li>Class shipping: To let the worker nodes fetch the bytecode for the classes created on each line, we made the interpreter serve these classes over HTTP.（通过HTTP来实现class的分发）
 </li>
-<li>Modified code generation: Normally, the singleton object created for each line of code is accessed through a static method on its corresponding class. This means that when we serialize a closure refer- encing a variable defined on a previous line, such as Line1.x in the example above, Java will not trace through the object graph to ship the Line1 instance wrapping around x. Therefore, the worker nodes will not receive x. We modified the code generation logic to reference the instance of each line object directly.
+<li>Modified code generation: Normally, the singleton object created for each line of code is accessed through a static method on its corresponding class. This means that when we serialize a closure referencing a variable defined on a previous line, such as Line1.x in the example above, Java will not trace through the object graph to ship the Line1 instance wrapping around x. Therefore, the worker nodes will not receive x. We modified the code generation logic to reference the instance of each line object directly.
 </li>
 </ol>
+
 <p>
 Figure 6 shows how the interpreter translates a set of lines typed by the user to Java objects after our changes. （修改生成代码确保closure所引用的所有变量都会被包含）
 </p>
@@ -369,21 +424,21 @@ Figure 6 shows how the interpreter translates a set of lines typed by the user t
 <p>
 Spark provides three options for storage of persistent RDDs:
 </p>
-<ul class="org-ul">
+<ol class="org-ol">
 <li><b>in-memory storage as deserialized Java objects</b>, The first option provides the fastest performance, because the Java VM can access each RDD element natively.
 </li>
 <li><b>in-memory storage as serialized data</b>, The second option lets users choose a more memory-efficient representation than Java object graphs when space is limited, at the cost of lower performance.
 </li>
 <li>and <b>on-disk stor- age</b>. The third option is useful for RDDs that are too large to keep in RAM but costly to recompute on each use.
 </li>
-</ul>
+</ol>
 
 <p>
 To manage the limited memory available, we use an LRU eviction policy at the level of RDDs. When a new RDD partition is computed but there is not enough space to store it, we evict a partition from the least recently ac- cessed RDD, unless this is the same RDD as the one with the new partition. In that case, we keep the old partition in memory to prevent cycling partitions from the same RDD in and out. This is important because most oper- ations will run tasks over an entire RDD, so it is quite likely that the partition already in memory will be needed in the future. We found this default policy to work well in all our applications so far, but we also give users further control via a “persistence priority” for each RDD.(内存管理使用LRU淘汰策略。注意一个RDD partition不会触发相同RDD的其他partition被evicted，这点应该是比较实际的需求）
 </p>
 
 <p>
-Finally, each instance of Spark on a cluster currently has its own separate memory space. In future work, we plan to investigate sharing RDDs across instances of Spark through a unified memory manager. # <a href="https://github.com/amplab/tachyon">Tachyon分布式内存文件系统?</a>
+Finally, each instance of Spark on a cluster currently has its own separate memory space. In future work, we plan to investigate sharing RDDs across instances of Spark through a unified memory manager.
 </p>
 </div>
 </div>
@@ -391,16 +446,21 @@ Finally, each instance of Spark on a cluster currently has its own separate memo
 <div id="outline-container-sec-6-4" class="outline-3">
 <h3 id="sec-6-4"><span class="section-number-3">6.4</span> Support for Checkpointing</h3>
 <div class="outline-text-3" id="text-6-4">
-<ul class="org-ul">
-<li>Although lineage can always be used to recover RDDs after a failure, such recovery may be time-consuming for RDDs with long lineage chains. Thus, it can be helpful to checkpoint some RDDs to stable storage.
-</li>
-<li>In general, checkpointing is useful for RDDs with long lineage graphs containing wide dependencies. In contrast, for RDDs with narrow dependencies on data in stable storage, checkpointing may never be worthwhile. If a node fails, lost partitions from these RDDs can be recomputed in parallel on other nodes, at a fraction of the cost of replicating the whole RDD.（只是针对wide dependencies做checkpoint)
-</li>
-<li>Spark currently provides an API for checkpointing (a REPLICATE flag to persist), but leaves the decision of which data to checkpoint to the user. However, we are also investigating how to perform automatic checkpoint- ing. Because our scheduler knows the size of each dataset as well as the time it took to first compute it, it should be able to select an optimal set of RDDs to checkpoint to minimize system recovery time.(也提供API允许用户来做checkpoint)
-</li>
-<li>Finally, note that the read-only nature of RDDs makes them simpler to checkpoint than general shared mem- ory. Because consistency is not a concern, RDDs can be written out in the background without requiring program pauses or distributed snapshot schemes.(因为RDD是完全只读的，所以RDD的checkpoint实现上比DSM的要简单不少，不需要像DSM一样需要做比较复杂的协调和控制时序）
-</li>
-</ul>
+<p>
+Although lineage can always be used to recover RDDs after a failure, such recovery may be time-consuming for RDDs with long lineage chains. Thus, it can be helpful to checkpoint some RDDs to stable storage.
+</p>
+
+<p>
+In general, checkpointing is useful for RDDs with long lineage graphs containing wide dependencies. In contrast, for RDDs with narrow dependencies on data in stable storage, checkpointing may never be worthwhile. If a node fails, lost partitions from these RDDs can be recomputed in parallel on other nodes, at a fraction of the cost of replicating the whole RDD.（只是针对wide dependencies做checkpoint)
+</p>
+
+<p>
+Spark currently provides an API for checkpointing (a REPLICATE flag to persist), but leaves the decision of which data to checkpoint to the user. However, we are also investigating how to perform automatic checkpointing. Because our scheduler knows the size of each dataset as well as the time it took to first compute it, it should be able to select an optimal set of RDDs to checkpoint to minimize system recovery time.(也提供API允许用户来做checkpoint. 也可以由系统进行启发式管理，比如存储相比重新计算成本更低的话，那么就值得做ckpt)
+</p>
+
+<p>
+Finally, note that the read-only nature of RDDs makes them simpler to checkpoint than general shared memory. Because consistency is not a concern, RDDs can be written out in the background without requiring program pauses or distributed snapshot schemes.(因为RDD是完全只读的，所以RDD的checkpoint实现上比DSM的要简单不少，不需要像DSM一样需要做比较复杂的协调和控制时序）
+</p>
 </div>
 </div>
 </div>
@@ -417,6 +477,18 @@ Finally, each instance of Spark on a cluster currently has its own separate memo
 <div id="outline-container-sec-10" class="outline-2">
 <h2 id="sec-10"><span class="section-number-2">10</span> Conclusion</h2>
 </div>
+<div id="footnotes">
+<h2 class="footnotes">Footnotes: </h2>
+<div id="text-footnotes">
+
+<div class="footdef"><sup><a id="fn.1" name="fn.1" class="footnum" href="#fnr.1">1</a></sup> <p>DEFINITION NOT FOUND.</p></div>
+
+<div class="footdef"><sup><a id="fn.2" name="fn.2" class="footnum" href="#fnr.2">2</a></sup> <p>DEFINITION NOT FOUND.</p></div>
+
+<div class="footdef"><sup><a id="fn.3" name="fn.3" class="footnum" href="#fnr.3">3</a></sup> <p>DEFINITION NOT FOUND.</p></div>
+
+
 </div>
+</div></div>
 </body>
 </html>
