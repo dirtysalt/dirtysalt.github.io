@@ -3,10 +3,11 @@
 "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
 <html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
 <head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Probabilistic Data Structures for Web Analytics and Data Mining</title>
-<meta  http-equiv="Content-Type" content="text/html;charset=utf-8" />
-<meta  name="generator" content="Org-mode" />
-<meta  name="author" content="dirtysalt" />
+<meta name="generator" content="Org mode" />
+<meta name="author" content="dirtysalt" />
 <link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
 <body>
 <div id="content">
@@ -15,15 +16,15 @@
 <h2>Table of Contents</h2>
 <div id="text-table-of-contents">
 <ul>
-<li><a href="#sec-1">1. Introduction</a></li>
-<li><a href="#sec-2">2. Cardinality Estimation: Linear Counting</a></li>
-<li><a href="#sec-3">3. Cardinality Estimation: Loglog Counting</a></li>
-<li><a href="#sec-4">4. Frequency Estimation: Count-Min Sketch</a></li>
-<li><a href="#sec-5">5. Frequency Estimation: Count-Mean-Min Sketch</a></li>
-<li><a href="#sec-6">6. Heavy Hitters: Count-Min Sketch</a></li>
-<li><a href="#sec-7">7. Heavy Hitters: Stream-Summary</a></li>
-<li><a href="#sec-8">8. Range Query: Array of Count-Min Sketches</a></li>
-<li><a href="#sec-9">9. Membership Query: Bloom Filter</a></li>
+<li><a href="#org2d81342">1. Introduction</a></li>
+<li><a href="#org3d36cf8">2. Cardinality Estimation: Linear Counting</a></li>
+<li><a href="#orgd488f0d">3. Cardinality Estimation: Loglog Counting</a></li>
+<li><a href="#org88bc845">4. Frequency Estimation: Count-Min Sketch</a></li>
+<li><a href="#orgb5bc86e">5. Frequency Estimation: Count-Mean-Min Sketch</a></li>
+<li><a href="#orga7e2bb1">6. Heavy Hitters: Count-Min Sketch</a></li>
+<li><a href="#org3a93273">7. Heavy Hitters: Stream-Summary</a></li>
+<li><a href="#org5aa7c50">8. Range Query: Array of Count-Min Sketches</a></li>
+<li><a href="#orgf6a4dbd">9. Membership Query: Bloom Filter</a></li>
 </ul>
 </div>
 </div>
@@ -31,8 +32,8 @@
 <a href="http://highlyscalable.wordpress.com/2012/05/01/probabilistic-structures-web-analytics-data-mining/">http://highlyscalable.wordpress.com/2012/05/01/probabilistic-structures-web-analytics-data-mining/</a>
 </p>
 
-<div id="outline-container-sec-1" class="outline-2">
-<h2 id="sec-1"><span class="section-number-2">1</span> Introduction</h2>
+<div id="outline-container-org2d81342" class="outline-2">
+<h2 id="org2d81342"><span class="section-number-2">1</span> Introduction</h2>
 <div class="outline-text-2" id="text-1">
 <p>
 Let us start with a simple example that illustrates capabilities of probabilistic data structures:
@@ -48,16 +49,11 @@ Let us start with a simple example that illustrates capabilities of probabilisti
 原始数据是10m个32位整数，但是去重之后个数只有1m个，占用40MB存储空间。在这个原始数据上做下面这些查询：
 </p>
 <ul class="org-ul">
-<li>How many distinct elements are in the data set (i.e. what is the cardinality of the data set)? （去重元素个数）
-</li>
-<li>What are the most frequent elements (the terms “heavy hitters” and “top-k elements” are also used)?（频率TopK 查询）
-</li>
-<li>What are the frequencies of the most frequent elements?（具体频率查询）
-</li>
-<li>How many elements belong to the specified range (range query, in SQL it looks like  SELECT count(v) WHERE v &gt;= c1 AND v &lt; c2)?（符合范围元素个数查询）
-</li>
-<li>Does the data set contain a particular element (membership query)?（存在性查询）
-</li>
+<li>How many distinct elements are in the data set (i.e. what is the cardinality of the data set)? （去重元素个数）</li>
+<li>What are the most frequent elements (the terms “heavy hitters” and “top-k elements” are also used)?（频率TopK 查询）</li>
+<li>What are the frequencies of the most frequent elements?（具体频率查询）</li>
+<li>How many elements belong to the specified range (range query, in SQL it looks like  SELECT count(v) WHERE v &gt;= c1 AND v &lt; c2)?（符合范围元素个数查询）</li>
+<li>Does the data set contain a particular element (membership query)?（存在性查询）</li>
 </ul>
 
 
@@ -65,18 +61,12 @@ Let us start with a simple example that illustrates capabilities of probabilisti
 The picture above shows (in scale) how much memory different representations of the data set will consume and which queries they support:（可以看到，这些概率性数据结构，通常假设数据集合是skewed的。这样对于高频和低频都保持在比较低的错误率上）
 </p>
 <ul class="org-ul">
-<li>A straightforward approach for cardinality computation and membership query processing is to maintain a sorted list of IDs or a hash table. This approach requires at least 4MB because we expect up to 10^6 values, the actual size of the hash table will be even larger.
-</li>
-<li>A straightforward approach for frequency counting and range query processing is to store a map like (value -&gt; counter) for each element. It requires a table of 7MB that stores values and counters (24-bit counters are sufficient because we have not more than 10^7 occurrences of each element).
-</li>
-<li>With probabilistic data structures, a membership query can be processed with 4% error rate (false positive answers) using only 0.6MB of memory if data is stored in the Bloom filter.（Bloom filter来做存在性查询）
-</li>
-<li>Frequencies of 100 most frequent elements can be estimated with 4% precision using Count-Min Sketch structure that uses about 48KB (12k integer counters, based on the experimental result), assuming that data is skewed in accordance with Zipfian distribution that models well natural texts, many types of web events and network traffic. A group of several such sketches can be used to process range query.（Count-Min Sketch方法对于skewed dataset非常有效）
-</li>
-<li>100 most frequent items can be detected with 4% error (96 of 100 are determined correctly, based on the experimental results) using Stream-Summary structure, also assuming Zipfian distribution of probabilities of the items.（Stream-Summary同样假设skewed dataset）
-</li>
-<li>Cardinality of this data set can be estimated with 4% precision using either Linear Counter or Loglog Counter. The former one uses about 125KB of memory and its size is linear function of the cardinality, the later one requires only 2KB and its size is almost constant for any input. It is possible to combine several linear counters to estimate cardinality of the corresponding union of sets.（HyperLogLog来做去重次数统计）
-</li>
+<li>A straightforward approach for cardinality computation and membership query processing is to maintain a sorted list of IDs or a hash table. This approach requires at least 4MB because we expect up to 10^6 values, the actual size of the hash table will be even larger.</li>
+<li>A straightforward approach for frequency counting and range query processing is to store a map like (value -&gt; counter) for each element. It requires a table of 7MB that stores values and counters (24-bit counters are sufficient because we have not more than 10^7 occurrences of each element).</li>
+<li>With probabilistic data structures, a membership query can be processed with 4% error rate (false positive answers) using only 0.6MB of memory if data is stored in the Bloom filter.（Bloom filter来做存在性查询）</li>
+<li>Frequencies of 100 most frequent elements can be estimated with 4% precision using Count-Min Sketch structure that uses about 48KB (12k integer counters, based on the experimental result), assuming that data is skewed in accordance with Zipfian distribution that models well natural texts, many types of web events and network traffic. A group of several such sketches can be used to process range query.（Count-Min Sketch方法对于skewed dataset非常有效）</li>
+<li>100 most frequent items can be detected with 4% error (96 of 100 are determined correctly, based on the experimental results) using Stream-Summary structure, also assuming Zipfian distribution of probabilities of the items.（Stream-Summary同样假设skewed dataset）</li>
+<li>Cardinality of this data set can be estimated with 4% precision using either Linear Counter or Loglog Counter. The former one uses about 125KB of memory and its size is linear function of the cardinality, the later one requires only 2KB and its size is almost constant for any input. It is possible to combine several linear counters to estimate cardinality of the corresponding union of sets.（HyperLogLog来做去重次数统计）</li>
 </ul>
 
 <p>
@@ -86,8 +76,8 @@ For some structures like Loglog Counter or Bloom filter, there exist simple and 
 </div>
 </div>
 
-<div id="outline-container-sec-2" class="outline-2">
-<h2 id="sec-2"><span class="section-number-2">2</span> Cardinality Estimation: Linear Counting</h2>
+<div id="outline-container-org3d36cf8" class="outline-2">
+<h2 id="org3d36cf8"><span class="section-number-2">2</span> Cardinality Estimation: Linear Counting</h2>
 <div class="outline-text-2" id="text-2">
 <p>
 这个算法比较简单。首先维护一个全0的bitset, 之后对每个value做hash，映射到bitset对应的bit并且置1。处理完所有的value之后统计这个bitset有多少个bit置1，这个数目就是cardinality.
@@ -97,12 +87,9 @@ For some structures like Loglog Counter or Bloom filter, there exist simple and 
 Let’s say that the ratio of a number of distinct items in the data set to m is a load factor. It is intuitively clear that: (load factor = number of distinct items / m)
 </p>
 <ul class="org-ul">
-<li>If the load factor is much less than 1, a number of collisions in the mask will be low and weight of the mask (a number of 1’s) will be a good estimation of the cardinality.
-</li>
-<li>If the load factor is higher than 1, but not very high, many different values will be mapped to the same bits. Hence the weight of the mask is not a good estimation of the cardinality. Nevertheless, it is possible that there exist a function that allows one to estimate the cardinality on the basis of weight (real cardinality will always be greater than weight).
-</li>
-<li>If the load factor is very high (for example, 100), it is very probable that all bits will be set to 1 and it will be impossible to obtain a reasonable estimation of the cardinality on the basis of the mask.
-</li>
+<li>If the load factor is much less than 1, a number of collisions in the mask will be low and weight of the mask (a number of 1’s) will be a good estimation of the cardinality.</li>
+<li>If the load factor is higher than 1, but not very high, many different values will be mapped to the same bits. Hence the weight of the mask is not a good estimation of the cardinality. Nevertheless, it is possible that there exist a function that allows one to estimate the cardinality on the basis of weight (real cardinality will always be greater than weight).</li>
+<li>If the load factor is very high (for example, 100), it is very probable that all bits will be set to 1 and it will be impossible to obtain a reasonable estimation of the cardinality on the basis of the mask.</li>
 </ul>
 
 <p>
@@ -121,11 +108,11 @@ The rule of thumb is that load factor of 10 can be used for large data sets even
 </div>
 </div>
 
-<div id="outline-container-sec-3" class="outline-2">
-<h2 id="sec-3"><span class="section-number-2">3</span> Cardinality Estimation: Loglog Counting</h2>
+<div id="outline-container-orgd488f0d" class="outline-2">
+<h2 id="orgd488f0d"><span class="section-number-2">3</span> Cardinality Estimation: Loglog Counting</h2>
 <div class="outline-text-2" id="text-3">
 <p>
-这个算法 <a href="general-algorithm.html">之前(HyperLogLog这节)</a> 分析过
+这个算法 <a href="general-algorithm.html#org9368cd8">之前(HyperLogLog这节)</a> 分析过
 </p>
 
 <p>
@@ -144,8 +131,8 @@ These formulas are very impressive. One can see that a number of buckets is rela
 </div>
 </div>
 
-<div id="outline-container-sec-4" class="outline-2">
-<h2 id="sec-4"><span class="section-number-2">4</span> Frequency Estimation: Count-Min Sketch</h2>
+<div id="outline-container-org88bc845" class="outline-2">
+<h2 id="org88bc845"><span class="section-number-2">4</span> Frequency Estimation: Count-Min Sketch</h2>
 <div class="outline-text-2" id="text-4">
 <p>
 The basic idea of Count-Min Sketch is quite simple and somehow similar to Linear Counting. Count-Min sketch is simply a two-dimensional array (d x w) of integer counters. When a value arrives, it is mapped to one position at each of d rows using d different and preferably independent hash functions. Counters on each position are incremented. This process is shown in the figure below:
@@ -166,7 +153,6 @@ It is clear that if sketch is large in comparison with the cardinality of the da
 </p>
 
 <div class="org-src-container">
-
 <pre class="src src-C++"><span class="org-keyword">class</span> <span class="org-type">CountMinSketch</span> {
     <span class="org-type">long</span> <span class="org-variable-name">estimators</span>[][] = <span class="org-keyword">new</span> <span class="org-type">long</span>[d][w]    <span class="org-comment-delimiter">// </span><span class="org-comment">d and w are design parameters</span>
     <span class="org-type">long</span> a[] = <span class="org-keyword">new</span> <span class="org-type">long</span>[d]
@@ -183,7 +169,7 @@ It is clear that if sketch is large in comparison with the cardinality of the da
             estimators[i][ hash(value, i) ]++
     }
     <span class="org-type">long</span> <span class="org-function-name">estimateFrequency</span>(value) {
-        <span class="org-type">long</span> <span class="org-variable-name">minimum</span> = MAX_VALUE
+        <span class="org-type">long</span> minimum = MAX_VALUE
         <span class="org-keyword">for</span>(i = 0; i &lt; d; i++)
             minimum = min(
                 minimum,
@@ -208,7 +194,7 @@ Dependency between the sketch size and accuracy is shown in the table below. It 
 </p>
 </div>
 
-<hr  />
+<hr />
 <p>
 count-min sketch这种算法只有在dataset本身比较skewed的情况下才能够获得比较好的结果，也就是说如果d x w比较小的话，那么对于skewed dataset是比较合适的。
 </p>
@@ -239,8 +225,8 @@ One can see that result is more accurate, at least for the most frequent items. 
 </div>
 </div>
 
-<div id="outline-container-sec-5" class="outline-2">
-<h2 id="sec-5"><span class="section-number-2">5</span> Frequency Estimation: Count-Mean-Min Sketch</h2>
+<div id="outline-container-orgb5bc86e" class="outline-2">
+<h2 id="orgb5bc86e"><span class="section-number-2">5</span> Frequency Estimation: Count-Mean-Min Sketch</h2>
 <div class="outline-text-2" id="text-5">
 <p>
 对于low or moderately skewed dataset来说，hash冲突比较严重所以会导致结果偏差比较大。我们可以通过去除相互影响的噪音来解决这个问题。
@@ -251,7 +237,6 @@ As an alternative, more careful correction can be done to compensate the noise c
 </p>
 
 <div class="org-src-container">
-
 <pre class="src src-C++"><span class="org-keyword">class</span> <span class="org-type">CountMeanMinSketch</span> {
     <span class="org-comment-delimiter">// </span><span class="org-comment">initialization and addition procedures as in CountMinSketch</span>
     <span class="org-comment-delimiter">// </span><span class="org-comment">n is total number of added elements</span>
@@ -280,35 +265,28 @@ This enhancement can significantly improve accuracy of the Count-Min structure. 
 </div>
 </div>
 
-<div id="outline-container-sec-6" class="outline-2">
-<h2 id="sec-6"><span class="section-number-2">6</span> Heavy Hitters: Count-Min Sketch</h2>
+<div id="outline-container-orga7e2bb1" class="outline-2">
+<h2 id="orga7e2bb1"><span class="section-number-2">6</span> Heavy Hitters: Count-Min Sketch</h2>
 <div class="outline-text-2" id="text-6">
 <p>
 Count-Min sketches are applicable to the following problem: Find all elements in the data set with the frequencies greater than k percent of the total number of elements in the data set.（获取频率大于k%的元素总数，使用heap作为辅助） The algorithm is straightforward:（
 </p>
 <ul class="org-ul">
-<li>Maintain a standard Count-Min sketch during the scan of the data set and put all elements into it.
-</li>
-<li>Maintain a heap of top elements, initially empty, and a counter N of the total number of already process elements.
-</li>
+<li>Maintain a standard Count-Min sketch during the scan of the data set and put all elements into it.</li>
+<li>Maintain a heap of top elements, initially empty, and a counter N of the total number of already process elements.</li>
 <li>For each element in the data set:
 <ul class="org-ul">
-<li>Put the element to the sketch
-</li>
-<li>Estimate the frequency of the element using the sketch. If frequency is greater than a threshold (k*N), then put the element to the heap. Heap should be periodically or continuously cleaned up to remove elements that do not meet the threshold anymore.
-</li>
-</ul>
-</li>
+<li>Put the element to the sketch</li>
+<li>Estimate the frequency of the element using the sketch. If frequency is greater than a threshold (k*N), then put the element to the heap. Heap should be periodically or continuously cleaned up to remove elements that do not meet the threshold anymore.</li>
+</ul></li>
 </ul>
 
 <p>
 这个过程应该是：1. 维护最小堆 2. 每次到达新元素的时候
 </p>
 <ul class="org-ul">
-<li>估计这个元素出现的次数，如果 counter &gt;= k * N的话，那么放入最小堆
-</li>
-<li>调整最小堆：不断地pop元素，直到top元素 counter &gt;= k * N.
-</li>
+<li>估计这个元素出现的次数，如果 counter &gt;= k * N的话，那么放入最小堆</li>
+<li>调整最小堆：不断地pop元素，直到top元素 counter &gt;= k * N.</li>
 </ul>
 <p>
 如果这里的top-k里面的k不是percentage，而是具体数值的话，那么这个算法就更加简单。
@@ -320,8 +298,8 @@ In general, the top-k problem makes sense only for skewed data, so usage of Coun
 </div>
 </div>
 
-<div id="outline-container-sec-7" class="outline-2">
-<h2 id="sec-7"><span class="section-number-2">7</span> Heavy Hitters: Stream-Summary</h2>
+<div id="outline-container-org3a93273" class="outline-2">
+<h2 id="org3a93273"><span class="section-number-2">7</span> Heavy Hitters: Stream-Summary</h2>
 <div class="outline-text-2" id="text-7">
 <p>
 这个算法还是比较好理解的。数据结构里面保留一定数目的槽位，添加value的时候增加其frequency counter. 如果达到槽位上限的话，那么就删除frequency counter最低的元素。
@@ -331,30 +309,22 @@ In general, the top-k problem makes sense only for skewed data, so usage of Coun
 不过实现起来好像细节还蛮多的。我考虑实现办法可能是个双向链表，节点里面有两个字段：
 </p>
 <ol class="org-ol">
-<li>values 所有落在这个节点的元素
-</li>
-<li>count 这些元素出现的次数
-</li>
+<li>values 所有落在这个节点的元素</li>
+<li>count 这些元素出现的次数</li>
 </ol>
 
 <p>
 假设新到达一个元素x的话
 </p>
 <ul class="org-ul">
-<li>遍历整个链表，判断x是否在某个节点上
-</li>
+<li>遍历整个链表，判断x是否在某个节点上</li>
 <li>如果在这个节点上
 <ul class="org-ul">
-<li>将x移到下一个节点，如果count匹配的话
-</li>
-<li>否则就新开辟一个节点
-</li>
-</ul>
-</li>
-<li>如果不在任何节点上，就删除头部节点创建新节点
-</li>
-<li>保证长度上限是k
-</li>
+<li>将x移到下一个节点，如果count匹配的话</li>
+<li>否则就新开辟一个节点</li>
+</ul></li>
+<li>如果不在任何节点上，就删除头部节点创建新节点</li>
+<li>保证长度上限是k</li>
 </ul>
 
 <p>
@@ -367,8 +337,8 @@ The estimation procedure for most frequent elements and corresponding frequencie
 </div>
 </div>
 
-<div id="outline-container-sec-8" class="outline-2">
-<h2 id="sec-8"><span class="section-number-2">8</span> Range Query: Array of Count-Min Sketches</h2>
+<div id="outline-container-org5aa7c50" class="outline-2">
+<h2 id="org5aa7c50"><span class="section-number-2">8</span> Range Query: Array of Count-Min Sketches</h2>
 <div class="outline-text-2" id="text-8">
 <p>
 In theory, one can process a range query (something like SELECT count(v) WHERE v &gt;= c1 AND v &lt; c2) using a Count-Min sketch  enumerating all points within a range and summing estimates for corresponding frequencies. However, this approach is impractical because the number of points within a range can be very high and accuracy also tends to be inacceptable because of cumulative error of the sum.（对于范围查询可以枚举[c1,c2)所有的value，然后使用count-min sketch来得到count. 但是这个算法并不实际因为这个range可能非常大并且误差也很大，因为全部存放在一个sketch上面）
@@ -386,10 +356,8 @@ Nevertheless, it is possible to overcome these problems using multiple Count-Min
 每个sketch维护的是一个前缀出现的次数。前缀越长，cardinality越大，collision也就越大，error rare也就越大。我们在查询范围的时候根据需要选择合适的前缀。比如我们希望统计[127, 172)的元素出现次数，首先列举区间边界的二进制表示
 </p>
 <ul class="org-ul">
-<li>127  = 0b01111111
-</li>
-<li>172  = 0b10101100
-</li>
+<li>127  = 0b01111111</li>
+<li>172  = 0b10101100</li>
 </ul>
 <p>
 如果我们选取的前缀是 0b0111 的话，那么在这个sketch上面查询这么几个数值然后叠加：0b0111 0b1000 0b1001 0b1010. 当然这种方式会存在很大的偏差，如果想减少偏差的话可以取更长的前缀。另外可以取动态前缀比如 0b0111 0b10000 0b10001 0b10010 0b10011 0b101000 0b101011. 如果前缀是32的话，那么就相当于退化到一开始的方式了。
@@ -411,8 +379,8 @@ Any range query can be reduced to a number of queries to the sketches of differe
 </div>
 </div>
 
-<div id="outline-container-sec-9" class="outline-2">
-<h2 id="sec-9"><span class="section-number-2">9</span> Membership Query: Bloom Filter</h2>
+<div id="outline-container-orgf6a4dbd" class="outline-2">
+<h2 id="orgf6a4dbd"><span class="section-number-2">9</span> Membership Query: Bloom Filter</h2>
 <div class="outline-text-2" id="text-9">
 <p>
 Bloom Filter is probably the most famous and widely used probabilistic data structure. There are multiple descriptions of the Bloom filter in the web, I provide a short overview here just for sake of completeness. Bloom filter is similar to Linear Counting, but it is designed to maintain an identity of each item rather than statistics. Similarly to Linear Counter, the Bloom filter maintains a bitset, but each value is mapped not to one, but to some fixed number of bits by using several independent hash functions. If the filter has a relatively large size in comparison with the number of distinct elements, each element has a relatively unique signature and it is possible to check a particular value – is it already registered in the bit set or not. If all the bits of the corresponding signature are ones then the answer is yes (with a certain probability, of course).

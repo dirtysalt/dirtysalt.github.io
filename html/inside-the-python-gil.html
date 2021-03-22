@@ -3,10 +3,11 @@
 "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
 <html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
 <head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Inside The Python GIL</title>
-<meta  http-equiv="Content-Type" content="text/html;charset=utf-8" />
-<meta  name="generator" content="Org-mode" />
-<meta  name="author" content="dirtysalt" />
+<meta name="generator" content="Org mode" />
+<meta name="author" content="dirtysalt" />
 <link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
 <body>
 <div id="content">
@@ -21,20 +22,14 @@
 <ul class="org-ul">
 <li>Python threads are real system threads
 <ul class="org-ul">
-<li>POSIX threads (pthreads)
-</li>
-<li>Windows threads
-</li>
-</ul>
-</li>
+<li>POSIX threads (pthreads)</li>
+<li>Windows threads</li>
+</ul></li>
 <li>Fully managed by the host operating system
 <ul class="org-ul">
-<li>All scheduling/thread switching
-</li>
-</ul>
-</li>
-<li>Represent threaded execution of the Python interpreter process (written in C)
-</li>
+<li>All scheduling/thread switching</li>
+</ul></li>
+<li>Represent threaded execution of the Python interpreter process (written in C)</li>
 </ul>
 
 <p>
@@ -43,20 +38,13 @@
 <ul class="org-ul">
 <li>Each thread has its own interpreter specific data structure (PyThreadState)
 <ul class="org-ul">
-<li>Current stack frame (for Python code)
-</li>
-<li>Current recursion depth
-</li>
-<li>Thread ID
-</li>
-<li>Some per-thread exception information
-</li>
-<li>Optional tracing/profiling/debugging hooks
-</li>
-</ul>
-</li>
-<li>It's a small C structure (&lt;100 bytes)
-</li>
+<li>Current stack frame (for Python code)</li>
+<li>Current recursion depth</li>
+<li>Thread ID</li>
+<li>Some per-thread exception information</li>
+<li>Optional tracing/profiling/debugging hooks</li>
+</ul></li>
+<li>It's a small C structure (&lt;100 bytes)</li>
 </ul>
 
 <p>
@@ -67,29 +55,22 @@ Python解释器会保存当前执行线程的全局变量，为了避免这个�
 &gt;&gt;&gt; Thread Execution
 </p>
 <ul class="org-ul">
-<li>The interpreter has a global variable that simply points to the ThreadState structure of the currently running thread
-</li>
+<li>The interpreter has a global variable that simply points to the ThreadState structure of the currently running thread</li>
 </ul>
 <div class="org-src-container">
-
 <pre class="src src-C++"><span class="org-comment-delimiter">/* </span><span class="org-comment">Python/pystate.c */</span>
 ...
 PyThreadState *_PyThreadState_Current = <span class="org-constant">NULL</span>;
 </pre>
 </div>
 <ul class="org-ul">
-<li>Operations in the interpreter implicitly depend this variable to know what thread they're currently working with
-</li>
+<li>Operations in the interpreter implicitly depend this variable to know what thread they're currently working with</li>
 <li>Here's what happens on thread creation
 <ul class="org-ul">
-<li>Python creates a small data structure containing some interpreter state
-</li>
-<li>A new thread (pthread) is launched
-</li>
-<li>The thread calls PyEval_CallObject
-</li>
-</ul>
-</li>
+<li>Python creates a small data structure containing some interpreter state</li>
+<li>A new thread (pthread) is launched</li>
+<li>The thread calls PyEval_CallObject</li>
+</ul></li>
 </ul>
 
 <p>
@@ -100,17 +81,13 @@ Python解释器没有自己的线程调度器，依赖于操作系统的线程�
 &gt;&gt;&gt; Thread Scheduling
 </p>
 <ul class="org-ul">
-<li>Python does not have a thread scheduler
-</li>
-<li>There is no notion of thread priorities, preemption, round-robin scheduling, etc.
-</li>
-<li>All thread scheduling is left to the host operating system (e.g., Linux,Windows, etc.)
-</li>
-<li>This is partly why signals get so weird (the interpreter has no control over scheduling so it just attempts to thread switch as fast as possible with the hope that main will run)
-</li>
+<li>Python does not have a thread scheduler</li>
+<li>There is no notion of thread priorities, preemption, round-robin scheduling, etc.</li>
+<li>All thread scheduling is left to the host operating system (e.g., Linux,Windows, etc.)</li>
+<li>This is partly why signals get so weird (the interpreter has no control over scheduling so it just attempts to thread switch as fast as possible with the hope that main will run)</li>
 </ul>
 
-<hr  />
+<hr />
 <p>
 GIL Behavior
 </p>
@@ -132,7 +109,7 @@ tick并不是按照指令和时间来计算的，更像是根据high-level op来
 解释器寄希望于OS在check期间可以调度到其他工作线程，不过这样会带来很多问题。
 </p>
 
-<hr  />
+<hr />
 <p>
 Signal Handling
 </p>
@@ -153,37 +130,27 @@ Signal Handling
 Frozen Signals
 </p>
 <ul class="org-ul">
-<li>The reason Ctrl-C doesn't work with threaded programs is that the main thread is often blocked on an uninterruptible thread-join or lock
-</li>
-<li>Since it's blocked, it never gets scheduled to run any kind of signal handler for it
-</li>
-<li>And as an extra little bonus, the interpreter is left in a state where it tries to thread-switch after every tick (so not only can you not interrupt your program, it runs slow as hell!)
-</li>
+<li>The reason Ctrl-C doesn't work with threaded programs is that the main thread is often blocked on an uninterruptible thread-join or lock</li>
+<li>Since it's blocked, it never gets scheduled to run any kind of signal handler for it</li>
+<li>And as an extra little bonus, the interpreter is left in a state where it tries to thread-switch after every tick (so not only can you not interrupt your program, it runs slow as hell!)</li>
 </ul>
 
-<hr  />
+<hr />
 <p>
 GIL Implementation
 </p>
 <ul class="org-ul">
-<li>The GIL is not a simple mutex lock
-</li>
+<li>The GIL is not a simple mutex lock</li>
 <li>The implementation (Unix) is either&#x2026;
 <ul class="org-ul">
-<li>A POSIX unnamed semaphore
-</li>
-<li>Or a pthreads condition variable
-</li>
-</ul>
-</li>
+<li>A POSIX unnamed semaphore</li>
+<li>Or a pthreads condition variable</li>
+</ul></li>
 <li>All interpreter locking is based on signaling
 <ul class="org-ul">
-<li>To acquire the GIL, check if it's free. If not, go to sleep and wait for a signal
-</li>
-<li>To release the GIL, free it and signal
-</li>
-</ul>
-</li>
+<li>To acquire the GIL, check if it's free. If not, go to sleep and wait for a signal</li>
+<li>To release the GIL, free it and signal</li>
+</ul></li>
 </ul>
 
 

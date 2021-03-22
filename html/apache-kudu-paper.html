@@ -3,10 +3,11 @@
 "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
 <html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
 <head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Kudu: Storage for Fast Analytics on Fast Data</title>
-<meta  http-equiv="Content-Type" content="text/html;charset=utf-8" />
-<meta  name="generator" content="Org-mode" />
-<meta  name="author" content="dirtysalt" />
+<meta name="generator" content="Org mode" />
+<meta name="author" content="dirtysalt" />
 <link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
 <body>
 <div id="content">
@@ -19,16 +20,14 @@
 在用户接口上，类似RDBMS的Table. Schema定义包括columns以及types, 以及primary key.  现在只有primary key作为索引，没有二级索引。Write Operation操作必须带上PK, 保证single row上的原子性。Read Operationw有几个限制：1. 必须带上projections 就是不能 select * 2.  条件语句只支持 column 和 constant value 比较，或者是PK range查询. 此外Kudu还提供其他一些辅助API比如查询data locality的（data range在哪些servers上面）。
 </p>
 
-<hr  />
+<hr />
 
 <p>
 Kudu的分布式有点类似BigTable，master + tablet servers结构，大约有下面节点不同：
 </p>
 <ol class="org-ol">
-<li>Tablet Server之间是通过Raft选举出leader的，而不是master来指派的。(500ms heartbeat, 1500ms election timeout)
-</li>
-<li>Partition方式由用户进行制定：hash parition or range partition（需要用户指定范围）
-</li>
+<li>Tablet Server之间是通过Raft选举出leader的，而不是master来指派的。(500ms heartbeat, 1500ms election timeout)</li>
+<li>Partition方式由用户进行制定：hash parition or range partition（需要用户指定范围）</li>
 </ol>
 <p>
 table按照partition方式拆分成为了多个tablets. 每个tablet会被多个tablet server管理，之间通过raft达成共识。建议是每个tablet大小在10GB左右（这样做full snapshot transfer时间也不会太长），然后每个tablet server管理10-100个tablet（大小上大约就是1TB的样子，可能再多的话会影响到共识的效率）。
@@ -38,16 +37,14 @@ table按照partition方式拆分成为了多个tablets. 每个tablet会被多个
 Master大致有这么几个用途：
 </p>
 <ol class="org-ol">
-<li>管理table/tablet信息，比如table的schema, partition信息等
-</li>
-<li>管理tablets的raft configuration信息，这样client可以直接去和tablet server通信
-</li>
+<li>管理table/tablet信息，比如table的schema, partition信息等</li>
+<li>管理tablets的raft configuration信息，这样client可以直接去和tablet server通信</li>
 </ol>
 <p>
 如果tablet server的重新进行raft选举的话，会生成新的commit index. client去和tablet server通信的时候，如果commit index不一致估计就会被拒绝了。tablet server会定期将这个commit index同步给master. 这样client发现自己cache的信息不对的时候，可以重新和master进行纠正。这里的client和GFS client非常类似，会缓存tablet以及tablet servers的信息（GFS client会缓存chunk master信息）
 </p>
 
-<hr  />
+<hr />
 
 <p>
 每个tablet是由多个RowSets组成的，一个MemRowSets以及多个DiskRowSets. 对于一个没有删除的PK来说只能存在于一个RowSet中，但是多个RowSet之间的PK interval[min PK, max PK]是可能存在重合的。这个设计非常类似leveldb结构，MemRS会定期刷新到DiskRS，然胡DiskRS之间也会定期做Compaction.
@@ -65,12 +62,9 @@ MemRS是一个基于行的内存Btree结构使用乐观锁解决并发问题，�
 Base的文件格式大致是这样的：
 </p>
 <ol class="org-ol">
-<li>每个column下面的values会被存储在一起组成个block. block里面是多个pages, 然后有个embedded btree结构记录每个page的初始row offset.
-</li>
-<li>primary key index column对应的values也会被存在一起，方便根据PK查找到row offset.
-</li>
-<li>一个Base还会存在MinPK和MaxPK，以及一个4KB的bloom filter，用于快速判断某个PK是否存在这个RowSet里面
-</li>
+<li>每个column下面的values会被存储在一起组成个block. block里面是多个pages, 然后有个embedded btree结构记录每个page的初始row offset.</li>
+<li>primary key index column对应的values也会被存在一起，方便根据PK查找到row offset.</li>
+<li>一个Base还会存在MinPK和MaxPK，以及一个4KB的bloom filter，用于快速判断某个PK是否存在这个RowSet里面</li>
 </ol>
 
 <p>

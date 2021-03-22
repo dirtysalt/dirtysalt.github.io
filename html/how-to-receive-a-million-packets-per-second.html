@@ -3,10 +3,11 @@
 "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
 <html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
 <head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>How to receive a million packets per second</title>
-<meta  http-equiv="Content-Type" content="text/html;charset=utf-8" />
-<meta  name="generator" content="Org-mode" />
-<meta  name="author" content="dirtysalt" />
+<meta name="generator" content="Org mode" />
+<meta name="author" content="dirtysalt" />
 <link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
 <body>
 <div id="content">
@@ -23,23 +24,18 @@
 On Linux, how hard is it to write a program that receives 1 million UDP packets per second? （问题是要做到每秒接收1M UDP packets有多困难）
 </p>
 <ul class="org-ul">
-<li>Measuring packets per second (pps) is much more interesting than measuring bytes per second (Bps). You can achieve high Bps by better pipelining and sending longer packets. Improving pps is much harder.（使用pps而非Bps来做衡量指标，因为可以很容易通过增加packet size来提高Bps）
-</li>
-<li>Since we're interested in pps, our experiments will use short UDP messages. To be precise: 32 bytes of UDP payload. That means 74 bytes on the Ethernet layer.（所以我们也固定packet size = 32）
-</li>
-<li>For the experiments we will use two physical servers: "receiver" and "sender".（两台不同物理机器）
-</li>
-<li>They both have two six core 2GHz Xeon processors. With hyperthreading (HT) enabled that counts to 24 processors on each box. The boxes have a multi-queue 10G network card by Solarflare, with 11 receive queues configured. More on that later.（NetworkIO称为bottleneck之前，瓶颈肯定是在CPU上。2 * 6cores * 2HT = 24 processors. 多队列万兆网卡，配置11个接收队列）
-</li>
-<li>The source code of the test programs is available here: <a href="https://github.com/majek/dump/blob/master/how-to-receive-a-million-packets/udpsender.c">udpsender</a>, <a href="https://github.com/majek/dump/blob/master/how-to-receive-a-million-packets/udpreceiver1.c">udpreceiver</a>.
-</li>
+<li>Measuring packets per second (pps) is much more interesting than measuring bytes per second (Bps). You can achieve high Bps by better pipelining and sending longer packets. Improving pps is much harder.（使用pps而非Bps来做衡量指标，因为可以很容易通过增加packet size来提高Bps）</li>
+<li>Since we're interested in pps, our experiments will use short UDP messages. To be precise: 32 bytes of UDP payload. That means 74 bytes on the Ethernet layer.（所以我们也固定packet size = 32）</li>
+<li>For the experiments we will use two physical servers: "receiver" and "sender".（两台不同物理机器）</li>
+<li>They both have two six core 2GHz Xeon processors. With hyperthreading (HT) enabled that counts to 24 processors on each box. The boxes have a multi-queue 10G network card by Solarflare, with 11 receive queues configured. More on that later.（NetworkIO称为bottleneck之前，瓶颈肯定是在CPU上。2 * 6cores * 2HT = 24 processors. 多队列万兆网卡，配置11个接收队列）</li>
+<li>The source code of the test programs is available here: <a href="https://github.com/majek/dump/blob/master/how-to-receive-a-million-packets/udpsender.c">udpsender</a>, <a href="https://github.com/majek/dump/blob/master/how-to-receive-a-million-packets/udpreceiver1.c">udpreceiver</a>.</li>
 </ul>
 
 <p>
 在实验之前，先配置好iptables，以及在receiver机器上分配了20个IP。packets使用batch方式发送, batch size = 1024.
 </p>
 
-<hr  />
+<hr />
 <p>
 <b>The naive approach</b>
 </p>
@@ -74,7 +70,7 @@ receiver$ taskset -c 1 ./udpreceiver1 0.0.0.0:4321
   0.360M pps  10.971MiB /  92.033Mb
 </pre>
 
-<hr  />
+<hr />
 <p>
 <b>Send more packets</b>
 </p>
@@ -124,7 +120,7 @@ pps中有451k没有被kernel处理而丢弃，355.2k都是在rx-4接收队列上
 所以我们做的是让packet能够尽可能地均匀地落在每个rx queue上，这样就不会让某个processor成为bottleneck.
 </p>
 
-<hr  />
+<hr />
 <p>
 <b>Crash course to multi-queue NICs</b>
 </p>
@@ -147,7 +143,7 @@ Historically, network cards had a single RX queue that was used to pass packets 
 配置网卡这个hash规则我们同样可以使用ethtool这个工具：ethtool -N eth0 rx-flow-hash udp4 sdfn
 </p>
 
-<hr  />
+<hr />
 <p>
 <b>A note on NUMA performance</b>
 </p>
@@ -156,14 +152,10 @@ Historically, network cards had a single RX queue that was used to pass packets 
 现在场景还是one rx-queue to one cpu. 来看看NUMA造成的性能差异。
 </p>
 <ul class="org-ul">
-<li>Run receiver on another CPU, but on the same NUMA node as the RX queue. The performance as we saw above is around 360kpps.（同一个NUMA node但是另一块CPU，不同CPU Cache, pps = 360k)
-</li>
-<li>With receiver on exactly same CPU as the RX queue we can get up to ~430kpps. But it creates high variability. The performance drops down to zero if the NIC is overwhelmed with packets.(同一块CPU，应该是相同core, pps = 430k)
-</li>
-<li>When the receiver runs on the HT counterpart of the CPU handling RX queue, the performance is half the usual number at around 200kpps.(同一个core但是不同HT，性能减半, pps = 200k)
-</li>
-<li>With receiver on a CPU on a different NUMA node than the RX queue we get ~330k pps. The numbers aren't too consistent though.(不同NUMA node，pps = 330k)
-</li>
+<li>Run receiver on another CPU, but on the same NUMA node as the RX queue. The performance as we saw above is around 360kpps.（同一个NUMA node但是另一块CPU，不同CPU Cache, pps = 360k)</li>
+<li>With receiver on exactly same CPU as the RX queue we can get up to ~430kpps. But it creates high variability. The performance drops down to zero if the NIC is overwhelmed with packets.(同一块CPU，应该是相同core, pps = 430k)</li>
+<li>When the receiver runs on the HT counterpart of the CPU handling RX queue, the performance is half the usual number at around 200kpps.(同一个core但是不同HT，性能减半, pps = 200k)</li>
+<li>With receiver on a CPU on a different NUMA node than the RX queue we get ~330k pps. The numbers aren't too consistent though.(不同NUMA node，pps = 330k)</li>
 </ul>
 <p>
 While a 10% penalty for running on a different NUMA node may not sound too bad, the problem only gets worse with scale. On some tests I was able to squeeze out only 250kpps per core. On all the cross-NUMA tests the variability was bad. The performance penalty across NUMA nodes is even more visible at higher throughput. In one of the tests I got a 4x penalty when running the receiver on a bad NUMA node.（如果只是上面10%影响的话那么还不算太坏，但是cross-NUMA tests偏差波动会非常大，甚至有有时可以降低75%）
@@ -218,7 +210,7 @@ Udp:
 这意味着packet可以被投递到kernel, 但是kernel没有办法投递到application，application处理packet速度太慢(386.9k + 123.8k被丢弃）
 </p>
 
-<hr  />
+<hr />
 <p>
 <b>Receive from many threads</b>
 </p>
@@ -238,7 +230,7 @@ receiver$ taskset -c 1,2,3,4 ./udpreceiver1 0.0.0.0:4321 4 1
   1.126M pps  34.374MiB / 288.354Mb
 </pre>
 
-<hr  />
+<hr />
 <p>
 <b>Final words</b>
 </p>
@@ -247,12 +239,9 @@ receiver$ taskset -c 1,2,3,4 ./udpreceiver1 0.0.0.0:4321 4 1
 To sum up, if you want a perfect performance you need to:
 </p>
 <ul class="org-ul">
-<li>Ensure traffic is distributed evenly across many RX queues and SO_REUSEPORT processes. In practice, the load usually is well distributed as long as there are a large number of connections (or flows).
-</li>
-<li>You need to have enough spare CPU capacity to actually pick up the packets from the kernel.
-</li>
-<li>To make the things harder, both RX queues and receiver processes should be on a single NUMA node.
-</li>
+<li>Ensure traffic is distributed evenly across many RX queues and SO_REUSEPORT processes. In practice, the load usually is well distributed as long as there are a large number of connections (or flows).</li>
+<li>You need to have enough spare CPU capacity to actually pick up the packets from the kernel.</li>
+<li>To make the things harder, both RX queues and receiver processes should be on a single NUMA node.</li>
 </ul>
 
 <p>

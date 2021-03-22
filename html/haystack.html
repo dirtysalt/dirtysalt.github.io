@@ -3,10 +3,11 @@
 "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
 <html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
 <head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Finding a needle in Haystack: Facebook’s photo storage</title>
-<meta  http-equiv="Content-Type" content="text/html;charset=utf-8" />
-<meta  name="generator" content="Org-mode" />
-<meta  name="author" content="dirtysalt" />
+<meta name="generator" content="Org mode" />
+<meta name="author" content="dirtysalt" />
 <link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
 <body>
 <div id="content">
@@ -15,22 +16,22 @@
 <h2>Table of Contents</h2>
 <div id="text-table-of-contents">
 <ul>
-<li><a href="#sec-1">1. Abstract</a></li>
-<li><a href="#sec-2">2. Introduction</a></li>
-<li><a href="#sec-3">3. Background &amp; Previous Design</a></li>
-<li><a href="#sec-4">4. Design &amp; Implementation</a>
+<li><a href="#orgb062abb">1. Abstract</a></li>
+<li><a href="#org8601c63">2. Introduction</a></li>
+<li><a href="#org48f54a9">3. Background &amp; Previous Design</a></li>
+<li><a href="#org0341291">4. Design &amp; Implementation</a>
 <ul>
-<li><a href="#sec-4-1">4.1. Overview</a></li>
-<li><a href="#sec-4-2">4.2. Haystack Directory</a></li>
-<li><a href="#sec-4-3">4.3. Haystack Cache</a></li>
-<li><a href="#sec-4-4">4.4. Haystack Store</a></li>
-<li><a href="#sec-4-5">4.5. Recovery from failures</a></li>
-<li><a href="#sec-4-6">4.6. Optimizations</a></li>
+<li><a href="#org860854c">4.1. Overview</a></li>
+<li><a href="#orge15b297">4.2. Haystack Directory</a></li>
+<li><a href="#org49b727b">4.3. Haystack Cache</a></li>
+<li><a href="#org4bcf98a">4.4. Haystack Store</a></li>
+<li><a href="#orgeec927d">4.5. Recovery from failures</a></li>
+<li><a href="#org4aa6e37">4.6. Optimizations</a></li>
 </ul>
 </li>
-<li><a href="#sec-5">5. Evaluation</a></li>
-<li><a href="#sec-6">6. Related Work</a></li>
-<li><a href="#sec-7">7. Conclusion</a></li>
+<li><a href="#org399d3ea">5. Evaluation</a></li>
+<li><a href="#org325becb">6. Related Work</a></li>
+<li><a href="#orga729f4a">7. Conclusion</a></li>
 </ul>
 </div>
 </div>
@@ -42,27 +43,23 @@
 解决存储大量静态小文件问题
 </p>
 
-<div id="outline-container-sec-1" class="outline-2">
-<h2 id="sec-1"><span class="section-number-2">1</span> Abstract</h2>
+<div id="outline-container-orgb062abb" class="outline-2">
+<h2 id="orgb062abb"><span class="section-number-2">1</span> Abstract</h2>
 <div class="outline-text-2" id="text-1">
 <ul class="org-ul">
-<li>Facebook currently stores over 260 billion images, which translates to over 20 petabytes of data. Users up-load one billion new photos (∼60 terabytes) each week and Facebook serves over one million images per sec-ond at peak. # 260G张图片, 20PB数据(~= 20 * 1024 * 1024 * 1.024 ^ 3 / 260 = 84k bytes). 每周上传1G张图片~60TB(~= 60 * 1024 * 1.024 ^ 3 / 1 = 64k bytes). 高峰1000k QPS.
-</li>
-<li>Haystack provides a less expensive and higher performing solution than our previous approach, which leveraged network attached storage appliances over NFS. # 取代之前NFS方案.
-</li>
-<li>Our key observation is that this traditional design incurs an excessive number of disk operations because of metadata lookups. # NFS(or POSIX based fs)最大性能问题在于因为读取元数据使得磁盘访问次数太多.
-</li>
-<li>We carefully reduce this per photo metadata so that Haystack storage machines can perform all metadata lookups in main memory. # haystack减少metadata大小, 然后全部放入memory. 减少磁盘访问次数.
-</li>
+<li>Facebook currently stores over 260 billion images, which translates to over 20 petabytes of data. Users up-load one billion new photos (∼60 terabytes) each week and Facebook serves over one million images per sec-ond at peak. # 260G张图片, 20PB数据(~= 20 * 1024 * 1024 * 1.024 ^ 3 / 260 = 84k bytes). 每周上传1G张图片~60TB(~= 60 * 1024 * 1.024 ^ 3 / 1 = 64k bytes). 高峰1000k QPS.</li>
+<li>Haystack provides a less expensive and higher performing solution than our previous approach, which leveraged network attached storage appliances over NFS. # 取代之前NFS方案.</li>
+<li>Our key observation is that this traditional design incurs an excessive number of disk operations because of metadata lookups. # NFS(or POSIX based fs)最大性能问题在于因为读取元数据使得磁盘访问次数太多.</li>
+<li>We carefully reduce this per photo metadata so that Haystack storage machines can perform all metadata lookups in main memory. # haystack减少metadata大小, 然后全部放入memory. 减少磁盘访问次数.</li>
 </ul>
 </div>
 </div>
 
-<div id="outline-container-sec-2" class="outline-2">
-<h2 id="sec-2"><span class="section-number-2">2</span> Introduction</h2>
+<div id="outline-container-org8601c63" class="outline-2">
+<h2 id="org8601c63"><span class="section-number-2">2</span> Introduction</h2>
 </div>
-<div id="outline-container-sec-3" class="outline-2">
-<h2 id="sec-3"><span class="section-number-2">3</span> Background &amp; Previous Design</h2>
+<div id="outline-container-org48f54a9" class="outline-2">
+<h2 id="org48f54a9"><span class="section-number-2">3</span> Background &amp; Previous Design</h2>
 <div class="outline-text-2" id="text-3">
 <p>
 下面是图片服务的典型设计图. 这个设计存在个问题就是, 图片访问呈现长尾趋势, 有大量的不那么popular的图片访问量加起来造成的traffic巨大. CDN容量有限只能缓存那些非常popular的那些, 对那些长尾却没有办法缓存. 所以这些图片的访问全部落在了photo-storage部分.
@@ -86,11 +83,12 @@
 </div>
 </div>
 
-<div id="outline-container-sec-4" class="outline-2">
-<h2 id="sec-4"><span class="section-number-2">4</span> Design &amp; Implementation</h2>
+<div id="outline-container-org0341291" class="outline-2">
+<h2 id="org0341291"><span class="section-number-2">4</span> Design &amp; Implementation</h2>
 <div class="outline-text-2" id="text-4">
-</div><div id="outline-container-sec-4-1" class="outline-3">
-<h3 id="sec-4-1"><span class="section-number-3">4.1</span> Overview</h3>
+</div>
+<div id="outline-container-org860854c" class="outline-3">
+<h3 id="org860854c"><span class="section-number-3">4.1</span> Overview</h3>
 <div class="outline-text-3" id="text-4-1">
 <p>
 Recall that storing a single photo per file resulted in more filesystem metadata than could be reasonably cached. Haystack takes a straight-forward approach: it stores multiple photos in a single file and therefore maintains very large files. # 将许多图片存储在一个文件里面来减少metadata.
@@ -102,26 +100,17 @@ The Haystack architecture consists of 3 core compo-nents:
 <ul class="org-ul">
 <li>the Haystack Store,
 <ul class="org-ul">
-<li>physical volumes. # on a single node. 100 pv on 1TB, 100GB/pv.
-</li>
-<li>logical volumes. # redundancy. several physical volumes =&gt; a single logical volumes.
-</li>
-</ul>
-</li>
+<li>physical volumes. # on a single node. 100 pv on 1TB, 100GB/pv.</li>
+<li>logical volumes. # redundancy. several physical volumes =&gt; a single logical volumes.</li>
+</ul></li>
 <li>Haystack Directory,
 <ul class="org-ul">
-<li>application metadata
-</li>
-<li>mapping(filename -&gt; logical volume)
-</li>
-<li>logical volume free space.
-</li>
-<li>mapping(logical volume-&gt;physical volumes)
-</li>
-</ul>
-</li>
-<li>and Haystack Cache.
-</li>
+<li>application metadata</li>
+<li>mapping(filename -&gt; logical volume)</li>
+<li>logical volume free space.</li>
+<li>mapping(logical volume-&gt;physical volumes)</li>
+</ul></li>
+<li>and Haystack Cache.</li>
 </ul>
 
 <p>
@@ -132,18 +121,15 @@ The Haystack architecture consists of 3 core compo-nents:
 图片url格式是 "<a href="http://">http://</a>&lt;CDN&gt;/&lt;Cache&gt;/&lt;Machine id&gt;/&lt;Logical volume, Photo&gt;". 请求流程大致是:
 </p>
 <ul class="org-ul">
-<li>CDN解析最后部分&lt;lv, photo&gt;看是否在自己cache中, 如果不在的话. 那么去掉&lt;CDN&gt;部分请求&lt;Cache&gt;
-</li>
-<li>Cache和CDN一样. 如果找不到的话那么交给machine处理.
-</li>
-<li>machine根据&lt;lv, photo&gt;在磁盘上找到图片之后层级返回.
-</li>
+<li>CDN解析最后部分&lt;lv, photo&gt;看是否在自己cache中, 如果不在的话. 那么去掉&lt;CDN&gt;部分请求&lt;Cache&gt;</li>
+<li>Cache和CDN一样. 如果找不到的话那么交给machine处理.</li>
+<li>machine根据&lt;lv, photo&gt;在磁盘上找到图片之后层级返回.</li>
 </ul>
 </div>
 </div>
 
-<div id="outline-container-sec-4-2" class="outline-3">
-<h3 id="sec-4-2"><span class="section-number-3">4.2</span> Haystack Directory</h3>
+<div id="outline-container-orge15b297" class="outline-3">
+<h3 id="orge15b297"><span class="section-number-3">4.2</span> Haystack Directory</h3>
 <div class="outline-text-3" id="text-4-2">
 <p>
 #note: 不知道是否支持副本自动迁移
@@ -153,14 +139,10 @@ The Haystack architecture consists of 3 core compo-nents:
 The Directory serves four main functions.
 </p>
 <ul class="org-ul">
-<li>First, it pro-vides a mapping from logical volumes to physical vol-umes. Web servers use this mapping when uploading photos and also when constructing the image URLs for a page request. # 映射关系
-</li>
-<li>Second, the Directory load balances writes across logical volumes and reads across physi-cal volumes. # 在各个节点以及volumes之间平衡.
-</li>
-<li>Third, the Directory determines whether a photo request should be handled by the CDN or by the Cache. This functionality lets us adjust our depen-dence on CDNs. # 系统灵活性
-</li>
-<li>Fourth, the Directory identifies those logical volumes that are read-only either because of op-erational reasons or because those volumes have reached their storage capacity. We mark volumes as read-only at the granularity of machines for operational ease. # 方便运维
-</li>
+<li>First, it pro-vides a mapping from logical volumes to physical vol-umes. Web servers use this mapping when uploading photos and also when constructing the image URLs for a page request. # 映射关系</li>
+<li>Second, the Directory load balances writes across logical volumes and reads across physi-cal volumes. # 在各个节点以及volumes之间平衡.</li>
+<li>Third, the Directory determines whether a photo request should be handled by the CDN or by the Cache. This functionality lets us adjust our depen-dence on CDNs. # 系统灵活性</li>
+<li>Fourth, the Directory identifies those logical volumes that are read-only either because of op-erational reasons or because those volumes have reached their storage capacity. We mark volumes as read-only at the granularity of machines for operational ease. # 方便运维</li>
 </ul>
 <p>
 The Directory is a relatively straight-forward compo-nent that stores its information in a replicated database accessed via a PHP interface that leverages memcache. In the event that we lose the data on a Store machine we remove the corresponding entry in the mapping and replace it when a new Store machine is brought online. # 数据存储在replicated database前面有memcache. (#note: 似乎没有办法进行自动迁移)
@@ -168,8 +150,8 @@ The Directory is a relatively straight-forward compo-nent that stores its inform
 </div>
 </div>
 
-<div id="outline-container-sec-4-3" class="outline-3">
-<h3 id="sec-4-3"><span class="section-number-3">4.3</span> Haystack Cache</h3>
+<div id="outline-container-org49b727b" class="outline-3">
+<h3 id="org49b727b"><span class="section-number-3">4.3</span> Haystack Cache</h3>
 <div class="outline-text-3" id="text-4-3">
 <p>
 We now highlight an important behavioral aspect of the Cache. It caches a photo only if two conditions are met:
@@ -177,24 +159,19 @@ We now highlight an important behavioral aspect of the Cache. It caches a photo 
 <ul class="org-ul">
 <li>(a) the request comes directly from a user and not the CDN and # 如果有CDN的话那么就不使用Cache
 <ul class="org-ul">
-<li>The justification for the first condition is that our experience with the NFS-based de-sign showed post-CDN caching is ineffective as it is un-likely that a request that misses in the CDN would hit in our internal cache. # 根据使用NFS方案经验来看, post-CDN caching基本没有效果.
-</li>
-</ul>
-</li>
+<li>The justification for the first condition is that our experience with the NFS-based de-sign showed post-CDN caching is ineffective as it is un-likely that a request that misses in the CDN would hit in our internal cache. # 根据使用NFS方案经验来看, post-CDN caching基本没有效果.</li>
+</ul></li>
 <li>(b) the photo is fetched from a write-enabled Store machine. # 只缓存从write-enabled machine取的数据.
 <ul class="org-ul">
-<li>photos are most heavily accessed soon after they are uploaded. # 最近上传的图片有可能很快就会被大量访问
-</li>
-<li>filesystems for our workload gener-ally perform better when doing either reads or writes but not both. # 平衡读写比例
-</li>
-</ul>
-</li>
+<li>photos are most heavily accessed soon after they are uploaded. # 最近上传的图片有可能很快就会被大量访问</li>
+<li>filesystems for our workload gener-ally perform better when doing either reads or writes but not both. # 平衡读写比例</li>
+</ul></li>
 </ul>
 </div>
 </div>
 
-<div id="outline-container-sec-4-4" class="outline-3">
-<h3 id="sec-4-4"><span class="section-number-3">4.4</span> Haystack Store</h3>
+<div id="outline-container-org4bcf98a" class="outline-3">
+<h3 id="org4bcf98a"><span class="section-number-3">4.4</span> Haystack Store</h3>
 <div class="outline-text-3" id="text-4-4">
 <p>
 Each Store machine manages multiple physical vol-umes. Each volume holds millions of photos. For concreteness, the reader can think of a physical vol-ume as simply a very large file (100 GB) saved as '/hay/haystack_&lt;logical volume id&gt;'. # 一个logical volumn在一台机器上只有一个对应的physical volume. 这是redundancy的需要, 同时也简化了文件组织.
@@ -213,12 +190,9 @@ A Store machine keeps open file descriptors for each physical volume that it man
 </p>
 
 <ul class="org-ul">
-<li>alternate key用来表示不同大小的类型, 比如100 * 100, 200 * 200 etc.
-</li>
-<li>cookie 字段是在upload时候随机生成的. 这样可以避免猜测url来获取图片.
-</li>
-<li>对于store-file的追加是同步完成的.
-</li>
+<li>alternate key用来表示不同大小的类型, 比如100 * 100, 200 * 200 etc.</li>
+<li>cookie 字段是在upload时候随机生成的. 这样可以避免猜测url来获取图片.</li>
+<li>对于store-file的追加是同步完成的.</li>
 </ul>
 
 <p>
@@ -235,8 +209,8 @@ index文件是在追加store-file时候异步写入的. 那么这里有个问题
 </div>
 </div>
 
-<div id="outline-container-sec-4-5" class="outline-3">
-<h3 id="sec-4-5"><span class="section-number-3">4.5</span> Recovery from failures</h3>
+<div id="outline-container-orgeec927d" class="outline-3">
+<h3 id="orgeec927d"><span class="section-number-3">4.5</span> Recovery from failures</h3>
 <div class="outline-text-3" id="text-4-5">
 <p>
 #note: 自动检测, 人工修复.
@@ -252,29 +226,26 @@ Once diagnosed, we may be able to fix the prob-lem quickly. Occasionally, the si
 </div>
 </div>
 
-<div id="outline-container-sec-4-6" class="outline-3">
-<h3 id="sec-4-6"><span class="section-number-3">4.6</span> Optimizations</h3>
+<div id="outline-container-org4aa6e37" class="outline-3">
+<h3 id="org4aa6e37"><span class="section-number-3">4.6</span> Optimizations</h3>
 <div class="outline-text-3" id="text-4-6">
 <ul class="org-ul">
-<li>Compaction
-</li>
-<li>Saving more memory
-</li>
-<li>Batch upload
-</li>
+<li>Compaction</li>
+<li>Saving more memory</li>
+<li>Batch upload</li>
 </ul>
 </div>
 </div>
 </div>
 
-<div id="outline-container-sec-5" class="outline-2">
-<h2 id="sec-5"><span class="section-number-2">5</span> Evaluation</h2>
+<div id="outline-container-org399d3ea" class="outline-2">
+<h2 id="org399d3ea"><span class="section-number-2">5</span> Evaluation</h2>
 </div>
-<div id="outline-container-sec-6" class="outline-2">
-<h2 id="sec-6"><span class="section-number-2">6</span> Related Work</h2>
+<div id="outline-container-org325becb" class="outline-2">
+<h2 id="org325becb"><span class="section-number-2">6</span> Related Work</h2>
 </div>
-<div id="outline-container-sec-7" class="outline-2">
-<h2 id="sec-7"><span class="section-number-2">7</span> Conclusion</h2>
+<div id="outline-container-orga729f4a" class="outline-2">
+<h2 id="orga729f4a"><span class="section-number-2">7</span> Conclusion</h2>
 </div>
 </div>
 </body>

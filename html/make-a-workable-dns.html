@@ -3,10 +3,11 @@
 "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
 <html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
 <head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>搭建一个可用的DNS</title>
-<meta  http-equiv="Content-Type" content="text/html;charset=utf-8" />
-<meta  name="generator" content="Org-mode" />
-<meta  name="author" content="dirtysalt" />
+<meta name="generator" content="Org mode" />
+<meta name="author" content="dirtysalt" />
 <link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
 <body>
 <div id="content">
@@ -15,7 +16,7 @@
 我发现即便是用ShadowsocksNX全局打开的话，在console下面也不能正常访问一些网站。我想到了有可能这是DNS被污染的原因。
 </p>
 
-<hr  />
+<hr />
 
 <p>
 想要验证DNS被污染了其实也非常简单，最好有个WireShark. 先将DNS修改成为8.8.8.8, 然后请求一个被墙的地址比如data.castbox.fm. `dig data.castbox.fm`
@@ -31,7 +32,7 @@
 可以看到首先返回了两个A分别是66.*** 和 199.***，这两个IP如果查询地理位置的话发现都是facebook.com的IP，而第三个CNAME才是正确的内容.
 </p>
 
-<hr  />
+<hr />
 
 <p>
 解决DNS被污染的问题，我突然想到了可以使用ss. 因为之前看ss的代码里面记得有个 `asyncdns.py` 这个文件，专门用于DNS解析的。所以就不加思索地直接试了一把（比如ss在本地62221上） `dig @127.0.0.1 -p 62221 data.castbox.fm`（@是可以指定dns服务器，-p可以使用dns端口）。但是ss有下面这样的错误日志
@@ -46,7 +47,7 @@
 我大概明白了，ss暴露的62221是支持socks5的tcp/udp端口，不能直接应用于dns. 必须在前面用个组件比如 `dns2socks` 或者是 `ss-tunnel`。
 </p>
 
-<hr  />
+<hr />
 
 <p>
 dns2socks这个软件是C编写的，我希望有个python编写的（这样就不要编译并且可以很容易地在其他地方部署了），所以找到了 `ss-tunnel`. 在我的印象中（阅读ss代码的时候），ss是没有ss-tunnel这个功能的。网上搜索了一下也是在 `shadowsocks-libev` 这个项目下面才有，而这个项目也是C + libev来写的。不过很有趣的是，在shadowsocks的python实现上，有位同学提交了一个python的ss-tunnel实现 <a href="https://github.com/shadowsocks/shadowsocks/pull/759">https://github.com/shadowsocks/shadowsocks/pull/759</a> 并且已经被合并到了master上面。
@@ -110,7 +111,7 @@ casbox-elb-1612116034.ap-northeast-1.elb.amazonaws.com.	59 IN A	52.197.248.46
 ;; MSG SIZE  rcvd: 144
 </pre>
 
-<hr  />
+<hr />
 
 <p>
 在找到dnsmasq之前，在网上看到了很多dns的软件比如pdnsd, unbound这些。dnsmasq的确不是特别符合我的预期，因为它不支持按照tcp去转发dns请求（这样就没有办法用kcptun做relay了），不过因为我只是打算实验以下，所以就没有继续研究pdnsd, unbound这些软件了。如果要做一个reliable dns的话，支持tcp请求应该是必须的。
@@ -153,7 +154,6 @@ server=/10musume.com/127.0.0.1#65353
 在mac上面为了方便重启，在shell profile里面增加了两个指令
 </p>
 <div class="org-src-container">
-
 <pre class="src src-Shell">reload_dnsmasq() {
     sudo launchctl load /Library/LaunchDaemons/homebrew.mxcl.dnsmasq.plist
     sudo launchctl stop homebrew.mxcl.dnsmasq
@@ -164,10 +164,11 @@ unload_dnsmasq() {
     sudo launchctl stop homebrew.mxcl.dnsmasq
     sudo launchctl unload /Library/LaunchDaemons/homebrew.mxcl.dnsmasq.plist
 }
+
 </pre>
 </div>
 
-<hr  />
+<hr />
 
 <p>
 如果希望全局可以自动分流的话，不仅仅DNS需要自动分流，其他流量（应用流量）也需要分流，这个就需要比如ss-redir/iptables这类软件来支持，配置起来内容就比较多了。如果仅仅是单纯地想得到一个正确的，纯净的dns的话，那么ss + ss-tunnel + dnsmasq就可以完成了。

@@ -3,10 +3,11 @@
 "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
 <html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
 <head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Throttle的Python实现</title>
-<meta  http-equiv="Content-Type" content="text/html;charset=utf-8" />
-<meta  name="generator" content="Org-mode" />
-<meta  name="author" content="dirtysalt" />
+<meta name="generator" content="Org mode" />
+<meta name="author" content="dirtysalt" />
 <link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
 <body>
 <div id="content">
@@ -15,10 +16,8 @@
 参考文章和实现有：
 </p>
 <ul class="org-ul">
-<li><a href="https://blog.cloudflare.com/counting-things-a-lot-of-different-things/">How we built rate limiting capable of scaling to millions of domains</a>
-</li>
-<li><a href="https://github.com/leandromoreira/nginx-lua-redis-rate-measuring/blob/master/src/resty-redis-rate.lua">https://github.com/leandromoreira/nginx-lua-redis-rate-measuring/blob/master/src/resty-redis-rate.lua</a>
-</li>
+<li><a href="https://blog.cloudflare.com/counting-things-a-lot-of-different-things/">How we built rate limiting capable of scaling to millions of domains</a></li>
+<li><a href="https://github.com/leandromoreira/nginx-lua-redis-rate-measuring/blob/master/src/resty-redis-rate.lua">https://github.com/leandromoreira/nginx-lua-redis-rate-measuring/blob/master/src/resty-redis-rate.lua</a></li>
 </ul>
 
 <p>
@@ -31,7 +30,6 @@ throttle实现依赖于FlowRate来计算rate，根据计算出来的rate和设�
 </p>
 
 <div class="org-src-container">
-
 <pre class="src src-python"><span class="org-py-def-class">class</span> <span class="org-py-class-name">NaiveFlowRate</span>:
     <span class="org-py-def-class">def</span> <span class="org-function-name">__init__</span>(<span class="org-py-object-reference">self</span>):
         <span class="org-py-object-reference">self</span>.cnt = <span class="org-py-number">0</span>
@@ -51,7 +49,6 @@ throttle实现依赖于FlowRate来计算rate，根据计算出来的rate和设�
 </p>
 
 <div class="org-src-container">
-
 <pre class="src src-python"><span class="org-py-def-class">class</span> <span class="org-py-class-name">RedisFlowRate</span>:
     <span class="org-py-def-class">def</span> <span class="org-function-name">__init__</span>(<span class="org-py-object-reference">self</span>, client: redis.StrictRedis, key_prefix):
         <span class="org-py-object-reference">self</span>.key_prefix = key_prefix
@@ -110,6 +107,7 @@ throttle实现依赖于FlowRate来计算rate，根据计算出来的rate和设�
         <span class="org-py-variable-name">rate</span> = (<span class="org-py-number">1</span> - last_ratio) * <span class="org-py-object-reference">self</span>.last_count + <span class="org-py-object-reference">self</span>.cur_count
         <span class="org-py-variable-name">rate</span> = rate / <span class="org-py-object-reference">self</span>.unit  <span class="org-comment"># per seconds.</span>
         <span class="org-keyword">return</span> rate
+
 </pre>
 </div>
 
@@ -117,18 +115,13 @@ throttle实现依赖于FlowRate来计算rate，根据计算出来的rate和设�
 实现完了FlowRate之后就可以实现Throttle了：
 </p>
 <ul class="org-ul">
-<li>假设过去1分钟，共处理了N条记录
-</li>
-<li>估算rate是R, 而要求rate是R0，这里假设rate单位是/s
-</li>
-<li>N ~= 60 * R
-</li>
-<li>应该delay时间应该是 N/R0 - N/R = (60 * R) / R0 - 60 = 60 * (R/R0 - 1)
-</li>
+<li>假设过去1分钟，共处理了N条记录</li>
+<li>估算rate是R, 而要求rate是R0，这里假设rate单位是/s</li>
+<li>N ~= 60 * R</li>
+<li>应该delay时间应该是 N/R0 - N/R = (60 * R) / R0 - 60 = 60 * (R/R0 - 1)</li>
 </ul>
 
 <div class="org-src-container">
-
 <pre class="src src-Python">class SmoothThrottle(object):
     def __init__(self, rate_limit):
         self.rate_limit = rate_limit
@@ -149,34 +142,26 @@ throttle实现依赖于FlowRate来计算rate，根据计算出来的rate和设�
 </pre>
 </div>
 
-<hr  />
+<hr />
 
 <p>
 为了确保rate计算正确以及throttle可以正常限速，我做了如下测试：
 </p>
 <ul class="org-ul">
-<li>测试起两个线程 producer, worker, 之间通过Q传输数据
-</li>
+<li>测试起两个线程 producer, worker, 之间通过Q传输数据</li>
 <li>producer 按照一定速度产生数字序列
 <ul class="org-ul">
-<li>按照高斯分布产生数字 value, 然后等待0.1s
-</li>
-<li>所以我们估算出来的rate是 value/0.1 = 10 * value
-</li>
-</ul>
-</li>
+<li>按照高斯分布产生数字 value, 然后等待0.1s</li>
+<li>所以我们估算出来的rate是 value/0.1 = 10 * value</li>
+</ul></li>
 <li>worker 不断处理数字序列
 <ul class="org-ul">
-<li>如果是验证rate计算正确，那么就直接更新flow rate，然后读取估算的rate
-</li>
-<li>如果是验证throttle正常限速，那么更新flow rate之后立刻限速，然后读取估算的rate
-</li>
-</ul>
-</li>
+<li>如果是验证rate计算正确，那么就直接更新flow rate，然后读取估算的rate</li>
+<li>如果是验证throttle正常限速，那么更新flow rate之后立刻限速，然后读取估算的rate</li>
+</ul></li>
 </ul>
 
 <div class="org-src-container">
-
 <pre class="src src-python"><span class="org-py-variable-name">throttle</span> = SmoothThrottle(<span class="org-py-variable-name">rate_limit</span>=<span class="org-py-number">50</span>)
 <span class="org-py-variable-name">flow_rate</span> = throttle.flow_rate
 
@@ -262,7 +247,7 @@ throttle的rate_limit设置为50, 所以在50上会被削平.
 </div>
 
 
-<hr  />
+<hr />
 
 <p>
 UPDATE@202002 最近发现这个限速器在生产环境有点问题，没有对突发流量做到限速，而且实际速度和限制速度差别还蛮大的。
@@ -272,10 +257,8 @@ UPDATE@202002 最近发现这个限速器在生产环境有点问题，没有对
 同事推荐给了我两个实现让我看看：
 </p>
 <ul class="org-ul">
-<li><a href="https://github.com/EvoluxBR/python-redis-rate-limit">https://github.com/EvoluxBR/python-redis-rate-limit</a>
-</li>
-<li><a href="http://bobintornado.github.io/development/2017/05/15/Rate-Limiting-Using-Redis-in-Python.html">http://bobintornado.github.io/development/2017/05/15/Rate-Limiting-Using-Redis-in-Python.html</a>
-</li>
+<li><a href="https://github.com/EvoluxBR/python-redis-rate-limit">https://github.com/EvoluxBR/python-redis-rate-limit</a></li>
+<li><a href="http://bobintornado.github.io/development/2017/05/15/Rate-Limiting-Using-Redis-in-Python.html">http://bobintornado.github.io/development/2017/05/15/Rate-Limiting-Using-Redis-in-Python.html</a></li>
 </ul>
 
 <p>
@@ -294,10 +277,8 @@ UPDATE@202002 最近发现这个限速器在生产环境有点问题，没有对
 不管任何窗口以及窗口大小的rate limiter, 等待是个问题。等待时间还相对比较好算，即使是随机一个也没有问题。我觉得等待区分乐观等待和悲观等待：
 </p>
 <ul class="org-ul">
-<li>乐观等待：假设现在rate还行，我就先提交，如果发现rate limit过线了，我就撤销并且等待。然后不断重试，直到ok.
-</li>
-<li>悲观等待：我先获取当前rate, 如果过线了，我就等待。然后不断重试，直到ok再进行提交。
-</li>
+<li>乐观等待：假设现在rate还行，我就先提交，如果发现rate limit过线了，我就撤销并且等待。然后不断重试，直到ok.</li>
+<li>悲观等待：我先获取当前rate, 如果过线了，我就等待。然后不断重试，直到ok再进行提交。</li>
 </ul>
 
 <p>
@@ -306,7 +287,6 @@ UPDATE@202002 最近发现这个限速器在生产环境有点问题，没有对
 </p>
 
 <div class="org-src-container">
-
 <pre class="src src-python"><span class="org-py-def-class">class</span> <span class="org-py-class-name">SmoothThrottle</span>(object):
     <span class="org-py-def-class">def</span> <span class="org-function-name">__init__</span>(<span class="org-py-object-reference">self</span>, rate_limit):
         <span class="org-py-object-reference">self</span>.rate_limit = rate_limit

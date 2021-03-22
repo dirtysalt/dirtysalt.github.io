@@ -3,10 +3,11 @@
 "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
 <html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
 <head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>内存分配之伙伴系统</title>
-<meta  http-equiv="Content-Type" content="text/html;charset=utf-8" />
-<meta  name="generator" content="Org-mode" />
-<meta  name="author" content="dirtysalt" />
+<meta name="generator" content="Org mode" />
+<meta name="author" content="dirtysalt" />
 <link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
 <body>
 <div id="content">
@@ -15,7 +16,7 @@
 最近看了云风写的 <a href="https://blog.codingnow.com/2011/12/buddy_memory_allocation.html">伙伴系统</a> 有点启发，把一些值得学习的点记录下来。此外帖子里面还有 @wuwenbin 的 <a href="https://github.com/wuwenbin/buddy2">实现</a>，比云风的 <a href="https://github.com/cloudwu/buddy">实现</a> 更简单高效，也一起记录下来。
 </p>
 
-<hr  />
+<hr />
 
 <p>
 云风的版本稍微有点复杂，一个复杂在节点的状态管理上，一个复杂在开辟对象的时候可能存在回溯。
@@ -25,27 +26,20 @@
 节点状态：
 </p>
 <ul class="org-ul">
-<li>SPLIT: 该节点内存被切分，只使用两个子节点中的一个。
-</li>
-<li>FULL：该节点内存被切分，并且两个子节点部分均被使用。
-</li>
-<li>USED：该节点内存被使用，没有被切分。用于被分配连续内存。
-</li>
-<li>UNUSED: 该节点内存未被使用。
-</li>
+<li>SPLIT: 该节点内存被切分，只使用两个子节点中的一个。</li>
+<li>FULL：该节点内存被切分，并且两个子节点部分均被使用。</li>
+<li>USED：该节点内存被使用，没有被切分。用于被分配连续内存。</li>
+<li>UNUSED: 该节点内存未被使用。</li>
 </ul>
 
 <p>
 <code>_index_offset</code> 是从树节点编号到连续内存偏移的映射函数。
 </p>
 <ul class="org-ul">
-<li><code>(1 &lt;&lt; level) - 1</code> 是该层第一个节点的编号
-</li>
-<li><code>(max_level-level)</code> 是这层每个节点下面的子节点（包括自己）数量。
-</li>
+<li><code>(1 &lt;&lt; level) - 1</code> 是该层第一个节点的编号</li>
+<li><code>(max_level-level)</code> 是这层每个节点下面的子节点（包括自己）数量。</li>
 </ul>
 <div class="org-src-container">
-
 <pre class="src src-c"><span class="org-keyword">static</span> <span class="org-keyword">inline</span> <span class="org-type">int</span>
 <span class="org-function-name">_index_offset</span>(<span class="org-type">int</span> <span class="org-variable-name">index</span>, <span class="org-type">int</span> <span class="org-variable-name">level</span>, <span class="org-type">int</span> <span class="org-variable-name">max_level</span>) {
     <span class="org-keyword">return</span> ((index + 1) - (1 &lt;&lt; level)) &lt;&lt; (max_level - level);
@@ -57,17 +51,14 @@
 <code>next_pow_of_2</code> 函数可以通过观察每个bit的变化来分析：b0[i]表示初始状态，b1[i]表示操作一次之后的状态
 </p>
 <ul class="org-ul">
-<li>x | x &gt;&gt; 1 意味着 b1[i] = b0[i+1] | b0[i]
-</li>
-<li>x | x &gt;&gt; 2 意味着 b2[i] = b1[i+2] | b1[i]
-</li>
+<li>x | x &gt;&gt; 1 意味着 b1[i] = b0[i+1] | b0[i]</li>
+<li>x | x &gt;&gt; 2 意味着 b2[i] = b1[i+2] | b1[i]</li>
 </ul>
 <p>
 这样 b2[i] = b0[i] | b0[i+1] | b0[i+2] | b0[i+3]. 其最终作用就是相当于把每个位都尽可能地置1。然后 x+1 就可以找到最近的2次幂数。
 </p>
 
 <div class="org-src-container">
-
 <pre class="src src-c"><span class="org-keyword">static</span> <span class="org-keyword">inline</span> <span class="org-type">uint32_t</span>
 <span class="org-function-name">next_pow_of_2</span>(<span class="org-type">uint32_t</span> <span class="org-variable-name">x</span>) {
     <span class="org-keyword">if</span> ( is_pow_of_2(x) )
@@ -86,26 +77,22 @@
 然后 <code>buddy_alloc</code> 因为有个回溯过程，最坏情况下的时间复杂度是 O(N)。最坏情况出现在：
 </p>
 <ol class="org-ol">
-<li>分配最小单元的内存
-</li>
-<li>内部节点都处于SPLIT状态
-</li>
-<li>可用单元在最右子树上
-</li>
+<li>分配最小单元的内存</li>
+<li>内部节点都处于SPLIT状态</li>
+<li>可用单元在最右子树上</li>
 </ol>
 <p>
 其实这个回溯过程是可以避免的。通过对子节点的状态判断是去左子树还是右子树去要内存，但是内部就会多些判断。
 这个实现在 @wuwenbin 的实现里面就避免了，会判断去左子树还是右子树去要内存。
 </p>
 
-<hr  />
+<hr />
 
 <p>
 @wuwenbin的实现就特别清爽，节点定义是
 </p>
 
 <div class="org-src-container">
-
 <pre class="src src-c"><span class="org-keyword">struct</span> <span class="org-type">buddy2</span> {
   <span class="org-type">unsigned</span> <span class="org-variable-name">size</span>;
   <span class="org-type">unsigned</span> <span class="org-variable-name">longest</span>[1]; <span class="org-comment-delimiter">// </span><span class="org-comment">&#34920;&#31034;&#36825;&#20010;&#33410;&#28857;&#26368;&#22810;&#20801;&#35768;&#20998;&#37197;&#20869;&#23384;&#22823;&#23567;&#65292;&#24517;&#39035;&#26159;2&#30340;&#24130;&#26041;</span>
@@ -119,8 +106,8 @@
 </p>
 
 <div class="org-src-container">
-
-<pre class="src src-c"><span class="org-keyword">for</span>(node_size = self-&gt;size; node_size != size; node_size /= 2 ) {
+<pre class="src src-c">
+<span class="org-keyword">for</span>(node_size = self-&gt;size; node_size != size; node_size /= 2 ) {
   <span class="org-keyword">if</span> (self-&gt;longest[LEFT_LEAF(index)] &gt;= size)
     index = LEFT_LEAF(index);
   <span class="org-keyword">else</span>
@@ -143,7 +130,6 @@ offset = (index + 1) * node_size - self-&gt;size;
 </p>
 
 <div class="org-src-container">
-
 <pre class="src src-c"><span class="org-type">int</span> <span class="org-function-name">buddy2_size</span>(<span class="org-keyword">struct</span> <span class="org-type">buddy2</span>* <span class="org-variable-name">self</span>, <span class="org-type">int</span> <span class="org-variable-name">offset</span>) {
   <span class="org-type">unsigned</span> <span class="org-variable-name">node_size</span>, <span class="org-variable-name">index</span> = 0;
 

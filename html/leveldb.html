@@ -3,10 +3,11 @@
 "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
 <html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
 <head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>leveldb</title>
-<meta  http-equiv="Content-Type" content="text/html;charset=utf-8" />
-<meta  name="generator" content="Org-mode" />
-<meta  name="author" content="dirtysalt" />
+<meta name="generator" content="Org mode" />
+<meta name="author" content="dirtysalt" />
 <link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
 <body>
 <div id="content">
@@ -15,28 +16,28 @@
 <h2>Table of Contents</h2>
 <div id="text-table-of-contents">
 <ul>
-<li><a href="#sec-1">1. Introduction</a></li>
-<li><a href="#sec-2">2. WriteBatch</a></li>
-<li><a href="#sec-3">3. BloomFilter</a>
+<li><a href="#org9b8a1a1">1. Introduction</a></li>
+<li><a href="#orga1fd069">2. WriteBatch</a></li>
+<li><a href="#orga411e64">3. BloomFilter</a>
 <ul>
-<li><a href="#sec-3-1">3.1. Format</a></li>
-<li><a href="#sec-3-2">3.2. FilterBlockBuilder</a></li>
-<li><a href="#sec-3-3">3.3. FilterBlockReader</a></li>
+<li><a href="#org4568291">3.1. Format</a></li>
+<li><a href="#org72b6bc1">3.2. FilterBlockBuilder</a></li>
+<li><a href="#org62a9ef9">3.3. FilterBlockReader</a></li>
 </ul>
 </li>
-<li><a href="#sec-4">4. Storage</a>
+<li><a href="#orgb85017c">4. Storage</a>
 <ul>
-<li><a href="#sec-4-1">4.1. MemTable</a></li>
-<li><a href="#sec-4-2">4.2. RedoLog</a></li>
-<li><a href="#sec-4-3">4.3. DiskTable</a></li>
+<li><a href="#orgf658ae7">4.1. MemTable</a></li>
+<li><a href="#orge381c28">4.2. RedoLog</a></li>
+<li><a href="#org41d1e30">4.3. DiskTable</a></li>
 </ul>
 </li>
-<li><a href="#sec-5">5. Compaction</a></li>
-<li><a href="#sec-6">6. Recovery</a></li>
-<li><a href="#sec-7">7. Snapshot</a></li>
-<li><a href="#sec-8">8. Cache</a></li>
-<li><a href="#sec-9">9. Option</a></li>
-<li><a href="#sec-10">10. Discussion</a></li>
+<li><a href="#org707e5a9">5. Compaction</a></li>
+<li><a href="#org9dc3dd7">6. Recovery</a></li>
+<li><a href="#orgc617a67">7. Snapshot</a></li>
+<li><a href="#orgaeea89d">8. Cache</a></li>
+<li><a href="#orga94f141">9. Option</a></li>
+<li><a href="#org9ca6f8e">10. Discussion</a></li>
 </ul>
 </div>
 </div>
@@ -44,68 +45,49 @@
 <a href="http://code.google.com/p/leveldb/">http://code.google.com/p/leveldb/</a>
 </p>
 
-<div id="outline-container-sec-1" class="outline-2">
-<h2 id="sec-1"><span class="section-number-2">1</span> Introduction</h2>
+<div id="outline-container-org9b8a1a1" class="outline-2">
+<h2 id="org9b8a1a1"><span class="section-number-2">1</span> Introduction</h2>
 <div class="outline-text-2" id="text-1">
 <p>
 相关资源：
 </p>
 <ul class="org-ul">
-<li>使用文档. <a href="http://leveldb.googlecode.com/svn/trunk/doc/index.html">http://leveldb.googlecode.com/svn/trunk/doc/index.html</a>
-</li>
-<li>设计说明. <a href="http://leveldb.googlecode.com/svn/trunk/doc/impl.html">http://leveldb.googlecode.com/svn/trunk/doc/impl.html</a>
-</li>
-<li>leveldb和baidu内部kv系统对比. <a href="http://hi.baidu.com/little_fxxker/blog/item/1915f300f7548a046b60fb08.html">http://hi.baidu.com/little_fxxker/blog/item/1915f300f7548a046b60fb08.html</a>
-</li>
-<li><a href="http://blog.csdn.net/anderscloud/article/details/7182165">http://blog.csdn.net/anderscloud/article/details/7182165</a>
-</li>
+<li>使用文档. <a href="http://leveldb.googlecode.com/svn/trunk/doc/index.html">http://leveldb.googlecode.com/svn/trunk/doc/index.html</a></li>
+<li>设计说明. <a href="http://leveldb.googlecode.com/svn/trunk/doc/impl.html">http://leveldb.googlecode.com/svn/trunk/doc/impl.html</a></li>
+<li>leveldb和baidu内部kv系统对比. <a href="http://hi.baidu.com/little_fxxker/blog/item/1915f300f7548a046b60fb08.html">http://hi.baidu.com/little_fxxker/blog/item/1915f300f7548a046b60fb08.html</a></li>
+<li><a href="http://blog.csdn.net/anderscloud/article/details/7182165">http://blog.csdn.net/anderscloud/article/details/7182165</a></li>
 </ul>
 
 <p>
 leveldb是一个kv存储系统，其中kv都是二进制。用户接口非常简单就是Put(k,v),Get(k),Delete(k).但是还有以下特性
 </p>
 <ul class="org-ul">
-<li>k有序存储.因为k是二进制没有解释的所以用户需要提供比较函数
-</li>
-<li>支持遍历包括前向和反向
-</li>
-<li>支持atomic write
-</li>
-<li>支持filter policy(bloomfilter)
-</li>
-<li>数据支持自动压缩(使用snappy压缩算法.关于snappy分析可以看<a href="snappy.html">这里</a>)
-</li>
-<li>底层提供了抽象接口，允许用户定制
-</li>
+<li>k有序存储.因为k是二进制没有解释的所以用户需要提供比较函数</li>
+<li>支持遍历包括前向和反向</li>
+<li>支持atomic write</li>
+<li>支持filter policy(bloomfilter)</li>
+<li>数据支持自动压缩(使用snappy压缩算法.关于snappy分析可以看<a href="snappy.html">这里</a>)</li>
+<li>底层提供了抽象接口，允许用户定制</li>
 </ul>
 <p>
 当然也存在一定的限制
 </p>
 <ul class="org-ul">
-<li>不是SQL数据库，没有数据关系模型
-</li>
-<li>一个table只允许一个process访问
-</li>
-<li>单机系统没有client-server.
-</li>
+<li>不是SQL数据库，没有数据关系模型</li>
+<li>一个table只允许一个process访问</li>
+<li>单机系统没有client-server.</li>
 </ul>
 
 <p>
 目录层次划分是这样的(意图是我猜想的)
 </p>
 <ul class="org-ul">
-<li>db // 和db逻辑相关的内容
-</li>
-<li>helpers // 里面有一个内存db接口
-</li>
-<li>include // Interface
-</li>
-<li>port // 操作系统相关的移植接口
-</li>
-<li>table // 表存储结构
-</li>
-<li>util // 公用部分.
-</li>
+<li>db // 和db逻辑相关的内容</li>
+<li>helpers // 里面有一个内存db接口</li>
+<li>include // Interface</li>
+<li>port // 操作系统相关的移植接口</li>
+<li>table // 表存储结构</li>
+<li>util // 公用部分.</li>
 </ul>
 
 <p>
@@ -128,8 +110,8 @@ compaction策略没有仔细分析，但是这个部分是精髓。如何控制c
 </div>
 </div>
 
-<div id="outline-container-sec-2" class="outline-2">
-<h2 id="sec-2"><span class="section-number-2">2</span> WriteBatch</h2>
+<div id="outline-container-orga1fd069" class="outline-2">
+<h2 id="orga1fd069"><span class="section-number-2">2</span> WriteBatch</h2>
 <div class="outline-text-2" id="text-2">
 <p>
 leveldb使用WriteBatch来达到atomic write操作.WriteBatch过程非常简单，就是将atomic write的内容全部写到一个内存buffer上，然后提交这个WriteBatch.
@@ -138,17 +120,15 @@ leveldb使用WriteBatch来达到atomic write操作.WriteBatch过程非常简单�
 </div>
 </div>
 
-<div id="outline-container-sec-3" class="outline-2">
-<h2 id="sec-3"><span class="section-number-2">3</span> BloomFilter</h2>
+<div id="outline-container-orga411e64" class="outline-2">
+<h2 id="orga411e64"><span class="section-number-2">3</span> BloomFilter</h2>
 <div class="outline-text-2" id="text-3">
 <p>
 相关资源：
 </p>
 <ul class="org-ul">
-<li>Bloom Filter. <a href="http://en.wikipedia.org/wiki/Bloom_filter">http://en.wikipedia.org/wiki/Bloom_filter</a>
-</li>
-<li>LevelDB Bloom Filter实现. <a href="http://duanple.blog.163.com/blog/static/7097176720123227403134/">http://duanple.blog.163.com/blog/static/7097176720123227403134/</a>
-</li>
+<li>Bloom Filter. <a href="http://en.wikipedia.org/wiki/Bloom_filter">http://en.wikipedia.org/wiki/Bloom_filter</a></li>
+<li>LevelDB Bloom Filter实现. <a href="http://duanple.blog.163.com/blog/static/7097176720123227403134/">http://duanple.blog.163.com/blog/static/7097176720123227403134/</a></li>
 </ul>
 
 <p>
@@ -162,8 +142,8 @@ meta block存放了bloom filter信息，这样可以减少磁盘读取。关于T
 </p>
 </div>
 
-<div id="outline-container-sec-3-1" class="outline-3">
-<h3 id="sec-3-1"><span class="section-number-3">3.1</span> Format</h3>
+<div id="outline-container-org4568291" class="outline-3">
+<h3 id="org4568291"><span class="section-number-3">3.1</span> Format</h3>
 <div class="outline-text-3" id="text-3-1">
 <p>
 leveldb是这么分配filter block的.以base(2KB)计算.如果block offset在[base*i,base*(i+1)-1]之间的话，那么就在filter i上面。存储格式是这样的。
@@ -188,14 +168,13 @@ lg(base)                              : 1 byte
 </div>
 </div>
 
-<div id="outline-container-sec-3-2" class="outline-3">
-<h3 id="sec-3-2"><span class="section-number-3">3.2</span> FilterBlockBuilder</h3>
+<div id="outline-container-org72b6bc1" class="outline-3">
+<h3 id="org72b6bc1"><span class="section-number-3">3.2</span> FilterBlockBuilder</h3>
 <div class="outline-text-3" id="text-3-2">
 <p>
 对于Table在初始化之前会调用StartBlock.并且在每次进行Flush Data Block时候也会根据Data Block offset调用。
 </p>
 <div class="org-src-container">
-
 <pre class="src src-C++"><span class="org-type">void</span> <span class="org-constant">FilterBlockBuilder</span>::<span class="org-function-name">StartBlock</span>(<span class="org-type">uint64_t</span> <span class="org-variable-name">block_offset</span>) {
   <span class="org-type">uint64_t</span> <span class="org-variable-name">filter_index</span> = (block_offset / kFilterBase);
   assert(filter_index &gt;= filter_offsets_.size());
@@ -213,7 +192,6 @@ lg(base)                              : 1 byte
 然后每次Table在AddKey时候也会调用FilterBlock::AddKey
 </p>
 <div class="org-src-container">
-
 <pre class="src src-C++"><span class="org-type">void</span> <span class="org-constant">FilterBlockBuilder</span>::<span class="org-function-name">AddKey</span>(<span class="org-keyword">const</span> <span class="org-type">Slice</span>&amp; <span class="org-variable-name">key</span>) {
   <span class="org-type">Slice</span> <span class="org-variable-name">k</span> = key;
   start_.push_back(keys_.size());
@@ -229,7 +207,6 @@ lg(base)                              : 1 byte
 然后每次Flush的时候都会产生filter.
 </p>
 <div class="org-src-container">
-
 <pre class="src src-C++"><span class="org-type">void</span> <span class="org-constant">FilterBlockBuilder</span>::<span class="org-function-name">GenerateFilter</span>() {
   <span class="org-keyword">const</span> <span class="org-type">size_t</span> <span class="org-variable-name">num_keys</span> = start_.size();
   <span class="org-keyword">if</span> (num_keys == 0) {
@@ -262,7 +239,6 @@ lg(base)                              : 1 byte
 最后filter block需要刷新出去调用Flush方法。
 </p>
 <div class="org-src-container">
-
 <pre class="src src-C++"><span class="org-type">Slice</span> <span class="org-constant">FilterBlockBuilder</span>::<span class="org-function-name">Finish</span>() {
   <span class="org-keyword">if</span> (<span class="org-negation-char">!</span>start_.empty()) {
     GenerateFilter();
@@ -284,14 +260,13 @@ lg(base)                              : 1 byte
 </div>
 </div>
 
-<div id="outline-container-sec-3-3" class="outline-3">
-<h3 id="sec-3-3"><span class="section-number-3">3.3</span> FilterBlockReader</h3>
+<div id="outline-container-org62a9ef9" class="outline-3">
+<h3 id="org62a9ef9"><span class="section-number-3">3.3</span> FilterBlockReader</h3>
 <div class="outline-text-3" id="text-3-3">
 <p>
 了解上面的filter block的存储格式之后Reader就非常简单。构造函数首先计算出各个参数。simple huh?
 </p>
 <div class="org-src-container">
-
 <pre class="src src-C++"><span class="org-constant">FilterBlockReader</span>::<span class="org-function-name">FilterBlockReader</span>(<span class="org-keyword">const</span> <span class="org-type">FilterPolicy</span>* <span class="org-variable-name">policy</span>,
                                      <span class="org-keyword">const</span> <span class="org-type">Slice</span>&amp; <span class="org-variable-name">contents</span>)
     : policy_(policy),
@@ -316,7 +291,6 @@ lg(base)                              : 1 byte
 所以这里filter就是判断某个offset的data block是否含所有key.
 </p>
 <div class="org-src-container">
-
 <pre class="src src-C++"><span class="org-type">bool</span> <span class="org-constant">FilterBlockReader</span>::<span class="org-function-name">KeyMayMatch</span>(<span class="org-type">uint64_t</span> <span class="org-variable-name">block_offset</span>, <span class="org-keyword">const</span> <span class="org-type">Slice</span>&amp; <span class="org-variable-name">key</span>) {
   <span class="org-type">uint64_t</span> <span class="org-variable-name">index</span> = block_offset &gt;&gt; base_lg_;
   <span class="org-keyword">if</span> (index &lt; num_) {
@@ -338,24 +312,21 @@ lg(base)                              : 1 byte
 </div>
 </div>
 
-<div id="outline-container-sec-4" class="outline-2">
-<h2 id="sec-4"><span class="section-number-2">4</span> Storage</h2>
+<div id="outline-container-orgb85017c" class="outline-2">
+<h2 id="orgb85017c"><span class="section-number-2">4</span> Storage</h2>
 <div class="outline-text-2" id="text-4">
 <p>
 相关资源：
 </p>
 <ul class="org-ul">
-<li>Table Format. <a href="http://leveldb.googlecode.com/svn/trunk/doc/table_format.txt">http://leveldb.googlecode.com/svn/trunk/doc/table_format.txt</a> sst table存储格式。
-</li>
-<li>Log Format. <a href="http://leveldb.googlecode.com/svn/trunk/doc/log_format.txt">http://leveldb.googlecode.com/svn/trunk/doc/log_format.txt</a> block存储格式。
-</li>
-<li>LevelDB SSTable格式详解. <a href="http://wenku.baidu.com/view/19f83f51be23482fb4da4c29.html">http://wenku.baidu.com/view/19f83f51be23482fb4da4c29.html</a>
-</li>
+<li>Table Format. <a href="http://leveldb.googlecode.com/svn/trunk/doc/table_format.txt">http://leveldb.googlecode.com/svn/trunk/doc/table_format.txt</a> sst table存储格式。</li>
+<li>Log Format. <a href="http://leveldb.googlecode.com/svn/trunk/doc/log_format.txt">http://leveldb.googlecode.com/svn/trunk/doc/log_format.txt</a> block存储格式。</li>
+<li>LevelDB SSTable格式详解. <a href="http://wenku.baidu.com/view/19f83f51be23482fb4da4c29.html">http://wenku.baidu.com/view/19f83f51be23482fb4da4c29.html</a></li>
 </ul>
 </div>
 
-<div id="outline-container-sec-4-1" class="outline-3">
-<h3 id="sec-4-1"><span class="section-number-3">4.1</span> MemTable</h3>
+<div id="outline-container-orgf658ae7" class="outline-3">
+<h3 id="orgf658ae7"><span class="section-number-3">4.1</span> MemTable</h3>
 <div class="outline-text-3" id="text-4-1">
 <p>
 memtable在leveldb内部实现就是一个skiplist.所有的update都不是in-place的，对于memtable里面的修改来说的话使用的也是使用添加的方式完成的。
@@ -365,8 +336,8 @@ memtable在leveldb内部实现就是一个skiplist.所有的update都不是in-pl
 </div>
 </div>
 
-<div id="outline-container-sec-4-2" class="outline-3">
-<h3 id="sec-4-2"><span class="section-number-3">4.2</span> RedoLog</h3>
+<div id="outline-container-orge381c28" class="outline-3">
+<h3 id="orge381c28"><span class="section-number-3">4.2</span> RedoLog</h3>
 <div class="outline-text-3" id="text-4-2">
 <p>
 我们首先阅读Log Format文档看看log存储格式(leveldb采用redo-log来记日志)。每个block都划分成为32KB，里面可能会存在很多条记录，
@@ -401,21 +372,16 @@ not necessarily the format.
 pros有：
 </p>
 <ul class="org-ul">
-<li>如果磁盘数据发生损坏的话，那么对于数据定位的话非常简单。如果这个block出现问题的话那么直接跳过这个block即可。
-</li>
-<li>程序处理方面可以很容易地找到边界。
-</li>
-<li>对于单条大数据处理的话我们不需要分配很大的内存来做buffer.
-</li>
+<li>如果磁盘数据发生损坏的话，那么对于数据定位的话非常简单。如果这个block出现问题的话那么直接跳过这个block即可。</li>
+<li>程序处理方面可以很容易地找到边界。</li>
+<li>对于单条大数据处理的话我们不需要分配很大的内存来做buffer.</li>
 </ul>
 <p>
 cons有：
 </p>
 <ul class="org-ul">
-<li>没有针对小record进行优化，比如如果record足够小的话完全可以在length部分使用1个字节。
-</li>
-<li>没有进行压缩。对于压缩率完全取决于实现。对于小数据来说的话压缩比可能不高，对于大数据来说比如超过32KB的话，
-</li>
+<li>没有针对小record进行优化，比如如果record足够小的话完全可以在length部分使用1个字节。</li>
+<li>没有进行压缩。对于压缩率完全取决于实现。对于小数据来说的话压缩比可能不高，对于大数据来说比如超过32KB的话，</li>
 </ul>
 <p>
 取决于是按照32KB单个block压缩呢(压缩率可能不高),还是先针对整体压缩(压缩率可能比较耗，但是却需要很大的buffer).
@@ -423,23 +389,18 @@ cons有：
 </div>
 </div>
 
-<div id="outline-container-sec-4-3" class="outline-3">
-<h3 id="sec-4-3"><span class="section-number-3">4.3</span> DiskTable</h3>
+<div id="outline-container-org41d1e30" class="outline-3">
+<h3 id="org41d1e30"><span class="section-number-3">4.3</span> DiskTable</h3>
 <div class="outline-text-3" id="text-4-3">
 <p>
 然后可以看看Table Format文档关于table存储格式。table存储格式里面主要包括几个部分：
 </p>
 <ul class="org-ul">
-<li>data block
-</li>
-<li>meta block
-</li>
-<li>meta index block
-</li>
-<li>data index block
-</li>
-<li>footer
-</li>
+<li>data block</li>
+<li>meta block</li>
+<li>meta index block</li>
+<li>data index block</li>
+<li>footer</li>
 </ul>
 <p>
 footer部分是放在最末尾的，里面包含了data index block以及meta index block的偏移信息，读取table时候从末尾读取。
@@ -478,8 +439,8 @@ seperator可以设置成为ac.seperator的生成可以参考Comparator.使用尽
 </div>
 </div>
 
-<div id="outline-container-sec-5" class="outline-2">
-<h2 id="sec-5"><span class="section-number-2">5</span> Compaction</h2>
+<div id="outline-container-org707e5a9" class="outline-2">
+<h2 id="org707e5a9"><span class="section-number-2">5</span> Compaction</h2>
 <div class="outline-text-2" id="text-5">
 <p>
 对于Compaction触发的策略牵扯到了算法问题，自己表示没有仔细看这个策略(其实当时看了但是完全没有理解).这里谈谈compaction如何删除文件的问题。
@@ -527,7 +488,6 @@ in the cache and we will only need to worry about the O(N) complexity in the mer
 其中第二点感觉非常好就是认为控制写入速度当level0文件过多的时候。在db_impl.cc DBImpl::MakeRoomForWrite这个应该是在memtable缺少空间的时候的函数.
 </p>
 <div class="org-src-container">
-
 <pre class="src src-C++">  allow_delay &amp;&amp;
   versions_-&gt;NumLevelFiles(0) &gt;= <span class="org-constant">config</span>::kL0_SlowdownWritesTrigger) {
 <span class="org-comment-delimiter">// </span><span class="org-comment">We are getting close to hitting a hard limit on the number of</span>
@@ -545,8 +505,8 @@ mutex_.Lock();
 </div>
 </div>
 
-<div id="outline-container-sec-6" class="outline-2">
-<h2 id="sec-6"><span class="section-number-2">6</span> Recovery</h2>
+<div id="outline-container-org9dc3dd7" class="outline-2">
+<h2 id="org9dc3dd7"><span class="section-number-2">6</span> Recovery</h2>
 <div class="outline-text-2" id="text-6">
 <p>
 这里稍微总结一下 <a href="http://leveldb.googlecode.com/svn/trunk/doc/impl.html">http://leveldb.googlecode.com/svn/trunk/doc/impl.html</a> 提到的关于recovery的部分。幸运的是在阅读这个文档的时候也让我重新仔细地思考了一下这个recovery过程可能会如何进行的。
@@ -556,12 +516,9 @@ mutex_.Lock();
 我们主要关注三个数据的恢复：
 </p>
 <ul class="org-ul">
-<li>用户的data(log)
-</li>
-<li>leveldb所管理的文件(MANIFEST)
-</li>
-<li>内部生成的sequence number(MANIFEST)
-</li>
+<li>用户的data(log)</li>
+<li>leveldb所管理的文件(MANIFEST)</li>
+<li>内部生成的sequence number(MANIFEST)</li>
 </ul>
 
 <p>
@@ -584,8 +541,8 @@ sequence number恢复。
 </div>
 </div>
 
-<div id="outline-container-sec-7" class="outline-2">
-<h2 id="sec-7"><span class="section-number-2">7</span> Snapshot</h2>
+<div id="outline-container-orgc617a67" class="outline-2">
+<h2 id="orgc617a67"><span class="section-number-2">7</span> Snapshot</h2>
 <div class="outline-text-2" id="text-7">
 <p>
 Snapshot集合在leveldb里面组织成为一个链表，oldest的节点必然最小的snapshot。对于每一个snapshot配备一个sequence number,
@@ -595,8 +552,8 @@ Snapshot集合在leveldb里面组织成为一个链表，oldest的节点必然�
 </div>
 </div>
 
-<div id="outline-container-sec-8" class="outline-2">
-<h2 id="sec-8"><span class="section-number-2">8</span> Cache</h2>
+<div id="outline-container-orgaeea89d" class="outline-2">
+<h2 id="orgaeea89d"><span class="section-number-2">8</span> Cache</h2>
 <div class="outline-text-2" id="text-8">
 <p>
 对于leveldb来说的话存在两个cache系统，一个是TableCache，一个是BlockCache.其中TableCache是用来缓存文件描述符的，
@@ -623,51 +580,35 @@ Cache主要用来解决读取问题，做写穿透并且让Cache失效即可。l
 </div>
 </div>
 
-<div id="outline-container-sec-9" class="outline-2">
-<h2 id="sec-9"><span class="section-number-2">9</span> Option</h2>
+<div id="outline-container-orga94f141" class="outline-2">
+<h2 id="orga94f141"><span class="section-number-2">9</span> Option</h2>
 <div class="outline-text-2" id="text-9">
 <p>
 在options.h里面有一些leveldb可选的选项。
 </p>
 <ul class="org-ul">
-<li>comparator.用户可以指定比较器
-</li>
-<li>create_if_missing.如果数据库不存在就创建
-</li>
-<li>error_if_exists.如果数据库存在就报错
-</li>
-<li>paranoid_checks.尽可能多地进行错误检查
-</li>
-<li>env.用户可以模拟db环境
-</li>
-<li>info_log.leveldb本身logger.
-</li>
-<li>write_buffer_size.memtable大小
-</li>
-<li>max_open_files.最大打开fd数量
-</li>
-<li>block_cache.Table读取data block的cache.
-</li>
-<li>block_size.Table里面Block大小
-</li>
-<li>block_restart_interval.在一个Block里面每隔多少个key创建一个restart point.
-</li>
-<li>compression.DataBlock是否需要压缩
-</li>
-<li>filter_policy.过滤策略默认就是bloom filter.
-</li>
-<li>verify_checksums.读取block时候是否校验checksum
-</li>
-<li>fill_cache.读取block是否会Cache.通常scan时候不要做cache
-</li>
-<li>sync.leveldb内部发起write的话是否会调用fsync.
-</li>
+<li>comparator.用户可以指定比较器</li>
+<li>create_if_missing.如果数据库不存在就创建</li>
+<li>error_if_exists.如果数据库存在就报错</li>
+<li>paranoid_checks.尽可能多地进行错误检查</li>
+<li>env.用户可以模拟db环境</li>
+<li>info_log.leveldb本身logger.</li>
+<li>write_buffer_size.memtable大小</li>
+<li>max_open_files.最大打开fd数量</li>
+<li>block_cache.Table读取data block的cache.</li>
+<li>block_size.Table里面Block大小</li>
+<li>block_restart_interval.在一个Block里面每隔多少个key创建一个restart point.</li>
+<li>compression.DataBlock是否需要压缩</li>
+<li>filter_policy.过滤策略默认就是bloom filter.</li>
+<li>verify_checksums.读取block时候是否校验checksum</li>
+<li>fill_cache.读取block是否会Cache.通常scan时候不要做cache</li>
+<li>sync.leveldb内部发起write的话是否会调用fsync.</li>
 </ul>
 </div>
 </div>
 
-<div id="outline-container-sec-10" class="outline-2">
-<h2 id="sec-10"><span class="section-number-2">10</span> Discussion</h2>
+<div id="outline-container-org9ca6f8e" class="outline-2">
+<h2 id="org9ca6f8e"><span class="section-number-2">10</span> Discussion</h2>
 <div class="outline-text-2" id="text-10">
 <p>
 leveldb通过iterator遍历，对于相同的key如何保证获取到最新的值（hpplinux)
@@ -707,7 +648,7 @@ void Version::AddIterators(const ReadOptions&amp; options,
 这样的策略的话会不会导致较老的数据被留下，较新的被删除 ？
 </pre>
 
-<hr  />
+<hr />
 
 <p>
 <b>Answer</b>
@@ -718,7 +659,6 @@ void Version::AddIterators(const ReadOptions&amp; options,
 </p>
 
 <div class="org-src-container">
-
 <pre class="src src-C++"><span class="org-comment-delimiter">// </span><span class="org-comment">&#23545;&#20110;version&#26469;&#35828;&#21487;&#33021;&#23384;&#22312;&#24456;&#22810;&#25991;&#20214;&#38656;&#35201;&#36941;&#21382;.</span>
 versions_-&gt;current()-&gt;AddIterators(options, &amp;list);
 <span class="org-comment-delimiter">// </span><span class="org-comment">&#23558;&#36825;&#20123;&#20869;&#23481;&#26500;&#36896;&#31216;&#20026;&#19968;&#20010;merge iterator.</span>
@@ -733,7 +673,6 @@ versions_-&gt;current()-&gt;AddIterators(options, &amp;list);
 </p>
 
 <div class="org-src-container">
-
 <pre class="src src-C++"><span class="org-type">int</span> <span class="org-constant">InternalKeyComparator</span>::<span class="org-function-name">Compare</span>(<span class="org-keyword">const</span> <span class="org-type">Slice</span>&amp; <span class="org-variable-name">akey</span>, <span class="org-keyword">const</span> <span class="org-type">Slice</span>&amp; <span class="org-variable-name">bkey</span>) <span class="org-keyword">const</span> {
   <span class="org-comment-delimiter">// </span><span class="org-comment">Order by:</span>
   <span class="org-comment-delimiter">//    </span><span class="org-comment">increasing user key (according to user-supplied comparator)</span>
@@ -752,6 +691,7 @@ versions_-&gt;current()-&gt;AddIterators(options, &amp;list);
   }
   <span class="org-keyword">return</span> r;
 }
+
 </pre>
 </div>
 

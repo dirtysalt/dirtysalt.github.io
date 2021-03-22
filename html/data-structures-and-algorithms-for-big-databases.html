@@ -3,10 +3,11 @@
 "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
 <html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
 <head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Data Structures and Algorithms for Big Databases</title>
-<meta  http-equiv="Content-Type" content="text/html;charset=utf-8" />
-<meta  name="generator" content="Org-mode" />
-<meta  name="author" content="dirtysalt" />
+<meta name="generator" content="Org mode" />
+<meta name="author" content="dirtysalt" />
 <link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
 <body>
 <div id="content">
@@ -15,110 +16,87 @@
 <h2>Table of Contents</h2>
 <div id="text-table-of-contents">
 <ul>
-<li><a href="#sec-1">1. Overview</a></li>
-<li><a href="#sec-2">2. I/O Model and Cache-Oblivious</a>
+<li><a href="#org10aac64">1. Overview</a></li>
+<li><a href="#org470695f">2. I/O Model and Cache-Oblivious</a>
 <ul>
-<li><a href="#sec-2-1">2.1. Modeling I/O Using the Disk Access Model</a></li>
-<li><a href="#sec-2-2">2.2. Cache-Oblivious Analysis</a></li>
+<li><a href="#org590be98">2.1. Modeling I/O Using the Disk Access Model</a></li>
+<li><a href="#orgb9d5811">2.2. Cache-Oblivious Analysis</a></li>
 </ul>
 </li>
-<li><a href="#sec-3">3. Write-Optimized Data Structures</a></li>
-<li><a href="#sec-4">4. TokuFS&#x2013;How to Make a Write-Optimized File System</a></li>
-<li><a href="#sec-5">5. Paging</a></li>
-<li><a href="#sec-6">6. What to Index</a></li>
-<li><a href="#sec-7">7. Log Structured Merge Trees</a></li>
-<li><a href="#sec-8">8. Bloom Filters</a></li>
-<li><a href="#sec-9">9. Closing Words</a></li>
+<li><a href="#org875bc9c">3. Write-Optimized Data Structures</a></li>
+<li><a href="#org4af6598">4. TokuFS&#x2013;How to Make a Write-Optimized File System</a></li>
+<li><a href="#org7f167ca">5. Paging</a></li>
+<li><a href="#orgec77c72">6. What to Index</a></li>
+<li><a href="#orgdb661b2">7. Log Structured Merge Trees</a></li>
+<li><a href="#org9f18449">8. Bloom Filters</a></li>
+<li><a href="#orgd70fcdf">9. Closing Words</a></li>
 </ul>
 </div>
 </div>
-<div id="outline-container-sec-1" class="outline-2">
-<h2 id="sec-1"><span class="section-number-2">1</span> Overview</h2>
+<div id="outline-container-org10aac64" class="outline-2">
+<h2 id="org10aac64"><span class="section-number-2">1</span> Overview</h2>
 <div class="outline-text-2" id="text-1">
 <ul class="org-ul">
-<li>Michael A. Bender @ Stony Brook &amp; Tokutek
-</li>
-<li>Bradley C. Kuszmaul @ MIT &amp; Tokutek
-</li>
+<li>Michael A. Bender @ Stony Brook &amp; Tokutek</li>
+<li>Bradley C. Kuszmaul @ MIT &amp; Tokutek</li>
 </ul>
 
 <p>
 Funny tradeoff in ingestion, querying, freshness
 </p>
 <ul class="org-ul">
-<li>“I'm trying to create indexes on a table with 308 million rows. It took ~20 minutes to load the table but 10 days to build indexes on it.”
-</li>
-<li>“Select queries were slow until I added an index onto the timestamp field&#x2026;Adding the index really helped our reporting, BUT now the inserts are taking forever.”
-</li>
-<li>“They indexed their tables, and indexed them well, And lo, did the queries run quick! But that wasn’t the last of their troubles, to tell-Their insertions, like treacle, ran thick.”
-</li>
-<li><b>在DBMS设计上如何使得insert,query,index高效快速</b>
-</li>
+<li>“I'm trying to create indexes on a table with 308 million rows. It took ~20 minutes to load the table but 10 days to build indexes on it.”</li>
+<li>“Select queries were slow until I added an index onto the timestamp field&#x2026;Adding the index really helped our reporting, BUT now the inserts are taking forever.”</li>
+<li>“They indexed their tables, and indexed them well, And lo, did the queries run quick! But that wasn’t the last of their troubles, to tell-Their insertions, like treacle, ran thick.”</li>
+<li><b>在DBMS设计上如何使得insert,query,index高效快速</b></li>
 </ul>
 
 <p>
 What we mean by Big Data
 </p>
 <ul class="org-ul">
-<li>We don’t define Big Data in terms of TB, PB, EB. <b>不以数据量来定义大数据</b>
-</li>
+<li>We don’t define Big Data in terms of TB, PB, EB. <b>不以数据量来定义大数据</b></li>
 <li>By Big Data, we mean
 <ul class="org-ul">
-<li>The data is too big to fit in main memory. <b>数据不能够全部放在内存中</b>
-</li>
-<li>We need data structures on the data. <b>设计良好的数据结构存储数据</b>
-</li>
-<li>Words like “index” or “metadata” suggest that there are underlying data structures
-</li>
-<li>These data structures are also too big to fit in main memory.
-</li>
-</ul>
-</li>
+<li>The data is too big to fit in main memory. <b>数据不能够全部放在内存中</b></li>
+<li>We need data structures on the data. <b>设计良好的数据结构存储数据</b></li>
+<li>Words like “index” or “metadata” suggest that there are underlying data structures</li>
+<li>These data structures are also too big to fit in main memory.</li>
+</ul></li>
 </ul>
 
 <p>
 Topics and Outline for this Tutorial
 </p>
 <ul class="org-ul">
-<li>I/O model and cache-oblivious analysis. IO模型和cache-oblivious分析
-</li>
-<li>Write-optimized data structures. 写优化数据结构
-</li>
-<li>How write-optimized data structures can help file systems. 写优化数据结构如何影响文件系统
-</li>
-<li>Block-replacement algorithms. block替换算法/Cache替换算法
-</li>
-<li>Indexing strategies. 索引策略
-</li>
-<li>Log-structured merge trees. LSM
-</li>
-<li>Bloom filters.
-</li>
+<li>I/O model and cache-oblivious analysis. IO模型和cache-oblivious分析</li>
+<li>Write-optimized data structures. 写优化数据结构</li>
+<li>How write-optimized data structures can help file systems. 写优化数据结构如何影响文件系统</li>
+<li>Block-replacement algorithms. block替换算法/Cache替换算法</li>
+<li>Indexing strategies. 索引策略</li>
+<li>Log-structured merge trees. LSM</li>
+<li>Bloom filters.</li>
 </ul>
 </div>
 </div>
 
-<div id="outline-container-sec-2" class="outline-2">
-<h2 id="sec-2"><span class="section-number-2">2</span> I/O Model and Cache-Oblivious</h2>
+<div id="outline-container-org470695f" class="outline-2">
+<h2 id="org470695f"><span class="section-number-2">2</span> I/O Model and Cache-Oblivious</h2>
 <div class="outline-text-2" id="text-2">
-</div><div id="outline-container-sec-2-1" class="outline-3">
-<h3 id="sec-2-1"><span class="section-number-3">2.1</span> Modeling I/O Using the Disk Access Model</h3>
+</div>
+<div id="outline-container-org590be98" class="outline-3">
+<h3 id="org590be98"><span class="section-number-3">2.1</span> Modeling I/O Using the Disk Access Model</h3>
 <div class="outline-text-3" id="text-2-1">
 <ul class="org-ul">
 <li>How computation works:
 <ul class="org-ul">
-<li>Data is transferred in blocks between RAM and disk. 考虑数据在RAM和disk之间传输
-</li>
-<li>The # of block transfers dominates the running time. 传输的block数目决定了运行时间
-</li>
-</ul>
-</li>
+<li>Data is transferred in blocks between RAM and disk. 考虑数据在RAM和disk之间传输</li>
+<li>The # of block transfers dominates the running time. 传输的block数目决定了运行时间</li>
+</ul></li>
 <li>Goal: Minimize # of block transfers
 <ul class="org-ul">
-<li>Performance bounds are parameterized by block size B, memory size M, data size N.
-</li>
-</ul>
-</li>
+<li>Performance bounds are parameterized by block size B, memory size M, data size N.</li>
+</ul></li>
 </ul>
 
 
@@ -134,12 +112,9 @@ merge-sort analysis非常精辟，每次merge run是M/B. 这点非常重要，�
 <ul class="org-ul">
 <li>The DAM Model is a Simplification
 <ul class="org-ul">
-<li>ignores CPU costs and 没有考虑到CPU开销，仅仅是考虑IO开销
-</li>
-<li>assumes that all block accesses have the same cost. 假设所有的block访问时间都是相同的
-</li>
-</ul>
-</li>
+<li>ignores CPU costs and 没有考虑到CPU开销，仅仅是考虑IO开销</li>
+<li>assumes that all block accesses have the same cost. 假设所有的block访问时间都是相同的</li>
+</ul></li>
 </ul>
 
 
@@ -151,41 +126,31 @@ merge-sort analysis非常精辟，每次merge run是M/B. 这点非常重要，�
 </div>
 </div>
 
-<div id="outline-container-sec-2-2" class="outline-3">
-<h3 id="sec-2-2"><span class="section-number-3">2.2</span> Cache-Oblivious Analysis</h3>
+<div id="outline-container-orgb9d5811" class="outline-3">
+<h3 id="orgb9d5811"><span class="section-number-3">2.2</span> Cache-Oblivious Analysis</h3>
 <div class="outline-text-3" id="text-2-2">
 <ul class="org-ul">
 <li>Cache-oblivious analysis:
 <ul class="org-ul">
-<li>Parameters B, M are unknown to the algorithm or coder.
-</li>
-<li>Performance bounds are parameterized by block size B, memory size M, data size N.
-</li>
-</ul>
-</li>
-<li>Goal (as before): Minimize # of block transfer
-</li>
-<li>Cache-oblivious algorithms work for all B and M
-</li>
-<li>It’s better to optimize approximately for all B, M than to pick the best B and M.
-</li>
-<li>#note: 所谓的cache-oblivious就是忘记B，M这些参数，算法的优化不要依赖B，M这些参数的组合，而必须使得所有任意的B，M组合都足够好
-</li>
+<li>Parameters B, M are unknown to the algorithm or coder.</li>
+<li>Performance bounds are parameterized by block size B, memory size M, data size N.</li>
+</ul></li>
+<li>Goal (as before): Minimize # of block transfer</li>
+<li>Cache-oblivious algorithms work for all B and M</li>
+<li>It’s better to optimize approximately for all B, M than to pick the best B and M.</li>
+<li>#note: 所谓的cache-oblivious就是忘记B，M这些参数，算法的优化不要依赖B，M这些参数的组合，而必须使得所有任意的B，M组合都足够好</li>
 </ul>
 </div>
 </div>
 </div>
 
-<div id="outline-container-sec-3" class="outline-2">
-<h2 id="sec-3"><span class="section-number-2">3</span> Write-Optimized Data Structures</h2>
+<div id="outline-container-org875bc9c" class="outline-2">
+<h2 id="org875bc9c"><span class="section-number-2">3</span> Write-Optimized Data Structures</h2>
 <div class="outline-text-2" id="text-3">
 <ul class="org-ul">
-<li>Data structures: [O'Neil,Cheng, Gawlick, O'Neil 96], [Buchsbaum, Goldwasser, Venkatasubramanian, Westbrook 00], [Argel 03], [Graefe 03], [Brodal, Fagerberg 03], [Bender, Farach,Fineman,Fogel, Kuszmaul, Nelson’07], [Brodal, Demaine, Fineman, Iacono, Langerman, Munro 10], [Spillane, Shetty, Zadok, Archak, Dixit 11].
-</li>
-<li>Systems: BigTable, Cassandra, H-Base, LevelDB, TokuDB.
-</li>
-<li>#note: 大部分都是LSM实现
-</li>
+<li>Data structures: [O'Neil,Cheng, Gawlick, O'Neil 96], [Buchsbaum, Goldwasser, Venkatasubramanian, Westbrook 00], [Argel 03], [Graefe 03], [Brodal, Fagerberg 03], [Bender, Farach,Fineman,Fogel, Kuszmaul, Nelson’07], [Brodal, Demaine, Fineman, Iacono, Langerman, Munro 10], [Spillane, Shetty, Zadok, Archak, Dixit 11].</li>
+<li>Systems: BigTable, Cassandra, H-Base, LevelDB, TokuDB.</li>
+<li>#note: 大部分都是LSM实现</li>
 </ul>
 
 <p>
@@ -216,136 +181,98 @@ merge-sort analysis非常精辟，每次merge run是M/B. 这点非常重要，�
 事实上非常有意思的事情是， <b>The right read-optimization is write-optimization</b>
 </p>
 <ul class="org-ul">
-<li>The right index makes queries run fast. 正确的索引可以使得查询非常快速
-</li>
-<li>Write-optimized structures maintain indexes efficiently. 而写优化数据结构可以有效地维护索引
-</li>
-<li>Fast writing is a currency we use to accelerate queries. Better indexing means faster queries.
-</li>
-<li>Write-optimized structures can significantly mitigate the insert/query/freshness tradeoff. 写优化的数据结构可以在insert/query/freshness上达到平衡
-</li>
+<li>The right index makes queries run fast. 正确的索引可以使得查询非常快速</li>
+<li>Write-optimized structures maintain indexes efficiently. 而写优化数据结构可以有效地维护索引</li>
+<li>Fast writing is a currency we use to accelerate queries. Better indexing means faster queries.</li>
+<li>Write-optimized structures can significantly mitigate the insert/query/freshness tradeoff. 写优化的数据结构可以在insert/query/freshness上达到平衡</li>
 </ul>
 
 <p>
 Optimal read-write tradeoff: Easy Full featured: Hard 实现需要考虑如下问题:
 </p>
 <ul class="org-ul">
-<li>Variable-sized rows
-</li>
-<li>Concurrency-control mechanisms
-</li>
-<li>Multithreading
-</li>
-<li>Transactions, logging, ACID-compliant crash recovery
-</li>
-<li>Optimizations for the special cases of sequential inserts and bulk loads
-</li>
-<li>Compression
-</li>
-<li>Backup
-</li>
+<li>Variable-sized rows</li>
+<li>Concurrency-control mechanisms</li>
+<li>Multithreading</li>
+<li>Transactions, logging, ACID-compliant crash recovery</li>
+<li>Optimizations for the special cases of sequential inserts and bulk loads</li>
+<li>Compression</li>
+<li>Backup</li>
 </ul>
 </div>
 </div>
 
-<div id="outline-container-sec-4" class="outline-2">
-<h2 id="sec-4"><span class="section-number-2">4</span> TokuFS&#x2013;How to Make a Write-Optimized File System</h2>
+<div id="outline-container-org4af6598" class="outline-2">
+<h2 id="org4af6598"><span class="section-number-2">4</span> TokuFS&#x2013;How to Make a Write-Optimized File System</h2>
 <div class="outline-text-2" id="text-4">
 <ul class="org-ul">
-<li>Microdata is the Problem 重点解决元数据存储问题
-</li>
+<li>Microdata is the Problem 重点解决元数据存储问题</li>
 </ul>
 </div>
 </div>
 
-<div id="outline-container-sec-5" class="outline-2">
-<h2 id="sec-5"><span class="section-number-2">5</span> Paging</h2>
+<div id="outline-container-org7f167ca" class="outline-2">
+<h2 id="org7f167ca"><span class="section-number-2">5</span> Paging</h2>
 <div class="outline-text-2" id="text-5">
 <ul class="org-ul">
 <li>Paging Algorithms
 <ul class="org-ul">
-<li>LRU (least recently used) Discard block whose most recent access is earliest.
-</li>
-<li>FIFO (first in, first out) Discard the block brought in longest ago.
-</li>
-<li>LFU (least frequently used) Discard the least popular block.
-</li>
-<li>Random Discard a random block.
-</li>
-<li>LFD (longest forward distance)=OPT [Belady 69] Discard block whose next access is farthest in the future. <b>optimal</b>
-</li>
-</ul>
-</li>
+<li>LRU (least recently used) Discard block whose most recent access is earliest.</li>
+<li>FIFO (first in, first out) Discard the block brought in longest ago.</li>
+<li>LFU (least frequently used) Discard the least popular block.</li>
+<li>Random Discard a random block.</li>
+<li>LFD (longest forward distance)=OPT [Belady 69] Discard block whose next access is farthest in the future. <b>optimal</b></li>
+</ul></li>
 </ul>
 </div>
 </div>
 
-<div id="outline-container-sec-6" class="outline-2">
-<h2 id="sec-6"><span class="section-number-2">6</span> What to Index</h2>
+<div id="outline-container-orgec77c72" class="outline-2">
+<h2 id="orgec77c72"><span class="section-number-2">6</span> What to Index</h2>
 <div class="outline-text-2" id="text-6">
 <ul class="org-ul">
 <li>Indexes provide query performance
 <ol class="org-ol">
-<li>Indexes can reduce the amount of retrieved data.
-</li>
-</ol>
-</li>
+<li>Indexes can reduce the amount of retrieved data.</li>
+</ol></li>
 <li>Less bandwidth, less processing, &#x2026;
 <ol class="org-ol">
-<li>Indexes can improve locality.
-</li>
-</ol>
-</li>
-<li>Not all data access cost is the same
-</li>
+<li>Indexes can improve locality.</li>
+</ol></li>
+<li>Not all data access cost is the same</li>
 <li>Sequential access is MUCH faster than random access
 <ol class="org-ol">
-<li>Indexes can presort data.
-</li>
-</ol>
-</li>
-<li>GROUP BY and ORDER BY queries do post-retrieval work
-</li>
-<li>Indexing can help get rid of this work
-</li>
+<li>Indexes can presort data.</li>
+</ol></li>
+<li>GROUP BY and ORDER BY queries do post-retrieval work</li>
+<li>Indexing can help get rid of this work</li>
 </ul>
 </div>
 </div>
 
-<div id="outline-container-sec-7" class="outline-2">
-<h2 id="sec-7"><span class="section-number-2">7</span> Log Structured Merge Trees</h2>
+<div id="outline-container-orgdb661b2" class="outline-2">
+<h2 id="orgdb661b2"><span class="section-number-2">7</span> Log Structured Merge Trees</h2>
 <div class="outline-text-2" id="text-7">
 <p>
 #todo: LSM algorithm analysis
 </p>
 
 <ul class="org-ul">
-<li>Log structured merge trees are write-optimized data structures developed in the 90s.
-</li>
-<li>Over the past 5 years, LSM trees have become popular (for good reason).
-</li>
-<li>Accumulo, Bigtable, bLSM, Cassandra, HBase, Hypertable, LevelDB are LSM trees (or borrow ideas).
-</li>
-<li><a href="http://nosql-database.org">http://nosql-database.org</a> lists 122 NoSQL databases. Many of them are LSM trees.
-</li>
+<li>Log structured merge trees are write-optimized data structures developed in the 90s.</li>
+<li>Over the past 5 years, LSM trees have become popular (for good reason).</li>
+<li>Accumulo, Bigtable, bLSM, Cassandra, HBase, Hypertable, LevelDB are LSM trees (or borrow ideas).</li>
+<li><a href="http://nosql-database.org">http://nosql-database.org</a> lists 122 NoSQL databases. Many of them are LSM trees.</li>
 <li>Looking in all those trees is expensive, but can be improved by
 <ul class="org-ul">
-<li>caching,
-</li>
-<li>Bloom filters, and
-</li>
+<li>caching,</li>
+<li>Bloom filters, and</li>
 <li><b>fractional cascading. 根据在上一个subtree query结果帮助在下一个subtree query.</b>
 <ul class="org-ul">
-<li>Instead of avoiding searches in trees, we can use a technique called fractional cascading to reduce the cost of searching each B-tree to O(1).
-</li>
-<li>Idea: We’re looking for a key, and we already know where it should have been in T3, try to use that information to search T4.
-</li>
-<li><b>forward pointer and ghost pointer</b>
-</li>
-</ul>
-</li>
-</ul>
-</li>
+<li>Instead of avoiding searches in trees, we can use a technique called fractional cascading to reduce the cost of searching each B-tree to O(1).</li>
+<li>Idea: We’re looking for a key, and we already know where it should have been in T3, try to use that information to search T4.</li>
+<li><b>forward pointer and ghost pointer</b></li>
+</ul></li>
+</ul></li>
 </ul>
 
 
@@ -363,38 +290,29 @@ Optimal read-write tradeoff: Easy Full featured: Hard 实现需要考虑如下�
 </div>
 </div>
 
-<div id="outline-container-sec-8" class="outline-2">
-<h2 id="sec-8"><span class="section-number-2">8</span> Bloom Filters</h2>
+<div id="outline-container-org9f18449" class="outline-2">
+<h2 id="org9f18449"><span class="section-number-2">8</span> Bloom Filters</h2>
 <div class="outline-text-2" id="text-8">
 <ul class="org-ul">
-<li>If n items are in an array of size m, then the chances of getting a YES answer on an element that is not there is 1 - e^(-n /m)
-</li>
-<li>Counting bloom filters [Fan, Cao, Almeida, Broder 2000] allow deletions by maintaining a 4-bit counter instead of a single bit per object.
-</li>
-<li>Buffered Bloom Filters [Canin, Mihaila, Bhattacharhee, and Ross, 2010] employ hash localization to direct all the hashes of a single insertion to the same block.
-</li>
-<li>Cascade Filters [Bender, Farach-Colton, Johnson, Kraner, Kuszmaul, Medjedovic, Montes, Shetty, Spillane, Zadok 2011] support deletions, exhibit locality for queries, insert quickly, and are cache-oblivious.
-</li>
+<li>If n items are in an array of size m, then the chances of getting a YES answer on an element that is not there is 1 - e^(-n /m)</li>
+<li>Counting bloom filters [Fan, Cao, Almeida, Broder 2000] allow deletions by maintaining a 4-bit counter instead of a single bit per object.</li>
+<li>Buffered Bloom Filters [Canin, Mihaila, Bhattacharhee, and Ross, 2010] employ hash localization to direct all the hashes of a single insertion to the same block.</li>
+<li>Cascade Filters [Bender, Farach-Colton, Johnson, Kraner, Kuszmaul, Medjedovic, Montes, Shetty, Spillane, Zadok 2011] support deletions, exhibit locality for queries, insert quickly, and are cache-oblivious.</li>
 </ul>
 </div>
 </div>
 
-<div id="outline-container-sec-9" class="outline-2">
-<h2 id="sec-9"><span class="section-number-2">9</span> Closing Words</h2>
+<div id="outline-container-orgd70fcdf" class="outline-2">
+<h2 id="orgd70fcdf"><span class="section-number-2">9</span> Closing Words</h2>
 <div class="outline-text-2" id="text-9">
 <ul class="org-ul">
 <li>Big Data Epigrams
 <ul class="org-ul">
-<li>The problem with big data is microdata.
-</li>
-<li>Sometimes the right read optimization is a write-optimization.
-</li>
-<li>As data becomes bigger, the asymptotics become more important.
-</li>
-<li>Life is too short for half-dry white-board markers and bad sushi.
-</li>
-</ul>
-</li>
+<li>The problem with big data is microdata.</li>
+<li>Sometimes the right read optimization is a write-optimization.</li>
+<li>As data becomes bigger, the asymptotics become more important.</li>
+<li>Life is too short for half-dry white-board markers and bad sushi.</li>
+</ul></li>
 </ul>
 </div>
 </div>

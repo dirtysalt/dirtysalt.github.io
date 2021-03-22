@@ -3,10 +3,11 @@
 "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
 <html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
 <head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Scaling Memcache at Facebook</title>
-<meta  http-equiv="Content-Type" content="text/html;charset=utf-8" />
-<meta  name="generator" content="Org-mode" />
-<meta  name="author" content="dirtysalt" />
+<meta name="generator" content="Org mode" />
+<meta name="author" content="dirtysalt" />
 <link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
 <body>
 <div id="content">
@@ -15,12 +16,9 @@
 FB内部是如何利用和改进Memcache集群的。在FB内部，memcache被集中管理起来分为3个层次：
 </p>
 <ol class="org-ol">
-<li>cluster.  可以认为是一个机架内的集群
-</li>
-<li>region. 一个机房内多个cluster组成的集群
-</li>
-<li>across region. 跨区域的集群
-</li>
+<li>cluster.  可以认为是一个机架内的集群</li>
+<li>region. 一个机房内多个cluster组成的集群</li>
+<li>across region. 跨区域的集群</li>
 </ol>
 <p>
 文章下面分别从这3个层次讲了他们使用和改进的地方
@@ -36,32 +34,22 @@ FB内部是如何利用和改进Memcache集群的。在FB内部，memcache被集
 在Cluster级别上如何减少延迟和负载：
 </p>
 <ol class="org-ol">
-<li>在Get请求上使用UDP而不是TCP直接去拿. 如果出现丢包(80%)或者是顺序错误(20%)的话，那么直接认为失败然后从storage层取数据，但是不回写到cache上。如果出现丢包通常以为机架上网络比较拥塞了，所以可能去直接去storage上拿回更好。产品上只有0.25%拿不到结果，而延迟可以减少20%. Set/Delete 还是走TCP并且连接mcrouter.
-</li>
-<li>Incast Congestion改进，使用sliding window机制避免拥塞。Client一次可能会请求大量的keys, 可以将这些keys进行切分，然后分批进行发送并且用window size控制最大并发数。
-</li>
-<li>Lease机制确保cache中不会被更新到stale数据。memcache在某个key被请求的时候会生成一个lease交给client, client拿到结果更新cache的时候会带上lease. 如果不一致的话，可以认为不是最新的cache数据，lease的有效期是10s，这个和从后端取数据的时间要对上。lease机制还可以改善thundering herds情况，如果瞬时有许多client请求一个key的时候，如果这上面已经分配了lease的话，说明已经有个client在去后端要数据了，这个时候可以让其他client在等等。通常几个毫秒第一个client就可以拿到数据。
-</li>
-<li>组成memcache pools. 根据keys的set size以及expiry time拆分成为多个pools，避免出现内存换出造成效率不够。这个论文中给出了两个pool的数据low-churn和high-churn.  low-churn通常是是数据不怎么变，但是计算代价比较高，需要内存不多。而high-churn则数据更新特别频繁，可能占用内存比较多。如果这两类workload混布的话，high-churn可能会把low-churn的数据给挤出去。
-</li>
-<li>replication with pools. 如果keys都落在少数几台机器上，那么做replication可以有效减少带宽。
-</li>
-<li>Gutter 是cluster里面1%的memcache备用服务器，如果出现故障client拿不到cache数据的话，就会来gutter上拿cache数据或者是更新。到gutter上的数据expiry time都比较短，但是我估计也有10s左右，可能读到stale数据，主要是缓解服务器故障时候瞬时压力的。
-</li>
+<li>在Get请求上使用UDP而不是TCP直接去拿. 如果出现丢包(80%)或者是顺序错误(20%)的话，那么直接认为失败然后从storage层取数据，但是不回写到cache上。如果出现丢包通常以为机架上网络比较拥塞了，所以可能去直接去storage上拿回更好。产品上只有0.25%拿不到结果，而延迟可以减少20%. Set/Delete 还是走TCP并且连接mcrouter.</li>
+<li>Incast Congestion改进，使用sliding window机制避免拥塞。Client一次可能会请求大量的keys, 可以将这些keys进行切分，然后分批进行发送并且用window size控制最大并发数。</li>
+<li>Lease机制确保cache中不会被更新到stale数据。memcache在某个key被请求的时候会生成一个lease交给client, client拿到结果更新cache的时候会带上lease. 如果不一致的话，可以认为不是最新的cache数据，lease的有效期是10s，这个和从后端取数据的时间要对上。lease机制还可以改善thundering herds情况，如果瞬时有许多client请求一个key的时候，如果这上面已经分配了lease的话，说明已经有个client在去后端要数据了，这个时候可以让其他client在等等。通常几个毫秒第一个client就可以拿到数据。</li>
+<li>组成memcache pools. 根据keys的set size以及expiry time拆分成为多个pools，避免出现内存换出造成效率不够。这个论文中给出了两个pool的数据low-churn和high-churn.  low-churn通常是是数据不怎么变，但是计算代价比较高，需要内存不多。而high-churn则数据更新特别频繁，可能占用内存比较多。如果这两类workload混布的话，high-churn可能会把low-churn的数据给挤出去。</li>
+<li>replication with pools. 如果keys都落在少数几台机器上，那么做replication可以有效减少带宽。</li>
+<li>Gutter 是cluster里面1%的memcache备用服务器，如果出现故障client拿不到cache数据的话，就会来gutter上拿cache数据或者是更新。到gutter上的数据expiry time都比较短，但是我估计也有10s左右，可能读到stale数据，主要是缓解服务器故障时候瞬时压力的。</li>
 </ol>
 
 <p>
 Region级别上主要是做Replication工作。所有web servers以及memcache servers以及storage server都是在同一个DC下面。web+memcache组成frontend clusters, 下面是共享的storage server.
 </p>
 <ol class="org-ol">
-<li>web server如果是update的话，那么会给自己的local cluster发送一个invalidation. 如果继续在这个cluster上访问的话，就可以做到read-after-write一致性，而没有做到across cluster级别的一致性。
-</li>
-<li>对于delete数据做到了across cluster级别的一致性（主要还是delete这个场景很tricky，你不知道是取不到还是没有数据）。这个实现方式很有意思，就是在storage server(具体是MySQL) 上拿到commit log. 如果commit log里面有delete操作的话，那么会发送给mcrouter, 通知所有的cluster去做invalidation.  具体可以看下图。大约有4%的删除操作。
-</li>
-<li>regional pool. 把多个cluster上的memcache组成pool. 因为多个cluster pool之间是replication的，所以内存利用率会较低。组成regional pool的话可以减少replication factor提高利用率，但是跨机架的带宽是单机架的40%左右，会有点稍高的延迟。
-</li>
-<li>cold cluster warmup. 如何对一个cold cluster做wamup, 可以将恢复过程从几天压缩到几个小时。思路就是client从从cold cluster拿不到的话，则从warmup cluster中拿到数据后回写一份到cold cluster上。但是里面有一致性问题。如果client在cold cluster上更新db，但是这个db数据并没有反应到wamup cluster上的话，那么写入cold cluster的数就是stale数据（我觉得也还好吧，最终还是会回来的，除非是delete操作）。解决办法就是，在cold cluster这个key上增加一个hold off time(2s),  在hold off time期间是不允许更新的。其实这个hold off time可以认为，这个delete propagation造成invalidation的时间是2s.  一旦cold cluster的hit rate到达一定标准，就认为warmup完成，就可以开始走正常逻辑了。
-</li>
+<li>web server如果是update的话，那么会给自己的local cluster发送一个invalidation. 如果继续在这个cluster上访问的话，就可以做到read-after-write一致性，而没有做到across cluster级别的一致性。</li>
+<li>对于delete数据做到了across cluster级别的一致性（主要还是delete这个场景很tricky，你不知道是取不到还是没有数据）。这个实现方式很有意思，就是在storage server(具体是MySQL) 上拿到commit log. 如果commit log里面有delete操作的话，那么会发送给mcrouter, 通知所有的cluster去做invalidation.  具体可以看下图。大约有4%的删除操作。</li>
+<li>regional pool. 把多个cluster上的memcache组成pool. 因为多个cluster pool之间是replication的，所以内存利用率会较低。组成regional pool的话可以减少replication factor提高利用率，但是跨机架的带宽是单机架的40%左右，会有点稍高的延迟。</li>
+<li>cold cluster warmup. 如何对一个cold cluster做wamup, 可以将恢复过程从几天压缩到几个小时。思路就是client从从cold cluster拿不到的话，则从warmup cluster中拿到数据后回写一份到cold cluster上。但是里面有一致性问题。如果client在cold cluster上更新db，但是这个db数据并没有反应到wamup cluster上的话，那么写入cold cluster的数就是stale数据（我觉得也还好吧，最终还是会回来的，除非是delete操作）。解决办法就是，在cold cluster这个key上增加一个hold off time(2s),  在hold off time期间是不允许更新的。其实这个hold off time可以认为，这个delete propagation造成invalidation的时间是2s.  一旦cold cluster的hit rate到达一定标准，就认为warmup完成，就可以开始走正常逻辑了。</li>
 </ol>
 
 
@@ -79,18 +67,12 @@ Across Regions 里面有点很有意思，就是如果是从non-master region发
 FB在单机版本上也做了不少优化：
 </p>
 <ol class="org-ol">
-<li>HashTable 进行伸缩避免O(n^2)时间复杂度
-</li>
-<li>使用了更加细粒度的全局锁来减少冲突
-</li>
-<li>给每个线程分配UDP port来减少上下文切换
-</li>
-<li>adaptive slab allocator.
-</li>
-<li>transient item cache.
-</li>
-<li>shared memory to reduce memcache upgrade. 如果使用shared memory的话，那么在升级memcache的时候就不会有cold cache的问题
-</li>
+<li>HashTable 进行伸缩避免O(n^2)时间复杂度</li>
+<li>使用了更加细粒度的全局锁来减少冲突</li>
+<li>给每个线程分配UDP port来减少上下文切换</li>
+<li>adaptive slab allocator.</li>
+<li>transient item cache.</li>
+<li>shared memory to reduce memcache upgrade. 如果使用shared memory的话，那么在升级memcache的时候就不会有cold cache的问题</li>
 </ol>
 
 <p>
