@@ -1,0 +1,170 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>LCP 69. Hello LeetCode!</title>
+<meta name="author" content="dirtysalt" />
+<meta name="generator" content="Org Mode" />
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content" class="content">
+<h1 class="title">LCP 69. Hello LeetCode!</h1>
+<p>
+<a href="https://leetcode.cn/problems/rMeRt2/">https://leetcode.cn/problems/rMeRt2/</a>
+</p>
+
+<p>
+这题没有花费多长时间想出是二重DP
+</p>
+<ol class="org-ol">
+<li>内存每个单词可以枚举去匹配 "helloleetcode" 的状态以及代价</li>
+<li>外层枚举每个单词上可以匹配的状态，然后计算最小代价</li>
+</ol>
+
+<p>
+但是我实现起来的时候大约遇到了两个坑：
+</p>
+<ul class="org-ul">
+<li>没有使用二进制状态表示，比如这个字符串里面有4个e其实只需要3bit, 3个l需要2bit. 不要小看减少2bit，这个可以压缩不少状态空间。</li>
+<li>第一步预处理的时候我使用了记忆化搜索。记忆化搜索的缺点就是需要枚举所有的状态，反倒是DFS更快。</li>
+</ul>
+
+<p>
+没有使用二进制状态表示的版本写的非常糟糕，这里就不贴了，感觉学习意义也不大。
+</p>
+
+<p>
+这里贴一下两个搜索版本，记忆化和DFS. 在实现记忆化版本的时候，一定行需要做快速检查将某些不合理的状态去掉，否则会出现超时的情况。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python">
+<span class="org-py-def-class">class</span> <span class="org-py-class-name">Solution</span>:
+    <span class="org-py-def-class">def</span> <span class="org-function-name">Leetcode</span>(<span class="org-py-object-reference">self</span>, words: List[<span class="org-py-builtins">str</span>]) -&gt; <span class="org-py-builtins">int</span>:
+        <span class="org-py-variable-name">INF</span> = <span class="org-py-number">1</span> &lt;&lt; <span class="org-py-number">30</span>
+
+        <span class="org-comment"># HELLO LEETCODE</span>
+        <span class="org-comment">#        H   E  L   O   T   D   C</span>
+        <span class="org-comment"># count  1   4  3   2   1   1   1</span>
+        <span class="org-comment"># bits   1   3   2   2   1  1   1</span>
+        <span class="org-comment"># off    10  7  5   3   2  1   0</span>
+        <span class="org-comment"># mask  0x1 0x7 0x3 0x3 0x1 0x1 0x1</span>
+        <span class="org-py-variable-name">RULES</span> = {
+            <span class="org-comment"># (off, count, mask)</span>
+            <span class="org-string">'h'</span>: (<span class="org-py-number">10</span>, <span class="org-py-number">1</span>, 0x1),
+            <span class="org-string">'e'</span>: (<span class="org-py-number">7</span>, <span class="org-py-number">4</span>, 0x7),
+            <span class="org-string">'l'</span>: (<span class="org-py-number">5</span>, <span class="org-py-number">3</span>, 0x3),
+            <span class="org-string">'o'</span>: (<span class="org-py-number">3</span>, <span class="org-py-number">2</span>, 0x3),
+            <span class="org-string">'t'</span>: (<span class="org-py-number">2</span>, <span class="org-py-number">1</span>, 0x1),
+            <span class="org-string">'d'</span>: (<span class="org-py-number">1</span>, <span class="org-py-number">1</span>, 0x1),
+            <span class="org-string">'c'</span>: (<span class="org-py-number">0</span>, <span class="org-py-number">1</span>, 0x1),
+        }
+        <span class="org-py-variable-name">FINAL</span> = 0b11001110111
+
+        <span class="org-comment"># &#31532;&#19968;&#27493;&#39044;&#22788;&#29702;&#24182;&#19988;&#22635;&#20805;cache.</span>
+        <span class="org-py-variable-name">cache</span> = [{} <span class="org-keyword">for</span> <span class="org-py-builtins">_</span> <span class="org-keyword">in</span> <span class="org-py-builtins">range</span>(len(words))]
+        <span class="org-py-variable-name">use_dfs</span> = <span class="org-py-pseudo-keyword">False</span>
+
+        <span class="org-comment"># &#20351;&#29992;&#35760;&#24518;&#21270;&#25628;&#32034;&#30340;&#29256;&#26412;</span>
+        <span class="org-keyword">if</span> <span class="org-keyword">not</span> use_dfs:
+            <span class="org-comment"># &#21015;&#20030;&#25152;&#26377;&#30340;&#29366;&#24577;</span>
+            <span class="org-py-def-class">def</span> <span class="org-function-name">list_states</span>():
+                <span class="org-py-variable-name">states</span> = []
+                <span class="org-keyword">for</span> st <span class="org-keyword">in</span> <span class="org-py-builtins">range</span>(FINAL + <span class="org-py-number">1</span>):
+                    <span class="org-py-variable-name">ok</span> = <span class="org-py-pseudo-keyword">True</span>
+                    <span class="org-keyword">for</span> c, (off, count, mask) <span class="org-keyword">in</span> RULES.items():
+                        <span class="org-keyword">if</span> (st &gt;&gt; off) &amp; mask &gt; count:
+                            <span class="org-py-variable-name">ok</span> = <span class="org-py-pseudo-keyword">False</span>
+                            <span class="org-keyword">break</span>
+                    <span class="org-keyword">if</span> <span class="org-keyword">not</span> ok: <span class="org-keyword">continue</span>
+                    states.append(st)
+                <span class="org-keyword">return</span> states
+
+            <span class="org-comment"># &#24555;&#36895;&#36807;&#28388;&#19981;&#21487;&#34892;&#30340;&#29366;&#24577;</span>
+            <span class="org-py-def-class">def</span> <span class="org-function-name">fast_check</span>(st, w):
+                <span class="org-keyword">for</span> c <span class="org-keyword">in</span> w:
+                    <span class="org-keyword">if</span> c <span class="org-keyword">in</span> RULES:
+                        <span class="org-py-variable-name">off</span>, <span class="org-py-variable-name">count</span>, <span class="org-py-variable-name">mask</span> = RULES[c]
+                        <span class="org-keyword">if</span> (st &gt;&gt; off) &amp; <span class="org-py-variable-name">mask</span> == <span class="org-py-number">0</span>: <span class="org-keyword">continue</span>
+                        <span class="org-py-variable-name">st</span> = st - (<span class="org-py-number">1</span> &lt;&lt; off)
+                <span class="org-keyword">return</span> <span class="org-py-variable-name">st</span> == <span class="org-py-number">0</span>
+
+            <span class="org-py-variable-name">states</span> = list_states()
+            <span class="org-keyword">for</span> i <span class="org-keyword">in</span> <span class="org-py-builtins">range</span>(len(words)):
+                <span class="org-py-variable-name">cc</span> = cache[i]
+
+                <span class="org-py-import-from">import</span> functools
+                <span class="org-py-decorators">@functools.cache</span>
+                <span class="org-py-def-class">def</span> <span class="org-function-name">dfs</span>(stm, w):
+                    <span class="org-keyword">if</span> <span class="org-py-variable-name">stm</span> == <span class="org-py-number">0</span>: <span class="org-keyword">return</span> <span class="org-py-number">0</span>
+                    <span class="org-keyword">if</span> <span class="org-keyword">not</span> w: <span class="org-keyword">return</span> INF
+                    <span class="org-py-variable-name">ans</span> = INF
+
+                    <span class="org-keyword">for</span> j <span class="org-keyword">in</span> <span class="org-py-builtins">range</span>(len(w)):
+                        <span class="org-py-variable-name">c</span> = w[j]
+                        <span class="org-keyword">if</span> c <span class="org-keyword">not</span> <span class="org-keyword">in</span> RULES: <span class="org-keyword">continue</span>
+                        <span class="org-py-variable-name">off</span>, <span class="org-py-variable-name">count</span>, <span class="org-py-variable-name">mask</span> = RULES[c]
+                        <span class="org-keyword">if</span> (stm &gt;&gt; off) &amp; <span class="org-py-variable-name">mask</span> == <span class="org-py-number">0</span>: <span class="org-keyword">continue</span>
+                        <span class="org-py-variable-name">cost</span> = j * (len(w) - <span class="org-py-number">1</span> - j)
+                        <span class="org-keyword">if</span> cost &gt;= ans: <span class="org-keyword">continue</span>
+                        <span class="org-py-variable-name">res</span> = dfs(stm - (<span class="org-py-number">1</span> &lt;&lt; off), w[:j] + w[j + <span class="org-py-number">1</span>:])
+                        <span class="org-py-variable-name">ans</span> = <span class="org-py-builtins">min</span>(ans, res + cost)
+                    <span class="org-keyword">return</span> ans
+
+                <span class="org-keyword">for</span> st <span class="org-keyword">in</span> states:
+                    <span class="org-keyword">if</span> <span class="org-keyword">not</span> fast_check(st, words[i]): <span class="org-keyword">continue</span>
+                    <span class="org-py-variable-name">res</span> = dfs(st, words[i])
+                    <span class="org-keyword">if</span> res != INF:
+                        <span class="org-py-variable-name">cc</span>[st] = res
+
+        <span class="org-comment"># &#20351;&#29992;DFS&#29256;&#26412;.</span>
+        <span class="org-keyword">else</span>:
+            <span class="org-keyword">for</span> i <span class="org-keyword">in</span> <span class="org-py-builtins">range</span>(len(words)):
+                <span class="org-py-variable-name">cc</span> = cache[i]
+
+                <span class="org-py-def-class">def</span> <span class="org-function-name">dfs</span>(stm, w, tc):
+                    <span class="org-keyword">if</span> stm <span class="org-keyword">not</span> <span class="org-keyword">in</span> cc <span class="org-keyword">or</span> tc &lt; cc[stm]:
+                        <span class="org-py-variable-name">cc</span>[stm] = tc
+
+                    <span class="org-keyword">for</span> j <span class="org-keyword">in</span> <span class="org-py-builtins">range</span>(len(w)):
+                        <span class="org-py-variable-name">c</span> = w[j]
+                        <span class="org-keyword">if</span> c <span class="org-keyword">not</span> <span class="org-keyword">in</span> RULES: <span class="org-keyword">continue</span>
+                        <span class="org-py-variable-name">off</span>, <span class="org-py-variable-name">count</span>, <span class="org-py-variable-name">mask</span> = RULES[c]
+                        <span class="org-keyword">if</span> (stm &gt;&gt; off) &amp; <span class="org-py-variable-name">mask</span> == count: <span class="org-keyword">continue</span>
+                        <span class="org-py-variable-name">cost</span> = j * (len(w) - <span class="org-py-number">1</span> - j)
+                        <span class="org-py-variable-name">stm2</span> = stm + (<span class="org-py-number">1</span> &lt;&lt; off)
+                        <span class="org-py-variable-name">w2</span> = w[:j] + w[j + <span class="org-py-number">1</span>:]
+                        dfs(stm2, w2, tc + cost)
+
+                dfs(<span class="org-py-number">0</span>, words[i], <span class="org-py-number">0</span>)
+
+        <span class="org-py-def-class">def</span> <span class="org-function-name">check_state</span>(a, b):
+            <span class="org-keyword">for</span> c, (off, count, mask) <span class="org-keyword">in</span> RULES.items():
+                <span class="org-keyword">if</span> (a &gt;&gt; off) &amp; mask &gt; (b &gt;&gt; off) &amp; mask:
+                    <span class="org-keyword">return</span> <span class="org-py-pseudo-keyword">False</span>
+            <span class="org-keyword">return</span> <span class="org-py-pseudo-keyword">True</span>
+
+        <span class="org-py-import-from">import</span> functools
+        <span class="org-py-decorators">@functools.cache</span>
+        <span class="org-py-def-class">def</span> <span class="org-function-name">find_all</span>(stm, i):
+            <span class="org-keyword">if</span> <span class="org-py-variable-name">stm</span> == <span class="org-py-number">0</span>: <span class="org-keyword">return</span> <span class="org-py-number">0</span>
+            <span class="org-keyword">if</span> <span class="org-py-variable-name">i</span> == <span class="org-py-builtins">len</span>(words): <span class="org-keyword">return</span> INF
+            <span class="org-py-variable-name">ans</span> = INF
+            <span class="org-keyword">for</span> st, cost <span class="org-keyword">in</span> cache[i].items():
+                <span class="org-keyword">if</span> cost &gt;= ans: <span class="org-keyword">continue</span>  <span class="org-comment"># &#21098;&#26525;&#25918;&#22312;check_state&#20043;&#21069;</span>
+                <span class="org-keyword">if</span> check_state(st, stm):
+                    <span class="org-py-variable-name">r</span> = find_all(stm - st, i + <span class="org-py-number">1</span>)
+                    <span class="org-py-variable-name">ans</span> = <span class="org-py-builtins">min</span>(ans, r + cost)
+            <span class="org-keyword">return</span> ans
+
+        <span class="org-py-variable-name">ans</span> = find_all(FINAL, <span class="org-py-number">0</span>)
+        <span class="org-keyword">if</span> <span class="org-py-variable-name">ans</span> == INF: <span class="org-py-variable-name">ans</span> = -<span class="org-py-number">1</span>
+        <span class="org-keyword">return</span> ans
+</pre>
+</div>
+</div>
+<div id="content"><!-- DISQUS BEGIN --><div id="disqus_thread"></div><script>/***  RECOMMENDED CONFIGURATION VARIABLES: EDIT AND UNCOMMENT THE SECTION BELOW TO INSERT DYNAMIC VALUES FROM YOUR PLATFORM OR CMS.*  LEARN WHY DEFINING THESE VARIABLES IS IMPORTANT: https://disqus.com/admin/universalcode/#configuration-variables*/var disqus_config = function () {this.page.url = 'https://dirtysalt.github.io/html/lcp-69-hello-leetcode.html';this.page.identifier = 'lcp-69-hello-leetcode.html';};(function() {var d = document, s = d.createElement('script');s.src = 'https://dirlt.disqus.com/embed.js';s.setAttribute('data-timestamp', +new Date());(d.head || d.body).appendChild(s);})();</script><noscript>Please enable JavaScript to view the <a href="https://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript><!-- DISQUS END --></div></body>
+</html>

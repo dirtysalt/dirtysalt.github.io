@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Dremio Reflections/Views文档说明</title>
+<meta name="author" content="dirtysalt" />
+<meta name="generator" content="Org Mode" />
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content" class="content">
+<h1 class="title">Dremio Reflections/Views文档说明</h1>
+<hr />
+
+<p>
+如何创建Dataset Layers <a href="https://docs.dremio.com/cloud/data/datasets/#layering-datasets">https://docs.dremio.com/cloud/data/datasets/#layering-datasets</a>
+</p>
+
+<blockquote>
+<p>
+Dremio recommends that, when you create datasets, you create them in layers:
+</p>
+<ul class="org-ul">
+<li>The bottom or first layer consists of your physical datasets.</li>
+<li>In the second layer are virtual datasets, one for each physical dataset, that do lightweight preparation of data for virtual datasets in the next layers. Here, administrators might create virtual datasets that do limited casting, type conversion, and field renaming, and redacting sensitive information, among other prepping operations. Administrators can also add security by subsetting both rows and fields that users in other layers are not allowed to access. The data has been lightly scrubbed and restricted to the group of people who have the business knowledge that lets them use these virtual datasets to build higher-order virtual datasets that data consumers can use. Then, admins grant access to these virtual datasets to users who create virtual datasets in the next layer, without being able to see the raw data in the physical datasets.</li>
+<li>In the third layer, users create virtual datasets that perform joins and other expensive operations. This layer is where the intensive work on data is performed. These users then create reflections (raw, aggregation, or both) from their virtual datasets.</li>
+<li>In the fourth layer, users can create lightweight virtual datasets for dashboards, reports, and visualization tools. They can also create aggregation reflections, as needed.</li>
+</ul>
+</blockquote>
+
+<hr />
+
+<p>
+<a href="https://docs.dremio.com/cloud/reflections/types-and-benefits/">https://docs.dremio.com/cloud/reflections/types-and-benefits/</a>
+</p>
+
+<p>
+Reflections/Views的好处：
+</p>
+<ol class="org-ol">
+<li>Raw Views 和原始数据有差不多相同的行数，删除一些不必要的列，可以按照列进行水平和垂直切分，并且针对某些列进行排序。另外还有个功能就是可以用来改变存储格式。</li>
+<li>Agg Views 针对原始数据进行聚合，主要是用来解决GroupBy性能问题，当然也可以过滤数据，支持预先聚合的operators包括sum/count/min/max等</li>
+</ol>
+
+<p>
+<a href="https://docs.dremio.com/cloud/reflections/creating-and-editing-reflections/">https://docs.dremio.com/cloud/reflections/creating-and-editing-reflections/</a>
+</p>
+
+<p>
+View在刷新时候有两个策略：
+</p>
+<ol class="org-ol">
+<li>Minimize Time Needed To Refresh 减少刷新时间，但是可能生成许多小文件</li>
+<li>Minimize Number Of Files 减少生成的文件，读取的时候可以节省时间</li>
+</ol>
+
+<p>
+缓存文件格式上：
+</p>
+<ol class="org-ol">
+<li>View文件本身格式是Parquet的，存储在S3上</li>
+<li>默认配置在SSD Cache上存储的也是Parquet格式，然后读取的时候转变成为Arrow格式</li>
+<li>但是如果存储设备S3/HDFS支持CCC的话，那么可以直接在S3上存储Arrow格式</li>
+<li>相比Parquet格式，Arrow格式会占用更多的空间，但是可以节省parse的开销</li>
+</ol>
+
+<hr />
+
+<p>
+使用Views的建议 <a href="https://docs.dremio.com/cloud/reflections/best-practices/">https://docs.dremio.com/cloud/reflections/best-practices/</a>
+</p>
+<ol class="org-ol">
+<li>前面大部分建议和create index是非常类似的，你必须了解它的cost/benefit.</li>
+<li>Horizontally Partition Reflections that Have Many Rows.  // 针对大量Rows进行水平切分，比如country/region这些，建议partitions数量不要超过10000.</li>
+<li>Sort Reflections on High-Cardinality Fields // 在高基数字段上使用sort views，好处是在filter的时候可以使用到有序性，建议不要在多个字段上创建。</li>
+<li>Create Reflections from Joins that are Based on Joins from Multiple Queries // 没有太看懂这个例子，好像给的例子似乎不太能使用上。</li>
+</ol>
+
+<pre class="example" id="orge9cfe64">
+SELECT a1, b1, c1 FROM a,b,c WHERE a.3 &gt; '2001-01-01' AND b.3 IN ('red','blue','green')
+SELECT a1, a2, c1, COUNT(b.1) FROM a,b,c WHERE a.size = 'M' AND b.2 &lt; 10 AND c.2 &gt; 2 GROUP BY a1, a2, c1
+SELECT a1, b2 FROM a,b,c WHERE c.1 = 123
+
+// 可以使用下面这个View进行加速
+
+SELECT a1, a2, a3, b1, b2, b3, c1, c2 FROM a,b,c WHERE a.3 &gt; '2001-01-01' AND b.3 IN ('red','blue','green') AND c.1 = 123
+</pre>
+</div>
+<div id="content"><!-- DISQUS BEGIN --><div id="disqus_thread"></div><script>/***  RECOMMENDED CONFIGURATION VARIABLES: EDIT AND UNCOMMENT THE SECTION BELOW TO INSERT DYNAMIC VALUES FROM YOUR PLATFORM OR CMS.*  LEARN WHY DEFINING THESE VARIABLES IS IMPORTANT: https://disqus.com/admin/universalcode/#configuration-variables*/var disqus_config = function () {this.page.url = 'https://dirtysalt.github.io/html/dremio-reflections-docs-summary.html';this.page.identifier = 'dremio-reflections-docs-summary.html';};(function() {var d = document, s = d.createElement('script');s.src = 'https://dirlt.disqus.com/embed.js';s.setAttribute('data-timestamp', +new Date());(d.head || d.body).appendChild(s);})();</script><noscript>Please enable JavaScript to view the <a href="https://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript><!-- DISQUS END --></div></body>
+</html>

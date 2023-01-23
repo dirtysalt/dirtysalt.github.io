@@ -1,0 +1,179 @@
+#+title: 42 things I learned from building a production database
+
+https://maheshba.bitbucket.io/blog/2021/10/19/42Things.html
+
+CEO推荐我们反复阅读一下这篇文章，我也看了几遍，这里翻译/总结/注释一下。
+
+----------
+对待客户：
+- 客户优先，不然啥也不是
+- 选择好种子客户以及数量，小心控制数量增长（客户需求和产品roadmap是否契合？）
+- 从客户那边了解使用情况，避免臆想猜测
+- 深入挖掘客户需求
+
+#+BEGIN_QUOTE
+Customers:
+
+[1] Keep your customers happy; else the rest of this document doesn’t matter.
+
+[2] Be careful to have the right number of customers (in the beginning, just one) and the right customers (whose requirements allow you to build out key technology); and grow that number carefully.
+
+[3] Interface directly with customer ICs. A lot of intra-team conflict can be resolved by saying “I talked to the customer just now and they said…”. In infra we often don’t need to speculate about what customers want; we can just ask them.
+
+[4] But realize that customers may not express what they really need; don’t take requirements at face-value, instead spend the time to understand their use case in detail. Read their code.
+#+END_QUOTE
+
+----------
+项目管理：
+- 清晰的产品定位：为什么要做这个东西？这个东西解决什么问题？给客户提供什么价值
+- 不断地沟通项目的进展和难度，让决策者可以正确估计好每个task的难度/时间/收益
+- 通常IC比Manager在问题理解和代码编写上更有优势，让IC自己管理好task分配
+- Road-Map是手段不是目标，不要只是为了deliver road-map上的task, 应该了解这个roadmap目标是什么？有更大的big picture可以更好地/有效地完成工作
+- 对IC来说，遇到好的managers，一定要理解/支持/帮助他。
+- 让你的项目可以应对好re-orgs. 这个事情在大公司里面非常常见，re-org下来manager会发生变化，确保项目下面的IC成果不会因为manager churn(变动?)而被埋没，这样对于IC来说不公平，更进一步地会损害到项目本身。
+- 对一个任务进度的估计，可以使用其他项目中类似的任务来做锚定，一方面有说服力，另外一方面也更加准确。
+
+#+BEGIN_QUOTE
+Project Management:
+
+[5] Have a simple, crisp mission statement that expresses your raison d’etre. For Delos it was: we will be a reliable foundation for FB infra.
+
+[6] Socialize estimates of task difficulty repeatedly; decision-makers may not have the time, inclination, context, or training to generate these estimates, and may get them wrong (literally) by orders of magnitude.
+
+[7] Task allocation to ICs is critical; ask to be in the critical path of any decision, because you typically have a much better understanding of the problem, the codebase, and the IC’s strengths than the manager. Most managers are thrilled if you and the other IC figure out the task allocation on your own.
+
+[8] A road-map is a means, not an end.
+
+[9] If you get good and/or aligned managers, be as understanding, supportive, and accommodating as you can. If you don’t get such managers… well, I haven’t figured this one out, let me know if you do.
+
+[10] Make your project robust to re-orgs. A company management hierarchy is inherently fragile (a tree is a 1-connected graph, after all); socialize the project continuously with managers who might take over in the future. Do whatever it takes to make sure that manager churn does not result in unfair career outcomes for ICs.
+
+[11] Keep track of how long similar features took in other projects in your space and use this as evidence for task difficulty estimates (e.g., “feature X took three years in system Y; it’s not a one-half job for one IC.”).
+#+END_QUOTE
+
+----------
+架构设计：
+- API设计上保守，实现上自由
+- 发布新功能的时候坚持使用谨慎的流程（灰度/滚动发布）
+- 设计API的时候，给出一种实现，积极准备第二个实现， 最好第三种实现也可以work（我的理解是这样才能说明API涉及的好）
+- 设计API的时候，将“是否可以迁移到其他实现”作为第一要点，因为要求用户修改API来适应新实现是不现实的（但是参考Hyrum's Law https://www.hyrumslaw.com/, 用户使用肯定会依赖实现）
+- 在Design阶段需要充分讨论，这个过程可以很长，但是却很值得。一旦Design方案确定，那么IC就可以分头实现了。Design阶段最好就可以充分考虑实现上的并行化。
+- 设计存储系统的时候，优先选择一致性和持久性，而不是可用性。这个就好像Spanner之后将BigTable事务的坑给填回来了。
+- 一个API多套实现，相互之间可以进行正确性校验，保证正确性这个工作是绝对值得的。
+- Late-bind to designs: 在设计阶段，鼓励大家都给出不同的意见，尽可能地扩大design space, 不要立刻就converge到某一个点。
+- Late-bind to implementers: 一旦设计完成，那么任何IC都可以完成之后的实现。
+- 选择合理程度/数量的抽象：抽象不够的话那么实现不够灵活；抽象太多认知负担太重。
+- 避免使用machine的wall clock来保证实时问题上的正确性，两个机器之间的时钟偏差几秒钟可能是常事。
+- Have a single source of truth.
+- 鼓励IC不断地积极思考不同的设计方案，创建这样的工程师文化，鼓励好奇心。
+- 了解你的SKU，硬件配置，运行在什么环境下。
+
+#+BEGIN_QUOTE
+Design:
+
+[12] Be conservative on APIs and liberal with implementations.
+
+[13] But insist on careful process around rolling out new implementations (shadowing, staged roll-out).
+
+[14] When designing APIs, write code for one implementation; plan actively for the second implementation; and hope/pray that things will work for a third implementation.
+
+[15] Design APIs with migration to new implementations as a first-class consideration; custom migrations are huge time-sinks and sources of unreliability. Every major API should have a single CLI-driven call for switching implementations.
+
+[16] Design as a team; implement as individuals. This will make design the bottleneck, but it’s worth it: push back on impulses to parallelize design.
+
+[17] For storage systems, bias heavily in the beginning towards consistency and durability rather than availability; these are harder to measure and harder to fix if broken. Because availability is easier to measure, there will be external pressure to prioritize it first; push back.
+
+[18] Maintain multiple implementations in test for APIs; compare results between them. The cost is worth it (it will help with correctness, and also prevent leakage of implementation detail).
+
+[19] Late-bind to designs: encourage the team to think about the entire design space without committing to a particular point solution. Running brainstorming meetings with a bunch of high-IQ, opinionated ICs is an art worth mastering. Encourage rough prototyping in the critical path of binding to a design.
+
+[20] Late-bind to implementers: once design is done, any IC should be able to write the code.
+
+[21] Have the right number of abstractions (this is hard). Too few and you end up with a messy monolith; too many and the team will be overwhelmed by the cognitive overhead of understanding each abstraction’s semantics.
+
+[22] Avoid using real-time for correctness guarantees or comparing clocks across machines unless you have (and understand) error bounds on the clock.
+
+[23] Have a single source of truth. Establish simple invariants between various types of state.
+
+[24] Create a culture where ICs are constantly thinking about radically different designs; do not shut down conversations about hypothetical alternative designs. Encourage curiosity.
+
+[25] Know your SKUs. Cloud infra makes it easy to ignore hardware; but an understanding of hardware (and hardware trends) is critical for design.
+#+END_QUOTE
+
+----------
+代码审查：
+- 在一个透明codebase + 快速CR的情况下，API很快就会泄露实现细节，所以需要有gatekeeper来确保这点。
+- 鼓励大家在CR里提出不同的观点，而提PR的人应该对提出这种观点的人表示感激而不是忽视(dismay).
+- 对于关键组件上的CR，可以适当提高准确权限甚至要求所有的人达成一致意见。
+- 对于关键组件，不要将发布时间看做是first priority metric, 而应该质量优先。 这些关键组件，一旦发布出去如果存在缺陷的话：a. 产品稳定性存在问题 b. 如果客户依赖这个实现，那么就需要一直维护它。
+- 和上面一点类似，如果你发现有更好(or right solution)的设计方案的话，不要说"land it then fix it later", 因为这样最终结果就是没有人会来fix.  相反你要敢于throw away code坚持right solution.
+
+#+BEGIN_QUOTE
+Code Review:
+
+[26] In a transparent codebase with quick review cycles, APIs will leak implementation details unless you gate-keep.
+
+[27] Encourage ICs to think critically about diffs and create an environment where people feel free to express concerns. Your response as a diff writer to someone pointing out a problem with a diff should be gratitude, not dismay.
+
+[28] For critical components, consider informal rules such as requiring two accepts or even unanimous accept from some subset of ICs.
+
+[29] For critical components, time to landing a diff is not a metric of importance: push back against impulses to measure this metric and optimize it. Create a culture where ICs are okay with diffs not landing quickly (creative endeavors – books, papers, etc. – typically involve long review cycles due to the cost of high-quality reviewing; why should code be different?).
+
+[30] Sometimes you realize the right design for something only after an IC has written up a candidate design as a diff. Fight the impulse to say “oh well, let’s land it and then fix it later”; you are not helping either the IC or the project by doing this. Create a culture where ICs feel comfortable throwing away code if it’s not the right solution (lead by example).
+#+END_QUOTE
+
+----------
+项目策略：（如何可以更好融入到公司的big & cohesive vision里面）
+- 不断问这几个问题：为什么这个项目/团队存在？能给公司带来什么价值？
+- 了解公司内部其他相关项目的进展情况，一方面可以更加明确自己项目的优势劣势已经定位，另外一方面其他项目的IC更了解技术细节。(大公司里面这种implicit knowledge可谓是相当地多）
+- 不要和其他teams在性能或者是效率上做比赛，容易搞成类似军备竞赛的东西，花费大量时间和精力在证明比其他teams更好上，而忘记了自己项目的独特价值。
+- 如果其他团队的确有更好的系统，或者说自己设计的系统没有独特价值，那么还是及早退出。
+
+#+BEGIN_QUOTE
+Strategy:
+
+[31] Ask yourself on some cadence: why does the team/project exist? If it didn’t exist, what would happen (which other team / system would fill the gap)? How is the team adding value to the company and how can it continue doing so in the future?
+
+[32] Keep track of every other major project in your space within the company: you should be able to explain their technical design better than their own ICs. Grab any opportunities to debate scope with the leads of other similar projects: you should be able to articulate how your project fits into the larger ecosystem of options. Inter-team competition is healthy and necessary. Make friends with ICs in these projects: they understand your technical challenges better than anyone else in the company.
+
+[33] Do not compete on raw performance or efficiency with other teams; this will escalate into an arms race where both teams waste time optimizing their systems for point workloads, generating apples-to-oranges comparisons, etc. Compete on fundamental design characteristics.
+
+[34] If someone objectively has a better system for your use case and wants to take it on, go find something else to do.
+#+END_QUOTE
+
+----------
+可观察性：
+- 测量只是手段不是目的：要能给出测量指标，也要会解决这些测量指标。
+- 要能在用户发现问题前就自己发现问题，别让他们只当小白鼠。
+- 可观察行应该是在API之上并且（尽可能地）独立于实现，这样才能很方便地切换实现并且对比多个实现的性能。
+- 在部署单元内部就做严格检查，而不要依赖于外部系统（这样你就有两个系统，以及检查外部系统的系统）的检查
+
+#+BEGIN_QUOTE
+Observability:
+
+[35] Measurement is a means, not an end.
+
+[36] You should be able to detect problems in your service before your customer does.
+
+[37] As much as humanly possible, observability should be above APIs and external to implementations. This ensures that you can switch implementations and compare performance without introducing bugs in the measurement code. It also de-clutters implementations; and lowers the bar for new implementations.
+
+[38] Anything that can’t be measured easily (e.g., consistency) is often forgotten; pay particular attention to attributes that are difficult to measure.
+
+[39] Push critical checks (e.g. for consistency) into the deployment itself whenever possible; minimize reliance on external services for checks (else you now have two things to track instead of one).
+#+END_QUOTE
+
+----------
+学术研究：
+- 不断学习该领域的最近知识，否则和IC就没有办法快速沟通。
+- 尝试新东西而不只是一味地复制，没有完全看懂这句话( Every major system was just a half-baked idea in someone’s head at some point.) 我的理解是，这样一味复制过来的东西通常也只是一知半解的。
+- 写论文，强迫自己给zero-context audience讲清楚项目的背景/假设/设计，可以让自己想得更加清除， 给自己/项目增加影响力吸引更多的人加入。
+
+#+BEGIN_QUOTE
+Research:
+
+[40] Keep track of research in your space. Soon you’ll have a shorthand with your ICs that enables super-fast communication: “what if we try that thing from projectX? And combine it with the technique in projectY?”.
+
+[41] Try new things. Bias towards novelty within the space of feasible solutions. Fight the impulse to copy designs verbatim. Every major system was just a half-baked idea in someone’s head at some point.
+
+[42] Write papers. Writing for an audience that has zero context on what you are doing will force you to examine and clarify your assumptions. Papers make it easier to hire good people and to on-board them. Grad students should be able to explain your design back to you (and find bugs!). Try to say yes when asked to give talks. They are fun, and you get to meet new people.
+#+END_QUOTE

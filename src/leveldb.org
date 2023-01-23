@@ -1,0 +1,453 @@
+#+title: leveldb
+
+http://code.google.com/p/leveldb/
+
+** Introduction
+相关资源：
+- 使用文档. http://leveldb.googlecode.com/svn/trunk/doc/index.html
+- 设计说明. http://leveldb.googlecode.com/svn/trunk/doc/impl.html
+- leveldb和baidu内部kv系统对比. http://hi.baidu.com/little_fxxker/blog/item/1915f300f7548a046b60fb08.html
+- http://blog.csdn.net/anderscloud/article/details/7182165
+
+leveldb是一个kv存储系统，其中kv都是二进制。用户接口非常简单就是Put(k,v),Get(k),Delete(k).但是还有以下特性
+- k有序存储.因为k是二进制没有解释的所以用户需要提供比较函数
+- 支持遍历包括前向和反向
+- 支持atomic write
+- 支持filter policy(bloomfilter)
+- 数据支持自动压缩(使用snappy压缩算法.关于snappy分析可以看[[file:snappy.org][这里]])
+- 底层提供了抽象接口，允许用户定制
+当然也存在一定的限制
+- 不是SQL数据库，没有数据关系模型
+- 一个table只允许一个process访问
+- 单机系统没有client-server.
+
+目录层次划分是这样的(意图是我猜想的)
+- db // 和db逻辑相关的内容
+- helpers // 里面有一个内存db接口
+- include // Interface
+- port // 操作系统相关的移植接口
+- table // 表存储结构
+- util // 公用部分.
+
+leveldb还是比较麻烦的.开始阅读的时候(像我)很多策略细节就可以直接忽略.比如什么时候触发compaction的,以及挑选什么层次进行compaction的输出,
+选择那些文件进行compaction等.阅读的时候需要了解每个类到底是用来做什么的.个人觉得里面最迷惑的东西就是Version/VersionEdit/VersionSet是用来做什么的.
+所谓Version就是做一个compaction时候产生的一个对象.VersionSet是当前DB里面所有的Version.VersionEdit是针对Version的修改.包括添加和删除哪些文件等.
+每次compaction时候会产生version表示这个哪些文件是需要的.在回收文件的时候会查看每一个version持有的文件,这样就可以确定哪些文件是不需要的了.
+每次进行compaction都会产生这么一个version对象.将对version进行的操作称为version_edit.同时会将这个version_edit写入manifest文件里面去.
+这样在恢复DB的时候，首先可以从manifest里面读取到挂掉之前的version是怎么样的.然后通过读取剩余的version_edit得到挂掉之前的version.
+同时会读取log文件将挂掉之前操作的kv恢复.
+
+最近看到一篇文章比较leveldb和mysql存储引擎性能(可能是innodb).里面提到了连续插入性能的抖动很大.这可能和底层为了达到读取高效率不断地进行compaction有关的.关于compaction挑选以及触发这个策略的话以后可以好好研究一下.
+
+compaction策略没有仔细分析，但是这个部分是精髓。如何控制compaction策略来针对应用达到最好的读写平衡。另外对于Recovery部分没有仔细看代码，但是我觉得这个部分倒不是很大的问题，可能学到的东西不多但是需要非常仔细地阅读才行。
+
+** WriteBatch
+leveldb使用WriteBatch来达到atomic write操作.WriteBatch过程非常简单，就是将atomic write的内容全部写到一个内存buffer上，然后提交这个WriteBatch.
+至于具体的分析可以查看"Code Analysis/Batch/WriteBatch"这节的分析。使用WriteBatch一方面可以做到原子操作，另外一方面可以提高吞吐。
+
+** BloomFilter
+相关资源：
+- Bloom Filter. http://en.wikipedia.org/wiki/Bloom_filter
+- LevelDB Bloom Filter实现. http://duanple.blog.163.com/blog/static/7097176720123227403134/
+
+bloom filter原理非常简单，似乎没有必要详细分析。关于代码部分的话可以看Code Analysis/Util/BloomFilter.
+至于filter在磁盘上面是如何存储的可以参看下面一节Storage/DiskTable分析。
+
+meta block存放了bloom filter信息，这样可以减少磁盘读取。关于Table内部支持bloom filter在table/filter_block.h有实现。
+分别是FilterBlockBuilder和FilterBlockReader.
+
+*** Format
+leveldb是这么分配filter block的.以base(2KB)计算.如果block offset在[base*i,base*(i+1)-1]之间的话，那么就在filter i上面。存储格式是这样的。
+#+BEGIN_EXAMPLE
+[filter 0]
+[filter 1]
+[filter 2]
+...
+[filter N-1]
+[offset of filter 0]                  : 4 bytes
+[offset of filter 1]                  : 4 bytes
+[offset of filter 2]                  : 4 bytes
+...
+[offset of filter N-1]                : 4 bytes
+[offset of beginning of offset array] : 4 bytes
+lg(base)                              : 1 byte
+#+END_EXAMPLE
+那么这个就是一个filter block的格式。filter block存放在meta block里面。在meta index block内部会记录key,filter block handle.其中key就是这个filter的名字,handle就是这个filter block offset.看看下面代码会更容易理解。
+
+*** FilterBlockBuilder
+对于Table在初始化之前会调用StartBlock.并且在每次进行Flush Data Block时候也会根据Data Block offset调用。
+#+BEGIN_SRC C++
+void FilterBlockBuilder::StartBlock(uint64_t block_offset) {
+  uint64_t filter_index = (block_offset / kFilterBase);
+  assert(filter_index >= filter_offsets_.size());
+  while (filter_index > filter_offsets_.size()) {
+    GenerateFilter();
+  }
+}
+#+END_SRC
+可以看到两个data block offset跨越超过base的话那么会产生几个empty filter.但是默认实现的话empty filter不占用太多空间。
+
+然后每次Table在AddKey时候也会调用FilterBlock::AddKey
+#+BEGIN_SRC C++
+void FilterBlockBuilder::AddKey(const Slice& key) {
+  Slice k = key;
+  start_.push_back(keys_.size());
+  keys_.append(k.data(), k.size());
+}
+#+END_SRC
+注意这里keys_是一个string.start_记录每个新增key的偏移。AddKey是将这段时间内添加的Key全部缓存下来。
+
+然后每次Flush的时候都会产生filter.
+#+BEGIN_SRC C++
+void FilterBlockBuilder::GenerateFilter() {
+  const size_t num_keys = start_.size();
+  if (num_keys == 0) {
+    // Fast path if there are no keys for this filter
+    filter_offsets_.push_back(result_.size());
+    return;
+  }
+
+  // Make list of keys from flattened key structure
+  start_.push_back(keys_.size());  // Simplify length computation
+  tmp_keys_.resize(num_keys);
+  for (size_t i = 0; i < num_keys; i++) {
+    const char* base = keys_.data() + start_[i];
+    size_t length = start_[i+1] - start_[i];
+    tmp_keys_[i] = Slice(base, length);
+  }
+
+  // Generate filter for current set of keys and append to result_.
+  filter_offsets_.push_back(result_.size()); // 记录每个filter的偏移.
+  policy_->CreateFilter(&tmp_keys_[0], num_keys, &result_);
+
+  tmp_keys_.clear();
+  keys_.clear();
+  start_.clear();
+}
+#+END_SRC
+
+最后filter block需要刷新出去调用Flush方法。
+#+BEGIN_SRC C++
+Slice FilterBlockBuilder::Finish() {
+  if (!start_.empty()) {
+    GenerateFilter();
+  }
+
+  // Append array of per-filter offsets
+  const uint32_t array_offset = result_.size();
+  for (size_t i = 0; i < filter_offsets_.size(); i++) {
+    PutFixed32(&result_, filter_offsets_[i]); // 这里使用Fixed32表示也非常好理解
+    // 这样才能快速地映射到对应的filter上面。
+  }
+
+  PutFixed32(&result_, array_offset); // 这个array offset表示filter offset的起始地址
+  result_.push_back(kFilterBaseLg);  // Save encoding parameter in result
+  return Slice(result_); // 这个slice就是最终需要write的数据.
+}
+#+END_SRC
+
+*** FilterBlockReader
+了解上面的filter block的存储格式之后Reader就非常简单。构造函数首先计算出各个参数。simple huh?
+#+BEGIN_SRC C++
+FilterBlockReader::FilterBlockReader(const FilterPolicy* policy,
+                                     const Slice& contents)
+    : policy_(policy),
+      data_(NULL),
+      offset_(NULL),
+      num_(0),
+      base_lg_(0) {
+  size_t n = contents.size();
+  if (n < 5) return;  // 1 byte for base_lg_ and 4 for start of offset array
+  base_lg_ = contents[n-1];
+  uint32_t last_word = DecodeFixed32(contents.data() + n - 5);
+  if (last_word > n - 5) return;
+  data_ = contents.data();
+  offset_ = data_ + last_word;
+  num_ = (n - 5 - last_word) / 4;
+}
+#+END_SRC
+
+阅读完成后面的Storage一节之后就会发现query key的话首先是在data index block找到这个key所在的data block offset的。
+所以这里filter就是判断某个offset的data block是否含所有key.
+#+BEGIN_SRC C++
+bool FilterBlockReader::KeyMayMatch(uint64_t block_offset, const Slice& key) {
+  uint64_t index = block_offset >> base_lg_;
+  if (index < num_) {
+    uint32_t start = DecodeFixed32(offset_ + index*4); // filter起始地址
+    uint32_t limit = DecodeFixed32(offset_ + index*4 + 4); // filter终止地址
+    if (start <= limit && limit <= (offset_ - data_)) {
+      Slice filter = Slice(data_ + start, limit - start);
+      return policy_->KeyMayMatch(key, filter); // filter判断是否存在key.
+    } else if (start == limit) {
+      // Empty filters do not match any keys
+      return false;
+    }
+  }
+  return true;  // Errors are treated as potential matches
+}
+#+END_SRC
+
+** Storage
+相关资源：
+- Table Format. http://leveldb.googlecode.com/svn/trunk/doc/table_format.txt sst table存储格式。
+- Log Format. http://leveldb.googlecode.com/svn/trunk/doc/log_format.txt block存储格式。
+- LevelDB SSTable格式详解. http://wenku.baidu.com/view/19f83f51be23482fb4da4c29.html
+
+*** MemTable
+memtable在leveldb内部实现就是一个skiplist.所有的update都不是in-place的，对于memtable里面的修改来说的话使用的也是使用添加的方式完成的。
+对于每个操作都会分配一个sequence number.所以底层也没有办法直接覆盖。对于sequence number很明显就是需要实现snapshot.底层的话leveldb
+持有两个memtable,一个memtable用于接收当前的操作是mutable的，一个memtable是immutable专门用于dump to disk的，内部实现类似于双buffer机制。
+
+*** RedoLog
+我们首先阅读Log Format文档看看log存储格式(leveldb采用redo-log来记日志)。每个block都划分成为32KB，里面可能会存在很多条记录，
+对于跨块的记录来说的里面存在type字段用来标记这个块是否已经结束。另外值得注意的就是每个记录之前带上了32bit的checksum.对于每条记录多4字节还是很大开销的，
+但是其实这也反应了leveldb的定位，就是针对fault-tolerant的分布式系统设计。这些分布式系统架在commodity PC上面，磁盘可能很容易出现问题。
+在文档最后作者也给给出了这种block存储方式(recordio)的利弊。
+#+BEGIN_EXAMPLE
+Some benefits over the recordio format:
+
+(1) We do not need any heuristics for resyncing - just go to next
+block boundary and scan.  If there is a corruption, skip to the next
+block.  As a side-benefit, we do not get confused when part of the
+contents of one log file are embedded as a record inside another log
+file.
+
+(2) Splitting at approximate boundaries (e.g., for mapreduce) is
+simple: find the next block boundary and skip records until we
+hit a FULL or FIRST record.
+
+(3) We do not need extra buffering for large records.
+
+Some downsides compared to recordio format:
+
+(1) No packing of tiny records.  This could be fixed by adding a new
+record type, so it is a shortcoming of the current implementation,
+not necessarily the format.
+
+(2) No compression.  Again, this could be fixed by adding new record types.
+#+END_EXAMPLE
+pros有：
+- 如果磁盘数据发生损坏的话，那么对于数据定位的话非常简单。如果这个block出现问题的话那么直接跳过这个block即可。
+- 程序处理方面可以很容易地找到边界。
+- 对于单条大数据处理的话我们不需要分配很大的内存来做buffer.
+cons有：
+- 没有针对小record进行优化，比如如果record足够小的话完全可以在length部分使用1个字节。
+- 没有进行压缩。对于压缩率完全取决于实现。对于小数据来说的话压缩比可能不高，对于大数据来说比如超过32KB的话，
+取决于是按照32KB单个block压缩呢(压缩率可能不高),还是先针对整体压缩(压缩率可能比较耗，但是却需要很大的buffer).
+
+*** DiskTable
+然后可以看看Table Format文档关于table存储格式。table存储格式里面主要包括几个部分：
+- data block
+- meta block
+- meta index block
+- data index block
+- footer
+footer部分是放在最末尾的，里面包含了data index block以及meta index block的偏移信息，读取table时候从末尾读取。
+
+首先我们看看data block是如何组织的。对于DiskTable(TableBuilder)就是不断地Add(Key,Value).当缓存的数据达到一定大小之后，
+就会调用Flush这样就形成了一个Block.对于一个Block内部而言的话，有个很重要的概念就是restart point.所谓restart point就是为了解决
+前缀压缩的问题的，所谓的restart point就是基准key。假设我们顺序加入abcd,abce,abcf.我们以abcd为restart point的话，那么abce可以存储为
+(3,e),abcf存储为(3,f).对于restart point采用全量存储，而对于之后的部分采用增量存储。一个restart block可能存在多个restart point,
+将这些restart point在整个table offset记录下来，然后放在data block最后面。每个data block尾部还有一个type和CRC32.其中type可以选择是否
+需要针对这个data block进行snappy压缩，而CRC32是针对这个data block的校验。
+
+data index block组织形式和data block非常类似，只不过有两个不同。1)data index block从不刷新直到Table构造完成之后才会刷新，所以
+对于一个table而言的话只有一个data index block.2)data index block添加的key/value是在data block形成的时候添加的，添加key非常取巧
+，是上一个data block和这个data block的一个key seperator.比如上一个data block的max key是abcd,而这个data block的min key是ad.那么这个
+seperator可以设置成为ac.seperator的生成可以参考Comparator.使用尽量短的seperator可以减小磁盘开销并且提高效率。而对于添加的value就是
+这个data block的offset.同样在data index block也会存在restart point.
+
+然后看看进行一个key的query是如何进行的。首先读取出data index block(这个部分可以常驻内存)，得到里面的restart point部分。针对restart point
+进行二分。因为restart point指向的key都是全量的key.如果确定在某两个restart point之间之后，就可以遍历这个restart point之间范围分析seperator.
+得到想要查找的seperator之后对应的value就是某个data block offset.读取这个data block和之前的方法一样就可以查找key了。对于遍历来说，过程是一样的。
+
+这里我们稍微分析一下这样的工作方式的优缺点。对于写或者是merge来说的话，效率相当的高，所有写都是顺序写并且还可以进行压缩。影响写效率的话一个重要参数就是flush block的参数。
+但是对于读来说的话，个人觉得过程有点麻烦，但是可以实现得高效率。对于flush block调节会影响到data index block和data block占用内存大小。如果flush block过大的话，
+那么会造成data index block耗费内存小，但是每次读取出一个data block内存很大。如果flush block过小的话，那么data index block耗费内存很大，但是每次读取data block内存很小。
+而restart point数量会影响过多的话，那么可能会占用稍微大一些的内存空间，但是会使得查找过程更快(遍历数更少).
+
+** Compaction
+对于Compaction触发的策略牵扯到了算法问题，自己表示没有仔细看这个策略(其实当时看了但是完全没有理解).这里谈谈compaction如何删除文件的问题。
+在leveldb里面每次做一个compaction都会产生一个version对象添加到versionset里面，version里面包含了这个version管理了哪些文件。
+每次进行读取都会从某个version读取，然后针对这个version做一个引用计数。然后每次需要删除一些不必要的文件时候就会遍历versionset了解哪些文件
+还需要，然后对比文件系统目录下面的文件就知道哪些文件不再需要，即可删除。
+
+这里稍微总结一下 http://leveldb.googlecode.com/svn/trunk/doc/impl.html 提到的compaction策略。可能阅读完了这些策略之后反过头来看看
+代码可能会更好，只是记得当时阅读compaction策略太痛苦了所以直接忽略了。
+
+每个level都有一定的大小限制，并且每个level里面的文件的key都是不会overlap的(L0除外).触发条件很多，文档上描述是某个level超过一定限制。
+但是之前阅读代码发现其实并不是这样的，可以参看函数VersionSet::PickCompaction.可以看到有两个触发条件size_compaction和seek_compaction.
+所谓的size_compaction就是说某个level超过一定大小，而seek_compaction指某个文件被seek次数超过一定次数之后会触发(关于这个值的更新可以查看VersionSet::Builder::Apply,
+在一个文件初始创建的时候就已经设置好了allowed_seeks次数).
+
+前面是触发条件，后面来说说compaction策略.文档上描述非常简单但是事实不是这样。如果需要compact某个level的话，如果level>0的话那么对于这个level
+只会选出一个file来和level+1中存在overlap的文件进行合并然后生成一个新的文件。如果level==0的话那么对于这个level可能选择多个文件出来和level+1中overlap
+文件合并。对于选取level中文件来说的话是采用rotate keyspace的方式来挑选的。在生成新文件的时候，通常会有两个情况拆分出一个新文件。1)
+文件过大 2)文件和level+2中超过10个存在overlap. 2)情况非常好理解，因为如果产生一个大文件和level+2 overlap文件数量过多的话，那么进行level+1的compaction
+时间就会非常长并且随机读非常严重。
+
+http://leveldb.googlecode.com/svn/trunk/doc/impl.html 文档Timing这节个人感觉非常有价值。作者估算了一下compaction对于整个系统带宽带来的影响。
+按照2MB一个sst文件在level(>0)上面的compaction来计算的话，一次compaction需要read 26MB和write 26MB~=50MB.假设磁盘带宽100MB/s我们通过后台线程限制速度的话，
+那么做compaction需要耗费5s时间。假设用户写速度也在10MS/s的话，那么会生成50MB数据相当于25个sst level0文件。这样对读来说会造成很大影响。
+作者给出的建议包括：
+#+BEGIN_EXAMPLE
+Solution 1: To reduce this problem, we might want to increase the log switching threshold when the number of level-0 files is large.
+Though the downside is that the larger this threshold, the more memory we will need to hold the corresponding memtable.
+
+Solution 2: We might want to decrease write rate artificially when the number of level-0 files goes up.
+
+Solution 3: We work on reducing the cost of very wide merges. Perhaps most of the level-0 files will have their blocks sitting uncompressed
+in the cache and we will only need to worry about the O(N) complexity in the merging iterator.
+#+END_EXAMPLE
+其中第二点感觉非常好就是认为控制写入速度当level0文件过多的时候。在db_impl.cc DBImpl::MakeRoomForWrite这个应该是在memtable缺少空间的时候的函数.
+#+BEGIN_SRC C++
+        allow_delay &&
+        versions_->NumLevelFiles(0) >= config::kL0_SlowdownWritesTrigger) {
+      // We are getting close to hitting a hard limit on the number of
+      // L0 files.  Rather than delaying a single write by several
+      // seconds when we hit the hard limit, start delaying each
+      // individual write by 1ms to reduce latency variance.  Also,
+      // this delay hands over some CPU to the compaction thread in
+      // case it is sharing the same core as the writer.
+      mutex_.Unlock();
+      env_->SleepForMicroseconds(1000);
+      allow_delay = false;  // Do not delay a single write more than once
+      mutex_.Lock();
+#+END_SRC
+
+** Recovery
+这里稍微总结一下 http://leveldb.googlecode.com/svn/trunk/doc/impl.html 提到的关于recovery的部分。幸运的是在阅读这个文档的时候也让我重新仔细地思考了一下这个recovery过程可能会如何进行的。
+
+我们主要关注三个数据的恢复：
+- 用户的data(log)
+- leveldb所管理的文件(MANIFEST)
+- 内部生成的sequence number(MANIFEST)
+
+对于用户的data而言可以通过记录log来完成。注意这个log里面都是db的insert/delete等操作。值得注意的是，每次生成新的memtable也会生成新的log文件。
+这点是非常必要的，因为这样才可以将需要恢复哪些log对应起来。并且log里面每条日志都带上了sequence number,所以log里面的sequence number也有助于
+sequence number恢复。
+
+记录leveldb所管理的文件非常简单。我们观察管理文件变化只会发生在compaction的时候，在当前version下面删除一部分文件生成一部分文件。我们将
+这些变化称为VersionEdit.每次compaction完成之后的话我们将这个version edit记录在MANIFEST内部，同时生成一个Version。version edit是增量,version是全量。
+(至于如何记录这个没有仔细看.但是看代码里面似乎有全量也有增量的记录).如果创建一个新的MANIFEST文件的话，会将MANIFEST文件名称记录在CURRENT内部。
+这样启动之后就知道读取哪个MANIFEST文件了。当然记录在MANIFEST内部的不仅仅是文件的变化，还有生成这个Version时候对应的log以及sequence number.
+
+这样我们的recovery过程就非常简单了。读取CURRENT文件知道读取哪个MANIFEST文件。从MANIFEST文件里面构造Version并且回放VersionEdit.
+根据当前的状态知道需要读取哪些log.然后回放log更新sequence number等状态。
+
+** Snapshot
+Snapshot集合在leveldb里面组织成为一个链表，oldest的节点必然最小的snapshot。对于每一个snapshot配备一个sequence number,
+所以很明显oldest的节点的sequence number应该是最小的。每次进行compaction的时候会判断当前最小的sequence number
+是多少然后将一些不必要的节点删除。另外在查询key的时候也会结合这个snapshot sequence number结合成为一个复合key进行查询。
+
+** Cache
+对于leveldb来说的话存在两个cache系统，一个是TableCache，一个是BlockCache.其中TableCache是用来缓存文件描述符的，
+而BlockCache是用来做data block的缓存的(Table::BlockeReader).对于leveldb只有一个cache实现在Code Analysis/Cache里面做了详细分析。
+
+我们这里最感兴趣的东西，应该就是每个cache的kv分别是什么。对于TableCahce的k是file_number,v是Table的Iterator
+(Table::NewIterator).对于leveldb来说的话文件的file_number都是自增的所以使用file_number没有任何问题。对于BlockCache
+来说的话k是(cache_id,offset),v是Block的内存。(#todo: 对于这个cache_id现在还不是非常理解，但是个人觉得
+这个cache_id可以==file_number.使用cache_id就是每次Open的时候这个cache_id都会改变)
+
+和BlockCache是针对disk block来进行cache的，另外一种cache方案就是Record Cache.相对Block Cache,Record Cache无疑更能够
+提高使用效率包括内存大小以及Cache命中率。但是大家拒绝在内部使用RecordCache的原因非常简答，就是这个在应用层完成似乎更好，
+应用层可以更好地进行Cache。在应用层完成同时会引入一个问题就是Cache一致性，但是其实维持这个一致性并不是一件很复杂的事情，
+Cache主要用来解决读取问题，做写穿透并且让Cache失效即可。leveldb维护BlockCache一致性并不麻烦，因为leveldb的update并不是in-place的。
+
+不过后来仔细想了一下觉得Record Cache还是在应用层做比较好，可以控制缓存策略比如大小失效时间。对于底层库还是在做BlockCache会比较好一些.
+
+** Option
+在options.h里面有一些leveldb可选的选项。
+- comparator.用户可以指定比较器
+- create_if_missing.如果数据库不存在就创建
+- error_if_exists.如果数据库存在就报错
+- paranoid_checks.尽可能多地进行错误检查
+- env.用户可以模拟db环境
+- info_log.leveldb本身logger.
+- write_buffer_size.memtable大小
+- max_open_files.最大打开fd数量
+- block_cache.Table读取data block的cache.
+- block_size.Table里面Block大小
+- block_restart_interval.在一个Block里面每隔多少个key创建一个restart point.
+- compression.DataBlock是否需要压缩
+- filter_policy.过滤策略默认就是bloom filter.
+- verify_checksums.读取block时候是否校验checksum
+- fill_cache.读取block是否会Cache.通常scan时候不要做cache
+- sync.leveldb内部发起write的话是否会调用fsync.
+
+** Discussion
+
+leveldb通过iterator遍历，对于相同的key如何保证获取到最新的值（hpplinux)
+
+*Question*
+
+#+BEGIN_EXAMPLE
+我在看LevelDB代码的时候遇到了一个问题，百思不得其解，也找不到可以探讨请教的人，所以冒昧的给您发了这封邮件，希望得到您的帮助。
+我遇到的问题是这样的：
+在
+void Version::AddIterators(const ReadOptions& options,
+                           std::vector<Iterator*>* iters) {
+  // Merge all level zero files together since they may overlap
+  for (size_t i = 0; i < files_[0].size(); i++) {
+    iters->push_back(
+        vset_->table_cache_->NewIterator(
+            options, files_[0][i]->number, files_[0][i]->file_size));
+  }
+
+  // For levels > 0, we can use a concatenating iterator that sequentially
+  // walks through the non-overlapping files in the level, opening them
+  // lazily.
+  for (int level = 1; level < config::kNumLevels; level++) {
+    if (!files_[level].empty()) {
+      iters->push_back(NewConcatenatingIterator(options, level));
+    }
+  }
+}
+
+中对于Level 0层是按照下标从0到N开始遍历的， 但是由于数据加入的时候老的文件在前，新的在后，所以这样的话在iters数组中
+下标最小的不一定是最新的。
+而在DBImpl::NewInternalIterator 中会把该函数的返回结果直接进行merging，而且原则是key相同的话选取丢弃后面出现的。
+
+这样的策略的话会不会导致较老的数据被留下，较新的被删除 ？
+#+END_EXAMPLE
+
+-----
+
+*Answer*
+
+是这样的，你可以看到AddIterators这个部分是被DBImpl::NewInternalIterator调用的，得到所有的iterators之后，构造一个MergingIterator对象。
+
+#+BEGIN_SRC C++
+  // 对于version来说可能存在很多文件需要遍历.
+  versions_->current()->AddIterators(options, &list);
+  // 将这些内容构造称为一个merge iterator.
+  // 注意这里的内容都加了引用计数.
+  Iterator* internal_iter =
+      NewMergingIterator(&internal_comparator_, &list[0], list.size());
+#+END_SRC
+
+注意它这里提供的comparator是一个internal_comparator. 这个comparator不仅仅比较user key, 还比较sequence number. 因为sequence number是顺序分配的，所以新的kv得到更大的sequence number. 代码在这里：
+
+#+BEGIN_SRC C++
+int InternalKeyComparator::Compare(const Slice& akey, const Slice& bkey) const {
+  // Order by:
+  //    increasing user key (according to user-supplied comparator)
+  //    decreasing sequence number
+  //    decreasing type (though sequence# should be enough to disambiguate)
+  int r = user_comparator_->Compare(ExtractUserKey(akey), ExtractUserKey(bkey));
+  if (r == 0) {
+    const uint64_t anum = DecodeFixed64(akey.data() + akey.size() - 8);
+    const uint64_t bnum = DecodeFixed64(bkey.data() + bkey.size() - 8);
+    if (anum > bnum) { // 按照sequence number比较.
+     // 之前我们在MemTableInserter里面可以看到sequence number是不断增加的.
+      r = -1;
+    } else if (anum < bnum) {
+      r = +1;
+    }
+  }
+  return r;
+}
+
+#+END_SRC
+
+然后这个就好解释问题了。首先每个iterator内部都是按照key做好排序的，多路iterator如果出现相同的key那么使用sequence number大的那个，这样就可以保证始终首先看到的是新值。

@@ -1,0 +1,139 @@
+#+title: 一小段关于linearizability的解释
+
+https://pdos.csail.mit.edu/6.824/notes/l-raft2.txt
+
+https://www.anishathalye.com/2017/06/04/testing-distributed-systems-for-linearizability/
+
+https://pdos.csail.mit.edu/6.824/papers/zookeeper-faq.txt
+
+满足linearizability的要求是：
+1. 可以对executions进行定序
+2. 这个序列满足: a)时间要求 b)写入之后才可见的要求
+
+#+BEGIN_EXAMPLE
+we need a definition of "correct" for Lab 3 &c
+  how should clients expect Put and Get to behave?
+  often called a consistency contract
+  helps us reason about how to handle complex situations correctly
+    e.g. concurrency, replicas, failures, RPC retransmission,
+         leader changes, optimizations
+  we'll see many consistency definitions in 6.824
+
+"linearizability" is the most common and intuitive definition
+  formalizes behavior expected of a single server ("strong" consistency)
+
+linearizability definition:
+  an execution history is linearizable if
+    one can find a total order of all operations,
+    that matches real-time (for non-overlapping ops), and
+    in which each read sees the value from the
+    write preceding it in the order.
+
+a history is a record of client operations, each with
+  arguments, return value, time of start, time completed
+
+example history 1:
+  |-Wx1-| |-Wx2-|
+    |---Rx2---|
+      |-Rx1-|
+"Wx1" means "write value 1 to record x"
+"Rx1" means "a read of record x yielded value 1"
+draw the constraint arrows:
+  the order obeys value constraints (W -> R)
+  the order obeys real-time constraints (Wx1 -> Wx2)
+this order satisfies the constraints:
+  Wx1 Rx1 Wx2 Rx2
+  so the history is linearizable
+
+note: the definition is based on external behavior
+  so we can apply it without having to know how service works
+note: histories explicitly incorporates concurrency in the form of
+  overlapping operations (ops don't occur at a point in time), thus good
+  match for how distributed systems operate.
+
+example history 2:
+  |-Wx1-| |-Wx2-|
+    |--Rx2--|
+              |-Rx1-|
+draw the constraint arrows:
+  Wx1 before Wx2 (time)
+  Wx2 before Rx2 (value)
+  Rx2 before Rx1 (time)
+  Rx1 before Wx2 (value)
+there's a cycle -- so it cannot be turned into a linear order. so this
+history is not linearizable. (it would be linearizable w/o Rx2, even
+though Rx1 overlaps with Wx2.)
+
+example history 3:
+|--Wx0--|  |--Wx1--|
+            |--Wx2--|
+        |-Rx2-| |-Rx1-|
+order: Wx0 Wx2 Rx2 Wx1 Rx1
+so the history linearizable.
+so:
+  the service can pick either order for concurrent writes.
+  e.g. Raft placing concurrent ops in the log.
+
+example history 4:
+|--Wx0--|  |--Wx1--|
+            |--Wx2--|
+C1:     |-Rx2-| |-Rx1-|
+C2:     |-Rx1-| |-Rx2-|
+what are the constraints?
+  Wx2 then C1:Rx2 (value)
+  C1:Rx2 then Wx1 (value)
+  Wx1 then C2:Rx1 (value)
+  C2:Rx1 then Wx2 (value)
+  a cycle! so not linearizable.
+so:
+  service can choose either order for concurrent writes
+  but all clients must see the writes in the same order
+  this is important when we have replicas or caches
+    they have to all agree on the order in which operations occur
+
+example history 5:
+|-Wx1-|
+        |-Wx2-|
+                |-Rx1-|
+constraints:
+  Wx2 before Rx1 (time)
+  Rx1 before Wx2 (value)
+  (or: time constraints mean only possible order is Wx1 Wx2 Rx1)
+there's a cycle; not linearizable
+so:
+  reads must return fresh data: stale values aren't linearizable
+  even if the reader doesn't know about the write
+    the time rule requires reads to yield the latest data
+  linearzability forbids many situations:
+    split brain (two active leaders)
+    forgetting committed writes after a reboot
+    reading from lagging replicas
+
+example history 6:
+suppose clients re-send requests if they don't get a reply
+in case it was the response that was lost:
+  leader remembers client requests it has already seen
+  if sees duplicate, replies with saved response from first execution
+but this may yield a saved value from long ago -- a stale value!
+what does linearizabilty say?
+C1: |-Wx3-|          |-Wx4-|
+C2:          |-Rx3-------------|
+order: Wx3 Rx3 Wx4
+so: returning the old saved value 3 is correct
+
+You may find this page useful:
+https://www.anishathalye.com/2017/06/04/testing-distributed-systems-for-linearizability/
+
+
+#+END_EXAMPLE
+
+两个概念linearizability和serializability之间的区别是什么（说实话我也是一知半解）
+
+#+BEGIN_EXAMPLE
+Q: How does linearizability differ from serializability?
+
+A: The usual definition of serializability is much like
+linearizability, but without the requirement that operations respect
+real-time ordering. Have a look at this explanation:
+http://www.bailis.org/blog/linearizability-versus-serializability/
+#+END_EXAMPLE

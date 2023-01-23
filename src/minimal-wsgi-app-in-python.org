@@ -1,0 +1,97 @@
+#+title: Minimal WSGI App In Python
+
+UPDATE@201801: 很早的两篇文章，从 [[file:python.org][Python]] 文档里面摘取出来放到一起，这样可以有个整体认识。另外现在使用native wsgi API来编写wsgi app似乎也不太多了，大多数情况都是使用比较成熟的wsgi framework来写，比如flask, django. 文章里面使用uwsgi来启动wsgi app, 也可以考虑 [[file:gunicorn.org][gunicorn]]
+
+WSGI(web server gateway interface)定义了一个web server的标准编程接口。开发着只需要按照这个接口来实现应用，然后将模块运行在标准化的container上，就实现了一个web server.
+#+BEGIN_SRC Python
+def logic(environ,start_response):
+    start_response('200 OK', # status code
+                   [('Content-type','text/plain')]) # header
+    return ("OK",)
+#+END_SRC
+对于logic需要处理两个参数：
+- environ 表示环境变量，对于get/post请求数据都会放在这里.下面是常用的环境
+  - PATH_INFO // 请求path
+  - REQUEST_METHOD // 请求方法 GET/POST
+  - CONTENT_LENGTH //
+  - QUERY_STRING // path后面接的query，可以使用cgi.parse_qs来进行解析
+    - cgi.parse_qs解析后的结果就是dict
+    - 如果dict同一个key出现多次的话会以数组方式保留
+  - wsgi.input // 可以读取POST数据
+- start_response 表示一个continuation，恢复status code以及header
+
+之后我们只需要选择一个合适的框架或者容器就可以运行起来了。python内置了一个WSGI framework。这里的validator可以帮助外围做一些验证。
+#+BEGIN_SRC Python
+def run():
+    vlogic=validator(logic)
+    httpd = make_server('', 8000, vlogic)
+    httpd.serve_forever()
+#+END_SRC
+
+内置framework使用的是单进程启动模式，我们也可以修改成为多进程模式。更好的方式是利用已有的webserver framework比如gunicorn。假设上面的文件为x.py, 那么使用下面方式启动即可
+#+BEGIN_EXAMPLE
+[dirlt@compaq-pc] > gunicorn -w 4 x:logic
+2012-08-30 23:18:59 [16116] [INFO] Starting gunicorn 0.13.4
+2012-08-30 23:18:59 [16116] [INFO] Listening at: http://127.0.0.1:8000 (16116)
+2012-08-30 23:18:59 [16116] [INFO] Using worker: sync
+2012-08-30 23:18:59 [16119] [INFO] Booting worker with pid: 16119
+2012-08-30 23:18:59 [16120] [INFO] Booting worker with pid: 16120
+2012-08-30 23:18:59 [16122] [INFO] Booting worker with pid: 16122
+2012-08-30 23:18:59 [16121] [INFO] Booting worker with pid: 16121
+^C2012-08-30 23:19:09 [16120] [INFO] Worker exiting (pid: 16120)
+2012-08-30 23:19:09 [16116] [INFO] Handling signal: int
+2012-08-30 23:19:09 [16119] [INFO] Worker exiting (pid: 16119)
+2012-08-30 23:19:09 [16122] [INFO] Worker exiting (pid: 16122)
+2012-08-30 23:19:09 [16121] [INFO] Worker exiting (pid: 16121)
+2012-08-30 23:19:09 [16116] [INFO] Shutting down: Master
+#+END_EXAMPLE
+
+如果上面WSGI程序修改成为下面的话，那么在访问web页面的时候会出现如下错误 "Error code: ERR_INCOMPLETE_CHUNKED_ENCODING".
+#+BEGIN_SRC Python
+def run(environ,start_response):
+    start_response('200 OK', # status code
+                   [('Content-type','text/plain')]) # header
+    s = "OK".decode('utf-8')
+    return (s,)
+#+END_SRC
+当时这个错误是以非常诡异的方式呈现的，而不是像我示例代码一样，当时s是从sqlite3读取的类型为TEXT的某个字段。WSGI要求返回对象必须是str类型而不能是unicode类型。
+
+-----
+
+python运行web大约有下面三种方式：
+- 程序自己启动http server直接对外服务
+- 用WSGI编写然后使用gunicorn这样的HTTP Container启动对外服务
+- nginx在前端做反向代理，和WSGI Container(uwsgi)或HTTP Container(gunicorn)通信
+
+各自优缺点分别是：
+- 方案1 +因为python GIL缘故只能使用单线程处理，并且http server扩展性也不好+ 只能用单进程工作，可以通过开辟多线程或者是gevent协程来处理并发。但是想要部署多进程不方便，并且也没有使用container带来的一些功能（比如配置升级以及二进制升级等）
+- 方案2相对来说比较灵活，可以使用不同的container启动，并且也可以很容易地切换成为方案3，可是不能处理子域名。
+- 方案3可以让nginx处理好慢连接(比如使用proxy buffering), 然后在把请求交给container来处理，性能上有保证，同时支持子域名。
+
+因为自己搭建fantuan.dirlt.com使用到了子域名，所以最终使用方案3(nginx + uwsgi + web.py). 配置步骤如下：
+
+在nginx/site-enables里面从default产生一份新的配置文件，修改内容
+#+BEGIN_EXAMPLE
+server {
+        server_name fantuan.dirlt.com;
+        location / {
+                include uwsgi_params;
+                uwsgi_pass  127.0.0.1:8001;
+        }
+}
+#+END_EXAMPLE
+也就是说对于fantuan.dirlt.com这个请求包含uwsgi_params里面的参数全部转发到127.0.0.1:8001这个端口。
+
+然后在本地启动uwsgi绑定在127.0.0.1:8001这个端口上面。uwsgi支持配置文件：
+#+BEGIN_EXAMPLE
+[uwsgi]
+chdir = .
+module = server:application
+master = True
+processes = 4
+socket = 127.0.0.1:8001
+vacuum = True
+max-requests = 128
+#+END_EXAMPLE
+- module x:y 说明使用x.py里面y(WSGI function)对象
+- socket 必须指定是127.0.0.1:8001

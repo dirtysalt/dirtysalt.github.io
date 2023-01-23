@@ -1,0 +1,82 @@
+#+title: LCP 65. 舒适的湿度
+
+https://leetcode.cn/problems/3aqs1c/
+
+这题没有搞出来，但是看题解感觉深受启发：
+- 一个是基于DP的实现 https://leetcode.cn/problems/3aqs1c/solution/by-endlesscheng-fu9b/
+- 一个是基于超大bits数组的二分实现 https://leetcode.cn/problems/3aqs1c/solution/er-fen-wei-yun-s-by-grby-km9k/ https://codeforces.com/contest/1579/submission/130462038
+
+这里有个等价变化:
+- 我们假设 A[i] = sum(x[..i])
+- 假设我们测试整体不适宜度是X的话，必须满足
+- 那么 max(A[j] - A[i]) <= X.
+- 后面定义这个最大最小值的差值为M.
+- 也就是说 M <= X
+
+---------
+
+关于这个DP实现解释还比较清楚：
+- 可以想象我们从原点出发，每次可以向上走或者是向下走。
+- 直觉上可以认为 M <= 2*max(operate)
+  - 如果可以上下游走的话，可以保证最大值不会超过 max(operate)，最小值不会小于 -max(operate)
+  - 如果 M <= 2 * max(operate)
+- `f[i][j]` 表示考虑前面i个元素之后，和下界距离相差j的时候，min(M)
+  - 最大下界可以定位为0，最大上界则是 2*max(operate)
+  - 初始状态下界是0, 并且最大最小差值是0, 所以 f[0][0]=0
+
+#+BEGIN_SRC python
+class Solution:
+    def unSuitability(self, operate: List[int]) -> int:
+        inf = 1 << 30
+        mx = max(operate) * 2
+        pre = [inf] * (mx + 1)
+        pre[0] = 0
+
+        for x in operate:
+            dp = [inf] * (mx + 1)
+            for off, value in enumerate(pre):
+                if value == inf: continue
+                if (off + x) <= mx:
+                    dp[off + x] = min(dp[off + x], max(value, off + x))
+                if off >= x:
+                    dp[off - x] = min(dp[off - x], value)
+                else:
+                    dp[0] = min(dp[0], value + x - off)
+            pre = dp
+
+        return min(pre)
+#+END_SRC
+
+----------
+
+二分查找方法比较巧妙
+- 外层进行二分，假设是检查值是M2
+- 初始化B = bits(M2+1, 1)，表示M可以落在里面任何值。
+  - 注意这里必须使用M2+1来初始化
+  - 因为表示的范围是是[0, M2], 所以里面有M2+1个bits.
+- 对每个元素使用 (B << x) | (B >> x) 模拟M2的变化
+- 最终如果B里面包含1的话，那么说明M2是符合条件的。
+
+#+BEGIN_SRC python
+class Solution:
+    def unSuitability(self, operate: List[int]) -> int:
+        low = 1
+        high = max(operate) * 2
+
+        def check(mid):
+            mask = 2 ** (mid + 1) - 1
+            t = mask
+            for x in operate:
+                t = ((t << x) | (t >> x)) & mask
+            return t != 0
+
+        while low <= high:
+            mid = (high + low) // 2
+            ok = check(mid)
+            if not ok:
+                low = mid + 1
+            else:
+                high = mid - 1
+
+        return low
+#+END_SRC

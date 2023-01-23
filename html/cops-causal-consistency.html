@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Don’t Settle for Eventual: Scalable Causal Consistency for Wide-Area Storage with COPS</title>
+<meta name="author" content="dirtysalt" />
+<meta name="generator" content="Org Mode" />
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content" class="content">
+<h1 class="title">Don’t Settle for Eventual: Scalable Causal Consistency for Wide-Area Storage with COPS</h1>
+<p>
+<a href="https://pdos.csail.mit.edu/6.824/papers/cops.pdf">https://pdos.csail.mit.edu/6.824/papers/cops.pdf</a>
+</p>
+
+<p>
+这篇文章给出了一种一致性模型的实现。在分布式系统中，一致性模型有两个极端，强一致性以及最终一致性。在这个光谱中存在着众多的和实现紧密相关的一致性模型，这些模型通常是根据业务场景而特别定制的。但是在这个光谱中，一种叫做causal consistency的模型，这个模型强调因果联系。可以举一个场景来讲述这种模型的作用：在社交网站上，用于上传一张照片返回一个photoId, 然后将这个照片加入到自己的相册中，实现就是asddToList(albumId, photoId).  对于应用开发者而言，当访问到albumId并且看到photoId的时候，肯定会认为通过photoId可以拿到照片。但是如果这个分布式系统是最终一致性的话，那么可能得到null的结果。这是因为不同key之间的replication order其实是相互独立的，也就是对于albumId和photoId这两个不同的key而言，它们被replicated到其他机器上的先后顺序是完全随机的。而casual consitency模型就可以很好地解决这个问题，它的关键在于，找到在read/write期间key之间的先后顺序，以此来决定replication order. 在causual consistency的基础上，在引入一个convergent conflict handling，就是这篇文章说的casual+ consistency.
+</p>
+
+<p>
+怎么定义causual关系呢？文章给出了定义，分为三个部分：a) 在一个执行线程里面，如果A发生在B之前，那么A-&gt;B b) 如果A是写key操作，而B是读key操作并且使用到了A写入的值，那么A-&gt;B. c) 基于前面两点的传递性。什么叫做convergent conflict handling呢？就是这个handler要满足交换性和结合性，说白了就是无论你给出的conflict items顺序如何，使用同一个handler去处理得到的结果是完全一致的。最典型的就是last-write-win, 为了实现这点，就可以在metadata上增加key/value的更新时间，不一定是clock time，也可以是lamport logical time.
+</p>
+
+<p>
+文章给出了两个系统，COPS(Clustering of Order-Preserving Servers)和COPS-GT，后者是前者的升级版本。COPS-GT里面有个接口 `get_trans(keys)`, 它确保返回的keys对应的值完全满足因果性，并且它的开销也不大，在local dc上最多发起两次local read. 下图是COPS/GT的架构图，client通常都是在local dc上发起read/write的，然后dc之间是async replicated的。为了确保返回的keys对应的值之间满足因果性，在调用 `get_by_version` 的时候，内部是会有个 `dep_check` 的过程，这个过程是在检查因果依赖是否已经满足，如果没有满足的话就会一直block操作。
+</p>
+
+
+<div id="org7c46f92" class="figure">
+<p><img src="../images/cops-arch.png" alt="cops-arch.png" />
+</p>
+</div>
+
+<p>
+通过client API 我们可以更好地理解系统是怎么preserve order的。COPS/GT有下面几个API：
+</p>
+<ol class="org-ol">
+<li>createContext() -&gt; ctx_id / deleteContext(ctx_id)</li>
+<li>put(ctx_id, key, value)</li>
+<li>get(ctx_id, key) -&gt; value [COPS]</li>
+<li>get_trans(ctx_id, keys) -&gt; values [COPS/GT]</li>
+</ol>
+<p>
+也就是说，每当client需要发起一个事务的话，需要创建context. 在context中会维护好orders/deps. 在context要维护什么信息呢？下图或许可以说明
+</p>
+
+
+<div id="org1dbbfa9" class="figure">
+<p><img src="../images/cops-deps.png" alt="cops-deps.png" />
+</p>
+</div>
+
+<p>
+在同一个execution thread里面，如果v6发生在t2, u1之后，那么它就依赖于t2, u1.同理z4依赖于几乎所有变量（All Deps). 不过在实际实现中，我们只需要存储离z4最近的几个deps就行，也就是nearest deps. 因为只要满足了nearest deps，那么all deps就可以满足了。这里的deps不仅仅是key, 还包括对应的version. dep = &lt;key, version&gt;
+</p>
+
+<p>
+Client API是上面那样，但是内部接口只有两个：
+</p>
+<ol class="org-ol">
+<li>put_after(key, value, [deps], nearest) -&gt; version. 对于COPS来说只需要传入nearest_deps就行，这个只在写入时候dep_check时候有用。但是对于COPS-GT来说，除了nearest_deps，deps也需要因为这个值需要被一起写入key-value中，因为这个deps在 `get_trans` 的时候需要被使用。</li>
+<li>get_by_version(key, version=LATEST) -&gt; (value, version, deps). 取某个版本的key的值，返回结果还包括deps.</li>
+</ol>
+<p>
+关于 `get_trans` 的实现可以看文章里面的伪代码，实现不难理解，以及为什么最多两个local reads也不难理解。注意这里说最多两次，我的理解是大部分一次应该就满足，两次的情况发生在第一次读的时候期间某些keys发生了更新，这个时候才需要二次读，相当于事务冲突。
+</p>
+
+<p>
+COPS-GT在存储上overhead会比较大，一个key需要存储多个版本，并且每个版本里面还带上了deps. 为了尽量减少这个overhead, 所以需要不断地进行GC，删除某些已经没有用的版本。至于删除的依据，就是要确保 `get_trans` 可以被正确实现。COPS/COPS-GT在context在运行一段时间之后all deps也会比较多，在确保安全的情况下满，也可以将某些deps删除。
+</p>
+</div>
+<div id="content"><!-- DISQUS BEGIN --><div id="disqus_thread"></div><script>/***  RECOMMENDED CONFIGURATION VARIABLES: EDIT AND UNCOMMENT THE SECTION BELOW TO INSERT DYNAMIC VALUES FROM YOUR PLATFORM OR CMS.*  LEARN WHY DEFINING THESE VARIABLES IS IMPORTANT: https://disqus.com/admin/universalcode/#configuration-variables*/var disqus_config = function () {this.page.url = 'https://dirtysalt.github.io/html/cops-causal-consistency.html';this.page.identifier = 'cops-causal-consistency.html';};(function() {var d = document, s = d.createElement('script');s.src = 'https://dirlt.disqus.com/embed.js';s.setAttribute('data-timestamp', +new Date());(d.head || d.body).appendChild(s);})();</script><noscript>Please enable JavaScript to view the <a href="https://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript><!-- DISQUS END --></div></body>
+</html>

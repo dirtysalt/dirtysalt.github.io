@@ -1,0 +1,428 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>micro.mu 项目解析</title>
+<meta name="author" content="dirtysalt" />
+<meta name="generator" content="Org Mode" />
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content" class="content">
+<h1 class="title">micro.mu 项目解析</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>Table of Contents</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#org409b91d">1. 整体结构</a></li>
+<li><a href="#org8b75fb5">2. 三个部分</a></li>
+<li><a href="#orge6cc4e0">3. 组件规范</a></li>
+<li><a href="#org83007a5">4. 编写服务</a></li>
+</ul>
+</div>
+</div>
+<p>
+官网地址在 <a href="https://micro.mu/docs/index.html">https://micro.mu/docs/index.html</a>
+开发文档在 <a href="https://micro.github.io/development/">https://micro.github.io/development/</a>
+</p>
+
+<div id="outline-container-org409b91d" class="outline-2">
+<h2 id="org409b91d"><span class="section-number-2">1.</span> 整体结构</h2>
+<div class="outline-text-2" id="text-1">
+<p>
+这个项目的目标是方便微服务的开发和部署，分为这么几层：
+</p>
+<ol class="org-ol">
+<li>framework. <a href="https://micro.mu/docs/framework.html">https://micro.mu/docs/framework.html</a> 用什么框架来编写微服务。可以有多种实现，现在只有go-micro. 解决下面这些问题：
+<ol class="org-ol">
+<li>RPC 通信管理，怎么和其他服务通信</li>
+<li>Config 配置管理，能否动态地读取配置</li>
+<li>Service Discovery 服务发现</li>
+</ol></li>
+<li>runtime <a href="https://micro.mu/docs/runtime.html">https://micro.mu/docs/runtime.html</a> 怎么讲这些微服务整合起来。提供现成工具，只需要写配置，不写代码。解决下面这些问题：
+<ol class="org-ol">
+<li>API Gateway 对外可以通过HTTP接口访问到内部所有服务（同步，异步，websocket长连接等等）</li>
+<li>Web Dashboard 通过浏览器访问到内部所有服务</li>
+<li>Command Line, Slack Bot 通过命令行和机器人访问到所有服务</li>
+<li>Service Proxy. 服务代理。想象它本身也是一个服务，被代理的服务在启动的时候可以指定，自己挂在哪个服务代理下面。</li>
+<li>Service Health. 在本地启动一个服务器，包括本地其他服务的健康状况。如果服务部署在k8s上，这个会很有用。</li>
+<li>Service Network. 可以打通多个datacenter之间的服务，提高服务的可用性。</li>
+<li>Service Tunnel. 可以打通本地和生产环境，方便本地开发和调试</li>
+</ol></li>
+<li>platform. <a href="https://micro.mu/docs/platform.html">https://micro.mu/docs/platform.html</a> 还没有出来，估计是想把云厂商服务这块也抽象出来：
+<ol class="org-ol">
+<li>runtime. 在云上的具体实现</li>
+<li>registry. 注册服务</li>
+<li>broker. 消息队列服务，</li>
+<li>proxy. 怎么把其他云服务通过gRPC打通</li>
+<li>store. 分布式kv存储服务</li>
+<li>debug. 调试，日志和指标</li>
+<li>auth. 鉴权？？</li>
+<li>events. 流式事件和时序存储</li>
+</ol></li>
+</ol>
+
+<p>
+下图是我从官网直接copy过来的，我说一下这里的对应关系：
+</p>
+<ul class="org-ul">
+<li>entrypoints 这层就是上面的 runtime 要做的事情，将接口标准的服务串起来。</li>
+<li>services 这层就是framework要做的事情，方便开发者开发接口标准的服务。</li>
+<li>runtime 这层其实是platform要做的事情，将“具体怎么串”起来之这件事情和云平台(or 其他服务)连接起来，提供标准的服务。</li>
+</ul>
+
+<p>
+这里处处都可以看到“标准化”：如果开发者编写的服务使用的都是标准接口的话，那么就可以很容易地把这些服务串联起来的，形成更大的标准服务。
+</p>
+
+
+<div id="org94103df" class="figure">
+<p><img src="../images/micro-mu-project-overview-0.svg" alt="micro-mu-project-overview-0.svg" class="org-svg" />
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org8b75fb5" class="outline-2">
+<h2 id="org8b75fb5"><span class="section-number-2">2.</span> 三个部分</h2>
+<div class="outline-text-2" id="text-2">
+<p>
+接上篇继续写，之前说了micro.mu项目分成3个部分:
+</p>
+<ol class="org-ol">
+<li>framework 基础框架，开发者用它来编写服务</li>
+<li>runtime 运行时，开发者用它来管理服务</li>
+<li>platform 运行平台，开发者用它来管理云厂商的服务，和自己服务做对接。</li>
+</ol>
+<p>
+从现在的分析上看，platform和runtime都是使用framework来实现的。这个framework叫做 go-micro <a href="https://github.com/micro/go-micro">https://github.com/micro/go-micro</a>. 框架就要支持插件机制，所以他们也维护了插件列表 <a href="https://github.com/micro/go-plugins">https://github.com/micro/go-plugins</a>. 所以这个framework还是非常强大的，最重要的是它提供了标准化的实现和操作方式。
+</p>
+
+<p>
+这个framework结构如下，从下面往上写：
+</p>
+<ol class="org-ol">
+<li>transport 传输协议, http, grpc, rabbitmq, quic, nats, memory等等，定义怎么在上面传输二进制数据。</li>
+<li>selector 负载均衡的策略选择，包括选择对象：DNS，注册节点，以及选择算法：Random/RoundRobin</li>
+<li>registry 注册服务用来服务发现，mdns(multicast dns), etcd, consul, nats.</li>
+<li>codec 协议编解码, proto, protorpc, json, jsonrpc, grpc, text, bytes. 为什么有jsonrpc和json? 差别在于jsonrpc区分header和body, header里面设置了method和id两个字段，body则是完全的请求数据。所以codec不仅仅是序列化和反序列化，还在一定程度上完成了协议解析。</li>
+<li>broker 消息中心，主要用来实现pub/sub模型，kafka, rabbitmq, sqs, stomp, grpc, http. 为什么还有grpc/http呢？因为直接请求过去不等待返回，对端等待处理就实现了pub/sub了，只不过不太可靠。</li>
+</ol>
+
+
+<div id="org122e268" class="figure">
+<p><img src="../images/micro-mu-project-overview-1.svg" alt="micro-mu-project-overview-1.svg" class="org-svg" />
+</p>
+</div>
+
+<p>
+上面每个部分都有对应的接口定义，比如transport如下：通过配置（文件，环境变量，参数或者是配置服务器）设置具体实现以及参数
+</p>
+
+<div class="org-src-container">
+<pre class="src src-go"><span class="org-keyword">type</span> <span class="org-type">Transport</span> <span class="org-keyword">interface</span> {
+<span class="org-function-name">Init</span>(...Option) error
+<span class="org-function-name">Options</span>() Options
+<span class="org-function-name">Dial</span>(addr string, opts ...DialOption) (Client, error)
+<span class="org-function-name">Listen</span>(addr string, opts ...ListenOption) (Listener, error)
+<span class="org-function-name">String</span>() string
+}
+</pre>
+</div>
+
+<p>
+client 工作过程大致就是：
+</p>
+<ol class="org-ol">
+<li>从registry中找到服务节点</li>
+<li>通过selector选择其中一个服务节点连接（负责缓存，重试和健康监测）</li>
+<li>将请求结构通过codec编码成为二进制</li>
+<li>二进制通过transport到达对端 （双向通信）或者是到达broker（单向通信）</li>
+<li>从transport上接收数据，解码，交给handler处理（双向通信）</li>
+</ol>
+
+<p>
+server 过程则相对简单：
+</p>
+<ol class="org-ol">
+<li>启动服务向registry上注册自己的地址</li>
+<li>等待从transport和broker上到达的请求</li>
+<li>通过codec解析之后交给handler</li>
+</ol>
+
+<p>
+搞过netty的人知道有pipeline这个东西，可以在client/server处理的过程中加入自己的处理逻辑，很像python语言的decorator. micro里面也提供了这么一种机制叫做 wrapper. server启动的时候会加上3个handlers, 可以作为参考
+</p>
+
+<div class="org-src-container">
+<pre class="src src-go">options.Server.<span class="org-function-name">Init</span>(
+server.<span class="org-function-name">WrapHandler</span>(wrapper.<span class="org-function-name">HandlerStats</span>(stats.DefaultStats)),
+server.<span class="org-function-name">WrapHandler</span>(wrapper.<span class="org-function-name">TraceHandler</span>(trace.DefaultTracer)),
+server.<span class="org-function-name">WrapHandler</span>(wrapper.<span class="org-function-name">AuthHandler</span>(authFn)),
+)
+</pre>
+</div>
+
+<p>
+framewok里面还带了3个小功能值得说下：
+</p>
+<ol class="org-ol">
+<li>web. 它可以把一个go语言编写的http服务器包装起来，它就支持了服务发现。</li>
+<li>config. 它支持各个地方载入配置，支持合并配置，以及监控配置发生变化</li>
+<li>api. 使用api这个模块可以编写出上面一篇说的API Gateway.</li>
+</ol>
+
+<p>
+API Gateway入下图，对外暴露的HTTP协议，可以将这些请求转发给各个服务，包括名字服务（服务发现）
+</p>
+
+
+<div id="org1c1ce3e" class="figure">
+<p><img src="../images/micro-mu-project-overview-2.png" alt="micro-mu-project-overview-2.png" />
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orge6cc4e0" class="outline-2">
+<h2 id="orge6cc4e0"><span class="section-number-2">3.</span> 组件规范</h2>
+<div class="outline-text-2" id="text-3">
+<p>
+这个项目代码非常规范，上面提到的每个模块都可以在这里找到对应的目录，然后每个目录下面有具体的各种实现，以及两个文件 &lt;组件名&gt;.go 和 options.go
+</p>
+
+
+<div id="orgef8fea2" class="figure">
+<p><img src="../images/micro-mu-project-overview-3.png" alt="micro-mu-project-overview-3.png" />
+</p>
+</div>
+
+
+<div id="org6dcc5e5" class="figure">
+<p><img src="../images/micro-mu-project-overview-4.png" alt="micro-mu-project-overview-4.png" />
+</p>
+</div>
+
+<p>
+通过来说一个组件会包含两个部分：1. 接口定义 2. 配置选项。以service为例，接口定义以及配置选项如下：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-go"><span class="org-comment-delimiter">// </span><span class="org-comment">====== Service &#25509;&#21475; =====</span>
+<span class="org-keyword">type</span> <span class="org-type">Service</span> <span class="org-keyword">interface</span> {
+    <span class="org-comment-delimiter">// </span><span class="org-comment">The service name</span>
+    <span class="org-function-name">Name</span>() string
+    <span class="org-comment-delimiter">// </span><span class="org-comment">Init initialises options</span>
+    <span class="org-function-name">Init</span>(...Option)
+    <span class="org-comment-delimiter">// </span><span class="org-comment">Options returns the current options</span>
+    <span class="org-function-name">Options</span>() Options
+    <span class="org-comment-delimiter">// </span><span class="org-comment">Client is used to call services</span>
+    <span class="org-function-name">Client</span>() client.Client
+    <span class="org-comment-delimiter">// </span><span class="org-comment">Server is for handling requests and events</span>
+    <span class="org-function-name">Server</span>() server.Server
+    <span class="org-comment-delimiter">// </span><span class="org-comment">Run the service</span>
+    <span class="org-function-name">Run</span>() error
+    <span class="org-comment-delimiter">// </span><span class="org-comment">The service implementation</span>
+    <span class="org-function-name">String</span>() string
+}
+
+<span class="org-keyword">type</span> <span class="org-type">Option</span> <span class="org-keyword">func</span>(*<span class="org-type">Options</span>)
+
+<span class="org-comment-delimiter">// </span><span class="org-comment">===== options =====</span>
+
+<span class="org-keyword">type</span> <span class="org-type">Options</span> <span class="org-keyword">struct</span> {
+    Broker broker.Broker
+    Client client.Client
+    Server server.Server
+    Registry registry.Registry
+    Transport transport.Transport
+
+    <span class="org-comment-delimiter">// </span><span class="org-comment">Before and After funcs</span>
+    BeforeStart []<span class="org-keyword">func</span>() <span class="org-type">error</span>
+    BeforeStop []<span class="org-keyword">func</span>() <span class="org-type">error</span>
+    AfterStart []<span class="org-keyword">func</span>() <span class="org-type">error</span>
+    AfterStop []<span class="org-keyword">func</span>() <span class="org-type">error</span>
+
+    <span class="org-comment-delimiter">// </span><span class="org-comment">Other options for implementations of the interface</span>
+    <span class="org-comment-delimiter">// </span><span class="org-comment">can be stored in a context</span>
+    Context context.Context
+}
+
+<span class="org-comment-delimiter">// </span><span class="org-comment">====== service &#23454;&#29616; =====</span>
+<span class="org-keyword">type</span> <span class="org-type">service</span> <span class="org-keyword">struct</span> {
+    opts Options
+    once sync.Once
+}
+</pre>
+</div>
+
+<p>
+然后在使用期间，这个组件几乎所有需要使用的对象，都是从options里面获得的，比如client, broker, server, registry等。这里Option定义有点奇怪，它并不是一个字符串或者值，而是一个动作function. 这个动作接受的参数是Options对象，然后可以在这个动作里面修改Options里面的内容，间接地达到了配置的效果，有点IOC的思想。
+</p>
+
+<p>
+打个比方，我们想设置service的名称，代码如下：
+</p>
+<ol class="org-ol">
+<li>我们在 `micro.NewService` 里面传入一个Option `micro.Name`</li>
+<li>这个Option操作是什么呢？调用 `options.Server.Init`, 而 `server.Name` 又是一个Option（但是和上面的Option分属两个名字空间，概念一样但是不一个东西）</li>
+<li>`server.Name` 操作是什么呢？就是把 `server.Options.Name`这个字段赋值</li>
+</ol>
+<p>
+所以这串操作最终是什么意思？就是把name放到了service.Options.Server.Options.Name这个字段上了。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-go">service := micro.<span class="org-function-name">NewService</span>(
+  micro.<span class="org-function-name">Name</span>(<span class="org-string">"go.micro.api.greeter"</span>),
+)
+
+<span class="org-comment-delimiter">// </span><span class="org-comment">===== micro.Name =====</span>
+<span class="org-keyword">func</span> <span class="org-function-name">Name</span>(n <span class="org-type">string</span>) <span class="org-type">Option</span> {
+  <span class="org-keyword">return</span> <span class="org-keyword">func</span>(o *<span class="org-type">Options</span>) {
+    o.Server.<span class="org-function-name">Init</span>(server.<span class="org-function-name">Name</span>(n))
+  }
+}
+
+<span class="org-comment-delimiter">// </span><span class="org-comment">===== server.Name =====</span>
+<span class="org-keyword">func</span> <span class="org-function-name">Name</span>(n <span class="org-type">string</span>) <span class="org-type">Option</span> {
+  <span class="org-keyword">return</span> <span class="org-keyword">func</span>(o *<span class="org-type">Options</span>) {
+    o.Name = n
+  }
+}
+</pre>
+</div>
+
+<p>
+虽然这个层次很多甚至有点乱，但是把握起来不难，就是要抓住一个组件如何定义的：
+</p>
+<ol class="org-ol">
+<li>所依赖的各种组件</li>
+<li>自己的配置参数</li>
+<li>暴露出来的接口</li>
+</ol>
+
+<p>
+配置参数时，不仅可以修改自身的配置参数，还可以修改所依赖组件的配置参数。以client为例，修改自身的配置参数包括pool size, timeout等，而修改所依赖逐渐的配置参数则包括registry, codec, transport等。通过将各个组件的接口标准化，然后以配置标准化的方式将这些组件结合起来，这个框架才能算是可插拔的。
+</p>
+
+
+<p>
+另外这种插件机制，最好还是在某个地方（配置文件，环境变量）显式指定比较好。我在分析 client.DefaultClient 的时候猜了一个巨大的坑：
+</p>
+
+<p>
+代码里面是显式指定了 client.DefaultClient 的
+</p>
+
+<div class="org-src-container">
+<pre class="src src-go"><span class="org-comment-delimiter">// </span><span class="org-comment">client.client.go</span>
+
+<span class="org-keyword">var</span> (
+<span class="org-comment-delimiter">// </span><span class="org-comment">DefaultClient is a default client to use out of the box</span>
+DefaultClient Client = <span class="org-function-name">newRpcClient</span>()
+<span class="org-comment-delimiter">// </span><span class="org-comment">DefaultBackoff is the default backoff function for retries</span>
+...
+)
+</pre>
+</div>
+
+<p>
+但是在实际调用的时候，发现使用的并不是这个 rpcClient, 而是  grpcClient. 排除了所有的代码路口之后，终于发现在 go-micro 项目的最顶层有个 defaults.go
+</p>
+
+<div class="org-src-container">
+<pre class="src src-go"><span class="org-keyword">func</span> <span class="org-function-name">init</span>() {
+<span class="org-comment-delimiter">// </span><span class="org-comment">default client</span>
+client.DefaultClient = gcli.<span class="org-function-name">NewClient</span>() <span class="org-comment-delimiter">// </span><span class="org-comment">grpcClient</span>
+<span class="org-comment-delimiter">// </span><span class="org-comment">default server</span>
+server.DefaultServer = gsrv.<span class="org-function-name">NewServer</span>() <span class="org-comment-delimiter">// </span><span class="org-comment">grpcServer</span>
+<span class="org-comment-delimiter">// </span><span class="org-comment">default store</span>
+store.DefaultStore = memStore.<span class="org-function-name">NewStore</span>() <span class="org-comment-delimiter">// </span><span class="org-comment">memory store</span>
+<span class="org-comment-delimiter">// </span><span class="org-comment">set default trace</span>
+trace.DefaultTracer = memTrace.<span class="org-function-name">NewTracer</span>() <span class="org-comment-delimiter">// </span><span class="org-comment">memory trace</span>
+}
+</pre>
+</div>
+
+<p>
+光做静态代码分析还不行，因为某个模块的初始化可能会改写这些值，这是比较坑爹但是也比较灵活的地方。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org83007a5" class="outline-2">
+<h2 id="org83007a5"><span class="section-number-2">4.</span> 编写服务</h2>
+<div class="outline-text-2" id="text-4">
+<p>
+调用一个服务，是通过service name + method name 来确定的，对于内部功能也是这样。比如我们想查看某个服务的统计耗时情况，我在server里面增加了一个端点。可以看到这个service name是 "go.micro.api.greeter", method name 是 "Debug.Stats"
+</p>
+
+
+<div id="org1158fa9" class="figure">
+<p><img src="../images/micro-mu-project-overview-5.png" alt="micro-mu-project-overview-5.png" />
+</p>
+</div>
+
+<p>
+如果这样来看的话，我们之前编写的Restful API不能直接纳入到micro.mu中。因为Restful API是针对资源进行抽象的， 而micro.mu则是针对方法调用进行抽象的。为了更好地利用micro.mu这个运行平台，我们最好不用使用Restful API而是使用RPC(service name + method name)来编写服务。我们不用Restful API来编写服务，但是可以通过API Gateway将RPC以Restful API暴露出来，所以这个转换关系是单向的。RPC-&gt;Restful API好搞，Restful API-&gt;RPC不好搞，主要原因还是rpc更简单，它只要求service name + method name，而restful api则有更多的设计讲究。
+</p>
+
+<p>
+下图是现在几个组件之间的传输协议和编解码方式：内部是http/http2做传输协议，proto作为编解码实现；对外的话是http, json和proto都可以做编解码。
+</p>
+
+
+<div id="org0e681bd" class="figure">
+<p><img src="../images/micro-mu-project-overview-6.png" alt="micro-mu-project-overview-6.png" />
+</p>
+</div>
+
+<p>
+这里在提一下micro提供的3个功能：
+</p>
+<ol class="org-ol">
+<li>go web <a href="https://micro.mu/docs/go-web.html">https://micro.mu/docs/go-web.html</a> 可以把http服务注册是service discovery. 但是如果看上面的话，就知道这个东西意义不大。</li>
+<li>micro service &#x2013;endpoint <a href="http://localhost:9200">http://localhost:9200</a> go run main.go 将一个grpc服务注册到service discover上，稍微有点用。</li>
+<li><a href="https://github.com/micro/clients">https://github.com/micro/clients</a> multi-language clients for micro. 给各种语言提供API Gateway的统一访问方式，稍微有点用。</li>
+</ol>
+
+
+<p>
+我觉得内部服务之间的通信：
+</p>
+<ol class="org-ol">
+<li>http/http2 + proto（也就是现在grpc的实现）逐渐会变为标准</li>
+<li>编码方式尽可能地高效，但是一定要兼容json，哪怕性能差点。</li>
+</ol>
+
+<p>
+现在protoc生成的go语言实现，就能很好地兼容json.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-go"><span class="org-comment-delimiter">// </span><span class="org-comment">generated by protoc --go_out=.</span>
+<span class="org-keyword">type</span> <span class="org-type">Request</span> <span class="org-keyword">struct</span> {
+Name string <span class="org-string">`protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`</span>
+XXX_NoUnkeyedLiteral <span class="org-keyword">struct</span>{} <span class="org-string">`json:"-"`</span>
+XXX_unrecognized []<span class="org-type">byte</span> <span class="org-string">`json:"-"`</span>
+XXX_sizecache int32 <span class="org-string">`json:"-"`</span>
+}
+
+<span class="org-keyword">func</span> <span class="org-function-name">main</span>() {
+text := <span class="org-string">`{"name": "hello"}`</span>
+req := proto.<span class="org-type">Request</span>{}
+<span class="org-comment-delimiter">// </span><span class="org-comment">&#36825;&#37324;&#37117;&#19981;&#29992;&#22806;&#37096;&#24211;&#30340;&#25903;&#25345;</span>
+<span class="org-comment-delimiter">// </span><span class="org-comment">jsonpb.Unmarshal(bytes.NewReader([]byte(text)), &amp;req)</span>
+json.<span class="org-function-name">Unmarshal</span>([]<span class="org-function-name">byte</span>(text), &amp;req)
+fmt.<span class="org-function-name">Println</span>(req.Name)
+}
+</pre>
+</div>
+</div>
+</div>
+</div>
+<div id="content"><!-- DISQUS BEGIN --><div id="disqus_thread"></div><script>/***  RECOMMENDED CONFIGURATION VARIABLES: EDIT AND UNCOMMENT THE SECTION BELOW TO INSERT DYNAMIC VALUES FROM YOUR PLATFORM OR CMS.*  LEARN WHY DEFINING THESE VARIABLES IS IMPORTANT: https://disqus.com/admin/universalcode/#configuration-variables*/var disqus_config = function () {this.page.url = 'https://dirtysalt.github.io/html/micro-mu-project-overview.html';this.page.identifier = 'micro-mu-project-overview.html';};(function() {var d = document, s = d.createElement('script');s.src = 'https://dirlt.disqus.com/embed.js';s.setAttribute('data-timestamp', +new Date());(d.head || d.body).appendChild(s);})();</script><noscript>Please enable JavaScript to view the <a href="https://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript><!-- DISQUS END --></div></body>
+</html>

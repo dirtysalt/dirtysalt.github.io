@@ -1,0 +1,102 @@
+#+title: Alleged RC4
+
+这个算法是在阅读 [[https://github.com/neurobin/shc][shc]] 项目里面发现的，我为这个项目fork了一个注释 [[https://github.com/dirtysalt/shc][版本]]。
+
+shc项目是可以将shell command编译成为C代码，最终编译成为可执行文件，用于漏洞攻击使用的。
+
+既然是攻击漏洞，那么可执行文件需要：1. 在用户没有防备的情况下面执行，如果发现当前执行环境
+是安全人员构造的沙盒的话，那么就自动退出；2. 提高安全人员反编译的难度，比如我们不会直接把
+shell command以明文的方式写在text里面。shc来提供了许多额外的选项来限制可执行程序只能运行在
+更加安全的环境中而不被反编译。
+
+ARC4这个算法就是在生成C代码阶段将shell command混淆并且加速随机数据，而在运行阶段将这些
+混淆的数据反解析回来用于执行。代码的要点在于，混淆和反混淆的操作必须是对称的。
+
+我仿照下面的C代码自己测试了一下Python的 [[file:codes/misc/random/arc4.py][实现]]
+
+
+#+BEGIN_SRC c
+
+/**
+ * This software contains an ad hoc version of the 'Alleged RC4' algorithm,
+ * which was anonymously posted on sci.crypt news by cypherpunks on Sep 1994.
+ *
+ * My implementation is a complete rewrite of the one found in
+ * an unknown-copyright (283 characters) version picked up from:
+ *    From: allen@gateway.grumman.com (John L. Allen)
+ *    Newsgroups: comp.lang.c
+ *    Subject: Shrink this C code for fame and fun
+ *    Date: 21 May 1996 10:49:37 -0400
+ * And it is licensed also under GPL.
+ *
+ *That's where I got it, now I am going to do some work on it
+ *It will reside here: http://github.com/neurobin/shc
+ */
+
+
+/* 'Alleged RC4' */
+// TODO(yan): 这个算法值得好好研究一下
+static unsigned char stte[256], indx, jndx, kndx;
+
+/*
+ * Reset arc4 stte.
+ */
+void stte_0(void)
+{
+    indx = jndx = kndx = 0;
+    do {
+        stte[indx] = indx;
+    } while (++indx);
+}
+
+/*
+ * Set key. Can be used more than once.
+ */
+void key(void * str, int len)
+{
+    unsigned char tmp, * ptr = (unsigned char *)str;
+    while (len > 0) {
+        do {
+            tmp = stte[indx];
+            kndx += tmp;
+            kndx += ptr[(int)indx % len];
+            stte[indx] = stte[kndx];
+            stte[kndx] = tmp;
+        } while (++indx);
+        ptr += 256;
+        len -= 256;
+    }
+}
+
+/*
+ * Crypt data.
+ */
+void arc4(void * str, int len)
+{
+    unsigned char tmp, * ptr = (unsigned char *)str;
+    while (len > 0) {
+        indx++;
+        tmp = stte[indx];
+        jndx += tmp;
+        stte[indx] = stte[jndx];
+        stte[jndx] = tmp;
+        tmp += stte[indx];
+        *ptr ^= stte[tmp];
+        ptr++;
+        len--;
+    }
+}
+
+/* End of ARC4 */
+
+#+END_SRC
+
+----------
+
+update@20200210: 今天看到RC4的 [[https://zh.wikipedia.org/wiki/RC4][wiki]], 上面写着
+
+#+BEGIN_QUOTE
+RC4开始时是商业机密，没有公开发表出来，但是在1994年9月份的时候，它被人匿名公开在了Cypherpunks 邮件列表上，很快它就被发到了sci.crypt 新闻组上，随后从这传播到了互联网的许多站点。随之贴出的代码后来被证明是真实的，因为它的输出跟取得了RC4版权的私有软件的输出是完全相同的。由于算法已经公开，RC4也就不再是商业秘密了，只是它的名字“RC4”仍然是一个注册商标。RC4经常被称作是“ARCFOUR”或者"ARC4"（意思是称为RC4），这样来避免商标使用的问题。RSA Security从来没有正式公布这个算法，罗纳德·李维斯特在2008年的自己的课程笔记中给出了一个指向RC4的英文维基百科文章的链接，并且在2014年的文件[3]中确认了RC4及其代码的历史。
+#+END_QUOTE
+
+让我想到了这个算法搞不好就是RC4. 对比了一下wiki上面给出的伪代码，确认这就是RC4.

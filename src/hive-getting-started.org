@@ -1,0 +1,144 @@
+#+title: Hive Getting Started
+
+https://cwiki.apache.org/confluence/display/Hive/GettingStarted
+
+首先配置好hdfs/mapred(spark), 然后配置hive. hive使用hdfs做文件存储, 使用mapred(spark)做计算引擎
+
+** Configuration
+- 默认配置文件是 <install-dir>/conf/hive-default.xml
+- 可以通过配置文件改写 <install-dir>/conf/hive-site.xml
+- 配置文件路径 HIVE_CONF_DIR
+- 日志配置文件 <install-dir>/conf/hive-log4j.properties
+- 启动通过 bin/hive -hiveconf x1=y1 -hiveconf x2=y2 设置参数
+- 运行时候通过 SET mapred.job.tracker=myhost.mycompany.com:50030; 修改参数
+
+** Local Mode
+这里所谓的local-mode主要是指运行的mapreduce是在local node上面完成的，至于数据源还是和hdfs/hbase本身配置相关。可以通过设置 SET mapred.job.tracker=local; 强制修改mapreduce本地完成。
+
+hive0.7以后提供自动切换local-mode功能，设置 hive> SET hive.exec.mode.local.auto=false; 那么对于下面三个情况满足的条件下就会自动切换到local-mode:
+- The total input size of the job is lower than: hive.exec.mode.local.auto.inputbytes.max (128MB by default)
+- The total number of map-tasks is less than: hive.exec.mode.local.auto.tasks.max (4 by default)
+- The total number of reduce tasks required is 1 or 0.
+
+** Metadata Store
+https://cwiki.apache.org/confluence/display/Hive/AdminManual+MetastoreAdmin
+
+metadata store主要是用来存储数据库的一些元数据信息，有下面相关的配置参数：
+- javax.jdo.option.ConnectionURL.
+- javax.jdo.option.ConnectionDriverName.
+
+默认实现是在本地的derby db，默认存储位置是./metastore_db. metastore其他实现需要支持JPO（Java Persistent Object） Metastore can be stored in any database that is supported by JPOX. The database schema is defined in JDO metadata annotations file package.jdo at src/contrib/hive/metastore/src/model.
+
+当然也可以将这些数据存储在远程数据库上。remote metadata store server和client之间交互是通过thrift完成的，thrift server通过jdbc连接到mysql或者是其他数据库上。
+
+If you are using MySQL as the datastore for metadata, put MySQL client libraries in HIVE_HOME/lib before starting Hive Client or HiveMetastore Server. 或者如果使用ubuntu的话，可以直接使用 sudo apt-get install libmysql-java 安装，然后jar都在/usr/share/java下面。
+
+Server Configuration Parameters
+| Config Param                          | Config Value                                                           | Comment                                  |
+|---------------------------------------+------------------------------------------------------------------------+------------------------------------------|
+| javax.jdo.option.ConnectionURL        | jdbc:mysql://<host name>/<database name>?createDatabaseIfNotExist=true | metadata is stored in a MySQL server     |
+| javax.jdo.option.ConnectionDriverName | com.mysql.jdbc.Driver                                                  | MySQL JDBC driver class                  |
+| javax.jdo.option.ConnectionUserName   | <user name>                                                            | user name for connecting to mysql server |
+| javax.jdo.option.ConnectionPassword   | <password>                                                             | password for connecting to mysql server  |
+| hive.metastore.warehouse.dir          | <base hdfs path>                                                       | default location for Hive tables.        |
+
+Client Configuration Parameters
+| Config Param                 | Config Value                | Comment                                       |
+|------------------------------+-----------------------------+-----------------------------------------------|
+| hive.metastore.uris          | thrift://<host_name>:<port> | host and port for the thrift metastore server |
+| hive.metastore.local         | false                       | this is local store                           |
+| hive.metastore.warehouse.dir | <base hdfs path>            | default location for Hive tables.             |
+
+thrift server 通过 hive --service metastore 启动，port在9083上面. 端口可以通过-p选项来指定, 或是从环境变量METASTORE_PORT来获得(hive-env.sh里面可以设置).
+#+BEGIN_EXAMPLE
+13/03/07 18:06:34 INFO metastore.HiveMetaStore: Started the new metaserver on port [9083]...
+13/03/07 18:06:34 INFO metastore.HiveMetaStore: Options.minWorkerThreads = 200
+13/03/07 18:06:34 INFO metastore.HiveMetaStore: Options.maxWorkerThreads = 100000
+13/03/07 18:06:34 INFO metastore.HiveMetaStore: TCP keepalive = true
+#+END_EXAMPLE
+
+配置文件如下
+#+BEGIN_EXAMPLE
+<configuration>
+  <property>
+    <name>javax.jdo.option.ConnectionURL</name>
+    <value>jdbc:mysql://localhost/hivemeta?createDatabaseIfNotExist=true</value>
+    <description>JDBC connect string for a JDBC metastore</description>
+  </property>
+
+  <property>
+    <name>javax.jdo.option.ConnectionDriverName</name>
+    <value>com.mysql.jdbc.Driver</value>
+    <description>Driver class name for a JDBC metastore</description>
+  </property>
+
+  <property>
+    <name>javax.jdo.option.ConnectionUserName</name>
+    <value>root</value>
+    <description>username to use against metastore database</description>
+  </property>
+
+  <property>
+    <name>javax.jdo.option.ConnectionPassword</name>
+    <value>123456</value>
+    <description>password to use against metastore database</description>
+  </property>
+
+  <property>
+    <name>hive.metastore.warehouse.dir</name>
+    <value>/user/hive/warehouse</value>
+    <description>location of default database for the warehouse</description>
+  </property>
+
+  <property>
+    <name>hive.metastore.uris</name>
+    <value>thrift://localhost:9083</value>
+    <description>Thrift URI for the remote metastore. Used by metastore client to connect to remote metastore.</description>
+  </property>
+
+</configuration>
+#+END_EXAMPLE
+
+** Example
+数据默认是使用ctrl-a来做分割
+
+#+BEGIN_EXAMPLE
+➜  bin  hadoop fs -copyFromLocal ../examples/files/kv1.txt /tmp/
+13/03/07 14:34:40 INFO security.UserGroupInformation: JAAS Configuration already set up for Hadoop, not re-installing.
+➜  bin  hive
+Hive history file=/tmp/dirlt/hive_job_log_dirlt_201303071434_1408198373.txt
+hive> DROP TABLE kv;
+OK
+Time taken: 4.647 seconds
+hive> CREATE TABLE kv (k INT,v STRING);
+OK
+Time taken: 0.201 seconds
+hive> LOAD DATA INPATH '/tmp/kv1.txt' OVERWRITE INTO TABLE kv;
+Loading data to table default.kv
+Moved to trash: hdfs://localhost:9000/home/dirlt/hive/warehouse/kv
+OK
+Time taken: 0.225 seconds
+hive> SELECT * from kv WHERE k = 417;
+Total MapReduce jobs = 1
+Launching Job 1 out of 1
+Number of reduce tasks is set to 0 since there's no reduce operator
+Starting Job = job_201303071324_0006, Tracking URL = http://localhost:50030/jobdetails.jsp?jobid=job_201303071324_0006
+Kill Command = /home/dirlt/utils/hadoop-0.20.2-cdh3u3//bin/hadoop job  -Dmapred.job.tracker=localhost:9001 -kill job_201303071324_0006
+2013-03-07 14:36:14,960 Stage-1 map = 0%,  reduce = 0%
+2013-03-07 14:36:16,970 Stage-1 map = 100%,  reduce = 0%
+2013-03-07 14:36:17,982 Stage-1 map = 100%,  reduce = 100%
+Ended Job = job_201303071324_0006
+OK
+417     val_417
+417     val_417
+417     val_417
+Time taken: 5.787 seconds
+#+END_EXAMPLE
+
+整个流程下来分为四个部分：
+- copy to hdfs
+- create table.
+- load data.
+- do select （看到这里运行了mr任务）
+
+上面例子是使用文本数据. 这里有个 [[file:codes/py/hive-avro][例子]] 如何使用avro数据.

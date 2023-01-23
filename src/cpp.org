@@ -1,0 +1,863 @@
+#+title: C++
+
+-----
+- The C Programming Language(DMR & BWK)
+- C and Pointers
+- The C++ Programming Language(BS)
+- Thinking in C++
+- http://www.cplusplus.com/doc/tutorial/
+- https://isocpp.org/get-started
+
+** philosphy
+C++语言设计上有两个基本点： https://www.stroustrup.com/ETAPS-corrected-draft.pdf
+- A simple and direct mapping to hardware 完全地操控硬件
+- Zero-overhead abstraction mechanisms 没有开销的抽象机制
+
+下面是 《TCPL》这本书里面的一些话：
+
+#+BEGIN_QUOTE
+学习C++时，最主要的事情就是集中关注概念，不要迷失在语言的技术细节里面，学习语言的目的是成为一个更好的程序员，对于程序设计和设计技术的理解远远比语言细节重要.在实践性程序设计中，理解语言中最晦涩难懂的语言特征或者使用大量的不同特征并不能够获得什么利益:-).C++支持一种逐步推进的学习方式，就是说一开始就可以来使用C++编写实际的东西，同时C++支持多种程序设计范型，能够使得你大致线形地学习它的概念，并且在学习过程中不断收到实际效益。
+
+OOP允许程序员用问题本身的属于来描述问题，而不是要用运行解决方案的计算机术语来描述问题。人们已经对OOP语言有了这样的看法，就是程序员应该抛弃所知道的所有事情并且从一组新的概念和文法重新开始，程序员应当相信从长远观点来看，最好还是丢掉所有来自过程语言的老行装。没错从长远观点来看，这是对的，但是从短期角度来看，这些行装确实有价值的。C++成功的原因是很经济的，转变到OOP需要代价但是C++尽可能让代价小。
+
+关于C++标准库的忠告:
+- 不要像重新发明轮子一样去做每一件事情，使用库。
+- 不要相信奇迹，理解你的库能够做什么如何做，代价多大。
+- 不要认为为标准库对于任何事情都是最理想的。
+#+END_QUOTE
+
+** language
+*** new/delete
+new/delete和C的内存分配有很多区别，主要的改进在进行了很多可定制化的内容:
+   * new/delete作为运算符而不是函数存在，因此可以重载来进行内存分配的定制
+   * 在new/delete对象的时候会调用分配对象的构造和析构函数
+   * new/delete对象的时候区分了new/delete和new/delete [](主要原因还是因为需要调用构造和析构函数):-)
+   * 支持放置语法，就是传入一个信息告诉分配函数希望在哪个地方进行分配
+   * 加入了异常分配失败抛出bad_alloc
+   * 提供了一种方法设置handler在分配失败的时候调用set_new_handler()
+   * 默认的new还进行检查以确信在传递地址给构造函数之前内存分配成功
+   * 允许重载全局new/delete和某个类的new/delete
+
+**** new重载
+用户可以重载new/delete来实现全局new/delete或者是某个类的new/delete.原型有下面这些
+#+BEGIN_SRC C++
+// #include <new>
+void* operator new(std::size_t) throw (std::bad_alloc);
+void* operator new[](std::size_t) throw (std::bad_alloc);
+void operator delete(void*) throw();
+void operator delete[](void*) throw();
+void* operator new(std::size_t, const std::nothrow_t&) throw();
+void* operator new[](std::size_t, const std::nothrow_t&) throw();
+void operator delete(void*, const std::nothrow_t&) throw();
+void operator delete[](void*, const std::nothrow_t&) throw();
+
+// Default placement versions of operator new.
+inline void* operator new(std::size_t, void* __p) throw() { return __p; }
+inline void* operator new[](std::size_t, void* __p) throw() { return __p; }
+
+// Default placement versions of operator delete.
+inline void  operator delete  (void*, void*) throw() { }
+inline void  operator delete[](void*, void*) throw() { }
+#+END_SRC
+
+new/delete如果作为类成员的话被重载的话，始终是静态成员，即使你不这样声明也是如此，这个事实意味着这些运算符不接受this指针。其实这也是非常容易考虑到的，new/delete本来就是来分配内存使用的。new在初始化构造之前调用，而delete是在析构函数调用之后调用，所以非静态数据成员肯定不能够被访问:-)此外new/delete是可以继承的,调用的还是基类的new/delete函数，只不过内存大小不同。
+
+#+BEGIN_SRC C++
+#include <iostream>
+#include <new>
+class A{
+ public:
+  void* operator new(size_t s,int arg) throw(std::bad_alloc) {
+    std::cout << "size : " << s << ", arg : " << arg << std::endl;
+    return ::operator new(s);
+  }
+  void* operator new(size_t s,int arg,const std::nothrow_t& nothrow){
+    std::cout << "[nothrow]size : " << s << ", arg : " << arg << std::endl;
+    return ::operator new(s,nothrow);
+  }
+  void operator delete(void* p) {
+    ::operator delete(p);
+  }
+  int x;
+};
+class B: public A{
+  int y;
+};
+
+int main(){
+  A* a=new (10,std::nothrow)A();
+  B* b=new (20)B();
+  delete a;
+  delete b;
+}
+#+END_SRC
+
+**** new异常规格
+从new的异常规格可以看到，如果是普通的调用的话可能会抛出std::bad_alloc这个异常，但是原型里面还有
+#+BEGIN_SRC C++
+void* operator new(std::size_t, const std::nothrow_t&) throw();
+#+END_SRC
+这种使用placement来通知new不抛出异常的的接口，语义是返回NULL来告诉app分配失败。要使用这个函数也非常简单
+#+BEGIN_SRC C++
+// #include <new>
+//  struct nothrow_t { };
+//  extern const nothrow_t nothrow;
+void* p=new (std::nothrow) int(); // 这里std::nothrow就是std::nothrow_t的实例
+#+END_SRC
+通过函数重载来达到这个目的，这个方法值得借鉴。
+
+**** 内存分配失败
+C++来提供了内存分配失败的回调函数，但是这个只能够处理全局new分配失败的情况
+#+BEGIN_SRC C++
+  /** If you write your own error handler to be called by @c new, it must
+   *  be of this type.  */
+  typedef void (*new_handler)();
+  /// Takes a replacement handler as the argument, returns the previous handler.
+  new_handler set_new_handler(new_handler) throw();
+#+END_SRC
+
+**** operator new与new operator
+此外在很多书籍里面会提到operator new和new operator这两个说法，这两个是不一样的概念。operator new就是我们重写运算符函数，而new operator使我们调用new这个表达式。本质上说new这个表达式调用了分配类型里面的operator new函数，同时调用这个类型的初始化构造函数。同理operator delete和delete operator差别也是一样的。通常new operator的动作是这样的:
+- void *raw=operaotor new(sizeof(A)); //使用operator new进行内存分配
+- call A::A on *raw; //在raw上面调用构造函数
+- A *a=static_castraw; //最后进行一次强制转换
+同理通常delete operator的动作是这样的:
+- a->~A();//调用一次析构函数
+- operator delete(a);//进行内存释放
+说到这里，我们需要清楚为什么需要有new []和delete []的方法了。对于operator new和delete来说真的不关心这些，因为只是分配内存，而对于new operator和delete operator就需要关心了，因为需要关心有多少个对象，这样的话才能够调用每个对象的构造函数。调用了new []分配的对象也一定需要使用delete []来释放，不然只会调用第一个元素析构函数和释放它的空间。
+
+*** static assert
+#+BEGIN_SRC C++
+#define STATIC_ASSERT(_cond,_name)      typedef char STATIC_ASSERT_FAILED_ ## _name [ (_cond) ? 1 : -1 ]
+#define STATIC_SIZE_ASSERT(_type,_size) STATIC_ASSERT ( sizeof(_type)==_size, _type ## _MUST_BE_ ## _size ## _BYTES )
+#+END_SRC
+
+这个宏用来检测sizeof(_type)==_size这个假设，这个可以在编译代码的时候可以进行断言。好比下面这段程序
+
+#+BEGIN_SRC C++
+int main() {
+  STATIC_SIZE_ASSERT(int,8);
+  return 0;
+}
+#+END_SRC
+
+那么编译就会出现
+#+BEGIN_EXAMPLE
+main.cc:5: error: size of array `STATIC_ASSERT_FAILED_int_MUST_BE_8_BYTES’ is negative
+#+END_EXAMPLE
+
+当然错误信息并不是非常的优美，但是已经提供了足够多的信息了。不过这种编译断言可能只是比较适合用于简单断言比如sizeof等，对于复杂断言话可能还是需要依赖于configure这种工具比如系统是否有libunwind库。
+
+c++0x(--std=c++0x)在语言层面上支持static_assert.
+
+*** 正确使用cast
+学习C的时候总是认为强转不过就是二进制层面的强转。开始学习C++之后就认为C语言的强转对应的就是reinterpret_cast.而static_cast和reinterpret_cast的差别不过就是static_cast可以做一些类型上面的检查，所以在大多数的时候都习惯使用reinterpret_cast而非static_cast.直到在编写itachi（一个异步网络编程框架）的时候，才发现并不是这么回事。下面的例子是我遇到问题的一个抽象。
+
+**** 问题抽象
+#+BEGIN_SRC C++
+#include <cstdio>
+struct A{
+}; // class A
+
+struct B: public A{
+  int g;
+}; // class B
+
+void onComplete(A* o){
+  B* pb=reinterpret_cast<B*>(o);
+  printf("%p\n",&(pb->g));
+}
+
+int main() {
+  B b;
+  onComplete(&b);
+  printf("%p\n",&(b.g));
+  return 0;
+}
+
+#+END_SRC
+
+运行结果是
+#+BEGIN_EXAMPLE
+[dirlt@localhost ~]$ ./a.out
+0xbff031b0
+0xbff031b0
+#+END_EXAMPLE
+
+在onComplete这里我们希望处理一个A*抽象类型。假设我们从外围上面保证传入onComplete是一个B或者是B的子类型。
+
+**** 多重继承
+处理B类型没有问题，但是处理B的子类型的话，那么上面代码可能就会出现问题。因为对于B子类型而言的话很可能在 *对象模型* 之前添加了一些字段，按照reintrepret_cast语义的话是直接二进制映射，字段没有虚方法所以是直接按照偏移来取的，因此可能存在问题。但是看看下面这个例子
+#+BEGIN_SRC C++
+#include <cstdio>
+struct A{
+}; // class A
+
+struct B: public A{
+  int g;
+}; // class B
+
+struct Holder{
+  int dummy;
+};
+struct C: public Holder,
+          public B{
+}; // class C
+
+void onComplete(A* o){
+  B* pb=reinterpret_cast<B*>(o);
+  printf("o:%p pb->g:%p\n",pb, &(pb->g));
+}
+
+int main() {
+  C c;
+  onComplete(&c);
+  printf("c:%p c.g:%p\n",&c, &(c.g));
+  return 0;
+}
+#+END_SRC
+
+运行结果
+#+BEGIN_EXAMPLE
+[dirlt@localhost ~]$ ./a.out
+o:0xbfff9aa0 pb->g:0xbfff9aa0
+c:0xbfff9a9c c.g:0xbfff9aa0
+#+END_EXAMPLE
+
+问题出来了，并不像我们想的那样，pb->g和c.g的地址是一样的。但是神奇的是，o和c的地址是不一样的。这是为什么呢？原因就在于static_cast.在传参的时候，根据形参和实参之间的类型信息来进行指针的转换。 *也就是说，static_cast能够正确处理类型系统。而这点reintrepret_cast是做不到的。*
+
+**** 正确使用
+*因为自己也缺乏C++对象模型方面的知识，所以也没有办法从底层解释原因。* 但是结论却非常简单，就是应该尽量地执行static_cast而非reinterpret_cast. reinterpret_cast对于继承方面基本没有做任何事情，而使用static_cast的话则能够检测到类型系统，然后根据类型系统来进行正确的转换。 要是想对于static_cast有更多认识的话，需要了解C++对象模型的实现。
+
+下面我总结了一下各种cast应该使用的场景：
+1. static_cast无论如何应该首先考虑使用，而且编译器在生成函数调用时候内部也是在用static_cast.
+2. reinterpret_cast只有在你确定只处理某两种final类型时候，两者之间的转换。比如在内存操作时候uint8_t*和char*之间的转换
+3. const_cast只有在消除const以及volatile这些标记时候有用。
+4. dynamic_cast得到父类型但是不确定子类型的时候，你需要逐个尝试转换可以使用。但是如果外部存在字符串比如type这样的字段表示类型的话，那么可以直接使用static_cast.
+
+** runtime
+*** local static object
+局部静态对象在C里面初始化只允许是常数，所以这个在编译期就可以搞定。在C++里面局部静态对象允许是一个类对象，那么就涉及到类的初始化等问题，这个是在编译期搞不定的只能够在运行期解决。
+
+#+BEGIN_SRC C++
+#include <iostream>
+class A{
+ public:
+  A(){
+    std::cout << "A()" << std::endl;
+  }
+};
+void foo(){
+  static A a;
+}
+int main(){
+  foo();
+  return 0;
+}
+#+END_SRC
+
+我们考虑局部静态对象的初始化时机。如果仅仅是在程序启动时候就初始化的话那么肯定不合适，所以肯定是在第一次调用foo时候进行初始化(这里还需要考虑多线程问题).我们可以看看这个部分汇编代码.对于a对象的话好比存在一个instance_counter初始化为0.首先判断是否初始化了，然后会调用__cxa_guard_acquire加锁然后再判断一次(double check,可以减少开销），最后使用__cxa_guard_release释放这个锁。
+
+#+BEGIN_SRC ASM
+.globl _Z3foov
+	.type	_Z3foov, @function
+_Z3foov:
+.LFB1445:
+	pushq	%rbp
+.LCFI3:
+	movq	%rsp, %rbp
+.LCFI4:
+	subq	$32, %rsp
+.LCFI5:
+	cmpb	$0, _ZGVZ3foovE1a(%rip)
+	jne	.L10
+	movl	$_ZGVZ3foovE1a, %edi
+	call	__cxa_guard_acquire
+	testl	%eax, %eax
+	je	.L10
+	movb	$0, -1(%rbp)
+	movl	$_ZZ3foovE1a, %edi
+.LEHB0:
+	call	_ZN1AC1Ev
+.LEHE0:
+	movl	$_ZGVZ3foovE1a, %edi
+	call	__cxa_guard_release
+	jmp	.L10
+.L19:
+	movq	%rax, -24(%rbp)
+.L13:
+	movq	-24(%rbp), %rax
+	movq	%rax, -16(%rbp)
+	cmpb	$0, -1(%rbp)
+	je	.L15
+	jmp	.L16
+.L15:
+	movl	$_ZGVZ3foovE1a, %edi
+	call	__cxa_guard_abort
+.L16:
+	movq	-16(%rbp), %rax
+	movq	%rax, -24(%rbp)
+.L17:
+	movq	-24(%rbp), %rdi
+.LEHB1:
+	call	_Unwind_Resume
+.LEHE1:
+.L10:
+	leave
+	ret
+#+END_SRC
+
+*** hook function
+hook函数调用有两种方式，一种是hook我们代码内部的函数，这意味这这个函数是由我们来编译的，当然我们不能够修改需要hook的函数实现否则就没有意义了。另外一种hook函数是动态库里面的函数，静态库里面的函数因为完全进入了可执行程序，所以修改起来比较麻烦一些。我们QA写过这样的程序用libbfd库修改可执行程序本身，在函数调用之间加上跳板，但是相比本文介绍的两种方式更加复杂。（复杂就以为着容易出错，而且这种修改可执行程序应该是不值得提倡的）。
+
+*编译时hook*
+
+在gcc编译的时候需要加入-finstrument-functions这个选项之后，那么每个函数调用之前和之后都会调用
+- __cyg_profile_func_enter
+- __cyg_profile_func_exit
+这两个函数是gcc内置函数，_enter函数能够在函数调用之前进行调用，_exit函数能够在函数调用退出之后调用，原型分别是
+#+BEGIN_SRC C++
+// this是这个callee函数地址
+// callsite是caller函数调用点地址(不是函数地址)
+void __cyg_profile_func_enter(void *this, void *callsite);
+void __cyg_profile_func_exit(void *this, void *callsite);
+#+END_SRC
+
+如果不希望函数被hook的话，那么可以在函数属性之后加上__attribute__((no _instrument _function)).尤其是这个函数如果在enter和exit里面调用的话，最好加上这个属性，不然非常容易出现递归调用
+
+#+BEGIN_SRC C++
+#include <cstdio>
+#include <cstdlib>
+void foo() __attribute__((no_instrument_function));
+void foo() {
+    printf("%s\n",__func__);
+}
+int main() {
+    printf("main\n");
+    return 0;
+}
+extern "C" {
+    void __cyg_profile_func_enter(void* callee, void* callsite)  __attribute__((no_instrument_function));
+    void __cyg_profile_func_exit(void* callee, void* callsite) __attribute__((no_instrument_function));
+    void __cyg_profile_func_enter(void* callee, void* callsite) {
+        foo();
+    }
+    void __cyg_profile_func_exit(void* callee, void* callsite){
+        foo();
+    }
+}
+#+END_SRC
+
+*运行时hook*
+
+可以使用dlopen截获函数入口，然后使用dlsym(RTLD_NEXT)来获得下一个入口.我们以截获malloc为例。
+#+BEGIN_SRC C++
+#include <unistd.h>
+#include <dlfcn.h>
+#include <cstring>
+#include <cstdlib>
+
+void* malloc(size_t size){
+    write(2,"do malloc\n",strlen("do malloc\n")+1); // 这里不能够用printf,因为内部可能会调用malloc
+    static void* (*pmalloc)(size_t size)=0;
+    if(!pmalloc){
+        pmalloc=(void*(*)(size_t size))(dlsym(RTLD_NEXT,"malloc"));
+    }
+    return pmalloc(size);
+}
+
+void free(void *p){
+    write(2,"do free\n",strlen("do free\n")+1);
+    static void (*pfree)(void* p)=0;
+    if(!pfree){
+        pfree=(void(*)(void* p))(dlsym(RTLD_NEXT,"free"));
+    }
+    return pfree(p);
+}
+#+END_SRC
+
+*** undefined reference to static const class member
+类型静态常量成员只允许是标量内容,而不允许是字符串数组或者是结构体等。但是下面代码会存在链接问题
+
+#+BEGIN_SRC C++
+#include <vector>
+using namespace std;
+class Foo {
+ public:
+  static const int MEMBER = 1;
+};
+
+int main(){
+  vector<int> v;
+  v.push_back( Foo::MEMBER );       // undefined reference to `Foo::MEMBER'
+  v.push_back( (int) Foo::MEMBER ); // OK
+  return 0;
+}
+#+END_SRC
+
+关于这个问题解释可以参看 http://stackoverflow.com/questions/272900/c-undefined-reference-to-static-class-member
+
+大致解释是这样，对于第一种用法的话，因为push_back需要是一个const int&,因为需要传入的内容存在地址。而这种情况下面MEMBER仅仅是一个constant,没有任何地址所以会出现链接错误。而对于第二种情况的话，因为强制转换之后那么就存在一个临时对象可以被引用。说到这里我们一定需要注意临时对象，好比下面这种用法
+#+BEGIN_SRC C++
+#include <string>
+int main() {
+  std::string s1="h";
+  std::string s2="o";
+  const char* s=(s1+s2).c_str();
+  return 0;
+}
+#+END_SRC
+这里(s1+s2)生成了一个临时对象但是却没有存放的内容，所以后续继续引用s是会出问题的。
+
+*** malloc warmup performance
+下面是我之前碰到的因为malloc warmup导致的性能差异巨大的问题。
+
+程序有两个函数，action是为了测试一下以string为key的map性能，action2是为了测试一下以int为key的map性能。然后我们分两组测试运行：
+- 运行action，然后运行action2
+- 只运行action2
+#+BEGIN_SRC C++
+/* coding:utf-8
+ * Copyright (C) dirlt
+ */
+
+#include <sys/time.h>
+#include <map>
+#include <string>
+#include <cstdio>
+
+using namespace std;
+
+static inline double gettime_ms() {
+  struct timeval tv;
+  gettimeofday(&tv, NULL);
+  return tv.tv_sec * 1000.0 + tv.tv_usec * 0.001;
+}
+
+static const int NUMBER = 10000000;
+static const char* PREFIX = "s";
+
+static void action() {
+  double start = gettime_ms();
+  map<string, long> dict;
+  char buf[64];
+  char buf2[64];
+  for(int i = 0; i < NUMBER; i++) {
+    snprintf(buf, sizeof(buf), "%s%d", PREFIX, i);
+    dict[buf] = i;
+  }
+  for(int i = 0; i < NUMBER; i++) {
+    snprintf(buf, sizeof(buf), "%s%d", PREFIX, i);
+    snprintf(buf2, sizeof(buf2), "%s%d", PREFIX, (i + 1000) % NUMBER);
+    dict[buf] += dict[buf2];
+  }
+  double end = gettime_ms();
+  printf("%.2lf\n", end - start);
+}
+
+static void action2() {
+  double start = gettime_ms();
+  map<int, long> dict;
+  for(int i = 0; i < NUMBER; i++) {
+    dict[i] = i;
+  }
+  for(int i = 0; i < NUMBER; i++) {
+    dict[i] += dict[(i + 1000) % NUMBER];
+  }
+  double end = gettime_ms();
+  printf("%.2lf\n", end - start);
+}
+
+int main() {
+  action();
+  action2();
+  return 0;
+}
+#+END_SRC
+
+在自己的Ubuntu机器下面使用g++4.6编译运行结果如下。可以看到测试组1里面action2运行时间为2.9s左右，而测试组2里面action2运行时间为8.5s 时间差别很大
+#+BEGIN_EXAMPLE
+➜  tomb git:(master) ✗ g++ map_perf_test.cc -O2
+➜  tomb git:(master) ✗ ./a.out
+19764.38
+2957.30
+➜  tomb git:(master) ✗ g++ map_perf_test.cc -O2
+➜  tomb git:(master) ✗ ./a.out
+8521.25
+#+END_EXAMPLE
+
+可能是编译器的原因？ 在自己的Ubuntu机器下面clang++来编译，时间差别同样很大
+#+BEGIN_EXAMPLE
+➜  tomb git:(master) ✗ clang++ map_perf_test.cc -O2
+➜  tomb git:(master) ✗ ./a.out
+19494.99
+3052.83
+➜  tomb git:(master) ✗ clang++ map_perf_test.cc -O2
+➜  tomb git:(master) ✗ ./a.out
+8495.00
+#+END_EXAMPLE
+
+在自己的macbook air下面使用clang重新编译，时间是差不多的
+#+BEGIN_EXAMPLE
+➜  tomb git:(master) ✗ g++ map_perf_test.cc -O2
+➜  tomb git:(master) ✗ ./a.out
+22759.82
+4203.22
+tomb git:(master) ✗ g++ map_perf_test.cc -O2
+➜  tomb git:(master) ✗ ./a.out
+4214.48
+#+END_EXAMPLE
+
+另外我让同事在其他机器上使用g++3.4.5编译运行，时间差别也非常大
+
+多谢 @Thomas 的指导，通过strace发现确实是glibc的内存分配问题。strace两个binary发现：
+- action调用了很多brk（8288次）,mmap（17次）来分配内存，每次都是分配小内存.运行完成之后这些内存buffer起来了。
+- 在action调用之后的action2没有调用任何系统调用分配内存，都是在用户态完成。
+- 而如果没有action先调用的话，action2就需要自己调用brk（4737次）,mmap（17次），所以比较耗时。
+改用 [[file:tcmalloc.org][tcmalloc]] 之后没有这个问题了。tcmalloc调用brk（541次），mmap（500次）。
+** library
+*** boost::bind
+之前看到陈硕同学在[[http://blog.csdn.net/solstice/][博客]] 给出的C++工程实践推荐，使用boost::function和boost::bind代替虚函数。之所以我们需要使用虚函数，无非就是希望统一执行接口。统一接口通过虚函数是一种方法，而使用boost::function和boost::bind也可以达到相同的目的。
+
+首先我们假设存在一个Executor类，里面有一个执行队列，所有的Task首先被push进来然后遍历执行。对于这个Task我们本身只需要一个执行接口void fun(Executor*).如果通过虚函数实现的话，我们需要定义一个abstract class含有virtual函数，然后在具体的类里面实现它。但是如果很不幸的话我们原本定义的类不是这样的，而是
+#+BEGIN_SRC C++
+class A{
+ public:
+  void fun(Executor* x,std::string s){
+    std::cout << "executor=" << x << ", s=" << s << std::endl;
+  }
+}; // class A
+
+class B{
+ public:
+  void fun(Executor* x,int s){
+    std::cout << "executor=" << x << ", s=" << s << std::endl;
+  }
+}; // class B
+#+END_SRC
+
+那我们必须重新定义AdapterA以及AdapterB封装一下。实现上可能非常简单，内部存下std::string以及int的内容，外加一个A,B的指针，在fun里面调用A,B的fun实现并且把内容传进去调用。
+
+这是一种蹩脚的方法，类的个数会急剧膨胀。但是如果我们使用boost::function和boost::bind的话，可以不用添加新的Adapter类来解决这个问题。
+#+BEGIN_SRC C++
+  x.push(boost::bind(&A::fun,&a,_1,"hello"));
+  x.push(boost::bind(&A::fun,&a,_1,"world"));
+  x.push(boost::bind(&B::fun,&b,_1,123));
+  x.push(boost::bind(&B::fun,&b,_1,456));
+#+END_SRC
+
+这里_1是boost::bind导出的符号表示占位符，这个参数表示接口中的第一个参数，这里不进行绑定。第一个参数表示函数地址，如果是成员函数的话那么需要传入对象地址（这里对于对象内存管理的话，可能需要智能指针的帮助。可以参考http://xuchaoqian.com/?p=797)。事实上稍微猜想一下boost::function和boost::bind实现，boost::function用于产生新的类型，boost::bind用于产生这个类型的对象，并且将指针以及所需要的closure context都绑定上去。我本来想实现的，但是发现基于模板的元编程，我确实不会:(
+
+之后我在想，虽然这个方式不错消除继承完全按照基于对象的方式编程，但是如果对于对象所需要的接口非常多的话，并且虚函数本身就是语言内置的特性，相对来说使用起来会更加方便。下面是可编译的示例代码之后我在想，虽然这个方式不错消除继承完全按照基于对象的方式编程，但是如果对于对象所需要的接口非常多的话，并且虚函数本身就是语言内置的特性，相对来说使用起来会更加方便。
+
+UPDATE: 现在C++17已经内置了 `std::bind` , 使用方法上和boost差不多。
+
+*** boost::python
+http://www.boost.org/doc/libs/1_58_0/libs/python/doc/index.html
+
+编写Python Extension. 具体代码可以参考 [[file:codes/cc/misc/test_pye.cc][code on github]]
+
+*** 几个logging实现
+
+@2015-07-26 最近一段时间使用C++编写Python扩展时候，发现原来的日志库(easyloggingpp)封装存在一些问题。修改完成日志库的封装之后，顺便就看了一下C/C++下面有什么可用的日志库。我粗略地看了下面几种，然后总结了一下优缺点以及自己的想法。
+
+https://github.com/easylogging/easyloggingpp easylogging++
+  - 一个头文件，可以很容易集成
+  - 设计上没有Handler, Filter, Formatter这样的概念，相对比较简单直接
+  - 多个Logger之间是平级关系，没有层次关系，虽然可以共享配置
+  - 内置直接输出到文件，但是不支持rotate这样操作（需要自己编写callback）
+  - 可以通过添加回调来扩展打印日志方法，但是回调函数列表是全局而非单个Logger所有
+  - 简单好用，容易集成，支持多模块输出，需要自己编写代码来扩展功能
+
+http://code.google.com/p/google-glog/ google-glog
+  - 时间有限只能从 [[http://google-glog.googlecode.com/svn/trunk/doc/glog.html][官方文档]] 来了解其功能
+  - glog更像是为C++程序定制的，不支持多模块输出
+  - 可以选择输出到标准错误或者是文件，文件默认是在""/tmp/<program name>.<hostname>.<user name>.log.<severity level>.<date>.<time>.<pid>". 这意味着不需要考虑rotate。用户可以指定输出文件的路径但是不能修改文件名称
+  - 从文档上看没有提供扩展能力（代码可能会有这个功能，但是需要用户阅读代码来扩展）
+  - 对C++程序简单好用，容易集成，扩展能力比较差只支持输出文件（但是如果考虑到G还有 [[file:gwp.org][其他]] [[file:dapper.org][系统]] 来辅助日志分析的话，其实这个不是问题）
+
+log4cpp/log4cplus/log4cxx # log4j的C++实现.
+  - 从功能上来说是最强大的，支持多模块输出，也很容易集成，只是没有那么好用
+  - 设计上有Handler, Filter, Formatter这样的概念，设计考虑上非常周到
+  - 网上有不少关于如何具体使用log4cxx的文章，但是很少有谈论其设计的文章。设计方面可以阅读一下 [[https://docs.python.org/3/library/logging.html?highlight=logging#module-logging][python logging]]
+
+** C++11 update
+C++11在C++03上做了许多改进，而且都是非常实用的改进。BS在自己的主页上列出了这些改进的 [[http://www.stroustrup.com/C++11FAQ.html][细节]], 有位国内开发者把它翻译成了 [[http://www.chenlq.net/cpp11-faq-chs][中文]] (非常感谢).
+
+下面这几篇文章介绍了其中一些对于大部分C++使用者来说会更加关心的改进
+- Continuous Learning : C++ 11 Tutorial : http://learnandexperiment.blogspot.com/2013/07/c-11-tutorial.html
+- Ten C++11 Features Every C++ Developer Should Use - CodeProject : http://www.codeproject.com/Articles/570638/Ten-Cplusplus-Features-Every-Cplusplus-Developer
+- The Biggest Changes in C++11 (and Why You Should Care) : http://blog.smartbear.com/c-plus-plus/the-biggest-changes-in-c11-and-why-you-should-care/
+
+这里我把文章里面所涉及的改进全部列了出来
+- auto. auto是C的关键字，表示变量空间是自动分配的（相对应的是regsiter），但是实际上几乎所有的编译器都忽略这个关键字。在C++11里面给这个关键字赋予了新的语义，就是做类型推导。
+- decltype. decltype(expression)可以返回expression的类型定义。在C++03的时候，如果想获得某个表达式的类型的话，只能使用g++扩展关键字typeof(expression).
+- nullptr. C++11引入的空指针关键字，类型是std::nullptr_t. nullptr可以隐式转换为任意指针类型以及bool类型，但是却不能够转换为int类型了(之前NULL本身就是#define NULL (0)).
+- strongly-typed enums. C++03会把enum class 1. 定义对象导出到外部作用域（可能会出现名字冲突）2. 隐式地将枚举对象转换为整数值 3. 不创建这个枚举类型。C++11取消了这些特殊处理。
+- override/final. 这两个关键字只有出现在成员函数声明最后如void foo() [...]才有用。override要解决的问题是，确保这个函数是重写(override)而不是重载(overload)子类中的某个虚函数. final则是希望某个虚函数不要被重写(override).
+- default/delete. 这两个关键字同样要出现在成员函数声明之后入void foo() = [...]. 通常作用在构造函数上。default告诉编译器为这个函数生成默认实现. delete则告诉编译器删除这个函数实现（禁止拷贝或赋值构造）
+- static_assert/type_traits. type_traits提供一系列template function来对类型做判断. 在C++03做静态断言static_assert需要使用workaround办法，但是在C++11就直接提供了。
+- delegating constructors. 代理构造函数.
+- range-based for statement. 可以使用for(auto& e: v)这种简洁的语法来编译容器
+- uniform initialization syntax. 统一的初始化语法，全部使用{}来包含参数。比如构造函数是A(int a, float b)的话，可以使用A a{1, 2.3};来构造对象
+- in-class member initializers. 类成员的内部初始化。类成员初始化可以不用在构造函数内完成，可以直接在类的内部完成初始化（必须是编译期可以确定的常量表达式）
+- inline namespace. 内联名字空间。如果一个名字空间是inline namespace XXX定义的，并且被包含在namespace YYY里面的话，那么XXX内部成员f可以使用YYY::f引用，也可以使用YYY::XXX::f引用（可以处理代码向后兼容问题）
+- initializer lists. 初始化列表。许多stl容器比如vector, map支持初始化列表，也就是说可以这样vector<int> a {1,2,3};来构造。初始化列表具体类型是std::initializer_list<E>.
+- right-angle brackets. 右角括号这个问题在C++03非常恼人，就是写嵌套容器时必须这样vector<vector<A> >. C++11解决了这个问题
+- 除此之外还有suffix return type syntax, rvalue reference and move semantics, lambda expression等一些改进放在后面单独说
+
+使用<thread>必须加上编译参数-pthread.
+
+*** suffix return type syntax(返回值类型后置语法)
+
+一开始我以为这个语法，是为了解决编写模板函数的时候，auto不能自动推导函数返回类型而设计的。比如下面这段程序
+#+BEGIN_SRC C++
+template<typename T1, typename T2>
+auto bar(const T1 a, const T2 b) -> decltype(a + b) {
+    return a + b;
+}
+#+END_SRC
+如果我们不使用"-> decltype(a+b)"这个后置语法的话，那么编译器就不知道bar应该返回什么类型。但是事实却是，编译器已经足够强大到推测返回类型了，所以我们不告诉编译器返回值类型也可以（但是会有warning）
+
+实际按照BS的 [[http://www.stroustrup.com/C++11FAQ.html#suffix-return][想法]], 一开始这个语法的引入，却是为了解决作用域问题的。比如下面这段程序
+#+BEGIN_SRC C++
+class A {
+  public:
+    class B {};
+    B foo();
+};
+
+// A::B A::foo() { return B(); }
+auto A::foo() -> B { return B(); }
+#+END_SRC
+如果我们按照第一种写法编写foo的话，返回值必须写明A::B, 因为再此之前还没有进去A作用域所以要写全名。而使用第二种写法的话，因为我们已经限定了在A作用域下，所以返回类型可以直接写B
+
+*** lambda expression(lambda表达式，匿名函数)
+
+语法大致是这样的[capture](parameters) [-> suffix-return-type] { body }. 就像之前说的那样，C++11类型推导能力非常强大，所以suffix-return-type通常是可选的。
+- capture 是指我们需要捕获哪些外部变量
+- parameters 则是匿名函数的参数列表
+- body 则是匿名函数的函数体
+在capture这个部分中，&v表示使用变量v的引用，=v表示使用v的copy(read-only). 如果是[&]表示所有外部变量的使用都是引用方式，如果是[=]表示所有外部变量使用都是传值方式。
+
+匿名函数类型是std::function<[actual-type>].(defined in <functional>). 比如[](int a, int b) { return a + b; }的类型就是std::function<int(int,int)>. 虽然匿名函数可以捕获变量，但是并不意味着实现了闭包。下面这个程序中，lambda引用了count，但是在调用的时候count已经被销毁了，所以会出现运行错误。
+#+BEGIN_SRC C++
+#include <functional>
+#include <iostream>
+using namespace std;
+
+std::function<int()> foo() {
+    int count = 0;
+    auto f = [&count]() {
+        count += 1;
+        return count;
+    };
+    return f;
+}
+
+int main() {
+    auto f = foo();
+    auto x = f();
+    // cout << x << endl;
+}
+#+END_SRC
+
+这里还想说一下就是，C++11也把bind纳入stl了（smart pointers, atomic, thread这些原来都在boost的组件都纳入stl了）.
+#+BEGIN_SRC C++
+#include <functional>
+#include <iostream>
+using namespace std;
+using std::placeholders::_1;
+using std::placeholders::_2;
+using std::placeholders::_3;
+int foo(int a, int b, int c) {
+    return a + b + c;
+}
+int main() {
+    auto f1 = bind(foo, 1, 2, _1);
+    auto f2 = bind(foo, _1, _2, 3);
+    cout << f1(10) << ", " << f2(2,4) << endl;
+    return 0;
+}
+#+END_SRC
+
+*** rvalue references and move semantics(右值引用以及移动语义)
+
+右值引用比较奇怪的一个地方是，你可以认为它是一个非常容易挥发的东西。因为一旦你使用A&& a = foo();获得右值引用的时候，其实你已经获得了左值a（并且发生了copy ctor或者是move ctor, 这个根据是否有move ctor决定的）. 只有在move ctor或者是move assignment时候我们才能够瞬间捕获到右值引用。想要把一个左值变为右值可以使用std::move函数。下面是我的实验代码，可以加深理解。
+
+UPDATE@2021: 右值引用的类型写为 `A&& x`. 而 `std::move` 这个操作就是将类型从A类型变为A的右值引用类型。引入右值引用类型的目的是节省对象的拷贝开销，然后开发者可以在构造函数里面指明，如果是move语义的话应该如何进行对象构造。本质来说，就是允许开发者告诉编译器，我是希望copy还是move对象。
+
+#+BEGIN_SRC C++
+#include <cstdio>
+#include <iostream>
+
+#if (__cplusplus > 199711L)
+#define cxx0x
+#endif
+
+#include <memory>
+using namespace std;
+
+
+class A {
+  public:
+    int v;
+    string s;
+    A(int v, string s){
+        this -> v = v;
+        this -> s = s;
+        // cout << "ctor" << endl;
+    }
+    A(const A& x) {
+        this->v = x.v;
+        this->s = x.s;
+        cout << "copy ctor:";
+        cout << &x << " -> " << this << endl;
+    }
+    A& operator=(const A& x) {
+        this->v = x.v;
+        this->s = std::move(x.s);
+        cout << "copy operator=:";
+        cout << &x << " -> " << this << endl;
+        return *this;
+    }
+#ifdef cxx0x
+    A(A&& x) {
+        this->v = x.v;
+        this->s = std::move(x.s);
+        cout << "move ctor:";
+        cout << &x << " -> " << this << endl;
+    }
+    A& operator=(A&& x) {
+        this->v = x.v;
+        this->s = std::move(x.s);
+        cout << "move operator=:";
+        cout << &x << " -> " << this << endl;
+        return *this;
+    }
+#endif
+};
+
+// 这里增加条件语句，可以使得编译器不会直接在返回地址上开辟对象A
+// 从而达到实验目的，否则只会调用一次ctor（内部的）而不会调用copy ctor/move ctor.
+static int x = 0;
+A bar() {
+    A a(10, "hello, world");
+    A b(20, "hello, worldb");
+    if (x == 0) {
+        cout << "inside bar: " << &a << endl;
+        return a;
+    } else {
+        cout << "inside bar: " << &b << endl;
+        return b;
+    }
+}
+
+#ifdef cxx0x
+int foo1() {
+    cout << "----- foo1(test c++0x) -----" << endl;
+    A pa(bar()); // move ctor
+    cout << "pa = " << &pa << "/" << &(pa.v) << endl;
+
+    cout << "-----" << endl;
+    A pa2(10, "s");
+    pa2 = bar(); // move ctor and move operator=
+    cout << "pa = " << &pa2 << "/" << &(pa2.v) << endl;
+
+
+    cout << "-----" << endl;
+    if (std::is_same<decltype(pa), A&&>::value) {
+        cout << "same type" << endl;
+    }
+    A pb = pa; // copy ctor.
+    cout << "pb = " << &pb << endl;
+
+    cout << "-----" << endl;
+    A pc = std::move(pb); // move ctor.
+    cout << "pc = " << &pc << endl;
+    return 0;
+}
+#endif
+
+int foo2() {
+    cout << "----- foo2(test c++03&0x) ----" << endl;
+    // move ctor at c++0x
+    // copy ctor at c++03
+    A pa = bar();
+    cout << "pa = " << &pa << "/" << &(pa.v) << endl;
+
+    // move ctor / move operator= in c++0x.
+    // copy ctor / copy operator= in c++03.
+    cout << "-----" << endl;
+    A pa2(10, "s");
+    pa2 = bar();
+    cout << "pa = " << &pa << "/" << &(pa.v) << endl;
+
+    cout << "-----" << endl;
+    A pb = pa; // copy ctor.
+    cout << "pb = " << &pb << endl;
+    return 0;
+}
+
+int main() {
+#ifdef cxx0x
+    foo1();
+    cout << endl << endl;
+#endif
+    foo2();
+}
+
+#+END_SRC
+
+
+针对上面的代码分别使用c++2a和c++03选项进行编译，主要是看foo2的输出上的差异。使用c++2a编译的输出结果如下，可以看到大部分地方都使用到了move操作。
+
+#+BEGIN_EXAMPLE
+mac :: ~/utils » g++ test2.cpp -std=c++2a ; ./a.out
+----- foo1(test c++0x) -----
+inside bar: 0x7ffee2b658d8
+move ctor:0x7ffee2b658d8 -> 0x7ffee2b65a40
+pa = 0x7ffee2b65a40/0x7ffee2b65a40
+-----
+inside bar: 0x7ffee2b658d8
+move ctor:0x7ffee2b658d8 -> 0x7ffee2b659d8
+move operator=:0x7ffee2b659d8 -> 0x7ffee2b65a10
+pa = 0x7ffee2b65a10/0x7ffee2b65a10
+-----
+copy ctor:0x7ffee2b65a40 -> 0x7ffee2b659b8
+pb = 0x7ffee2b659b8
+-----
+move ctor:0x7ffee2b659b8 -> 0x7ffee2b65998
+pc = 0x7ffee2b65998
+
+
+----- foo2(test c++03&0x) ----
+inside bar: 0x7ffee2b65908
+move ctor:0x7ffee2b65908 -> 0x7ffee2b65a40
+pa = 0x7ffee2b65a40/0x7ffee2b65a40
+-----
+inside bar: 0x7ffee2b65908
+move ctor:0x7ffee2b65908 -> 0x7ffee2b659d8
+move operator=:0x7ffee2b659d8 -> 0x7ffee2b65a10
+pa = 0x7ffee2b65a40/0x7ffee2b65a40
+-----
+copy ctor:0x7ffee2b65a40 -> 0x7ffee2b659b8
+pb = 0x7ffee2b659b8
+#+END_EXAMPLE
+
+而使用c++03编译的输出结果如下，可以看到foo2大部分地方都是copy操作。
+
+#+BEGIN_EXAMPLE
+mac :: ~/utils » g++ test2.cpp -std=c++03 ; ./a.out
+----- foo2(test c++03&0x) ----
+inside bar: 0x7ffee9f60918
+copy ctor:0x7ffee9f60918 -> 0x7ffee9f60a50
+pa = 0x7ffee9f60a50/0x7ffee9f60a50
+-----
+inside bar: 0x7ffee9f60918
+copy ctor:0x7ffee9f60918 -> 0x7ffee9f609e8
+copy operator=:0x7ffee9f609e8 -> 0x7ffee9f60a20
+pa = 0x7ffee9f60a50/0x7ffee9f60a50
+-----
+copy ctor:0x7ffee9f60a50 -> 0x7ffee9f609c8
+pb = 0x7ffee9f609c8
+#+END_EXAMPLE

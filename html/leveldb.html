@@ -1,0 +1,705 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>leveldb</title>
+<meta name="author" content="dirtysalt" />
+<meta name="generator" content="Org Mode" />
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content" class="content">
+<h1 class="title">leveldb</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>Table of Contents</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#org15d9f40">1. Introduction</a></li>
+<li><a href="#org45b7010">2. WriteBatch</a></li>
+<li><a href="#orgbaf1d00">3. BloomFilter</a>
+<ul>
+<li><a href="#org00d00fa">3.1. Format</a></li>
+<li><a href="#org362de9d">3.2. FilterBlockBuilder</a></li>
+<li><a href="#org1324d73">3.3. FilterBlockReader</a></li>
+</ul>
+</li>
+<li><a href="#org74c398c">4. Storage</a>
+<ul>
+<li><a href="#org120daa7">4.1. MemTable</a></li>
+<li><a href="#orgeebbaa5">4.2. RedoLog</a></li>
+<li><a href="#org28f9b0e">4.3. DiskTable</a></li>
+</ul>
+</li>
+<li><a href="#org57019c3">5. Compaction</a></li>
+<li><a href="#org638d470">6. Recovery</a></li>
+<li><a href="#org591783d">7. Snapshot</a></li>
+<li><a href="#org5d40f6d">8. Cache</a></li>
+<li><a href="#org3e0f987">9. Option</a></li>
+<li><a href="#orge0ac02a">10. Discussion</a></li>
+</ul>
+</div>
+</div>
+<p>
+<a href="http://code.google.com/p/leveldb/">http://code.google.com/p/leveldb/</a>
+</p>
+
+<div id="outline-container-org15d9f40" class="outline-2">
+<h2 id="org15d9f40"><span class="section-number-2">1.</span> Introduction</h2>
+<div class="outline-text-2" id="text-1">
+<p>
+相关资源：
+</p>
+<ul class="org-ul">
+<li>使用文档. <a href="http://leveldb.googlecode.com/svn/trunk/doc/index.html">http://leveldb.googlecode.com/svn/trunk/doc/index.html</a></li>
+<li>设计说明. <a href="http://leveldb.googlecode.com/svn/trunk/doc/impl.html">http://leveldb.googlecode.com/svn/trunk/doc/impl.html</a></li>
+<li>leveldb和baidu内部kv系统对比. <a href="http://hi.baidu.com/little_fxxker/blog/item/1915f300f7548a046b60fb08.html">http://hi.baidu.com/little_fxxker/blog/item/1915f300f7548a046b60fb08.html</a></li>
+<li><a href="http://blog.csdn.net/anderscloud/article/details/7182165">http://blog.csdn.net/anderscloud/article/details/7182165</a></li>
+</ul>
+
+<p>
+leveldb是一个kv存储系统，其中kv都是二进制。用户接口非常简单就是Put(k,v),Get(k),Delete(k).但是还有以下特性
+</p>
+<ul class="org-ul">
+<li>k有序存储.因为k是二进制没有解释的所以用户需要提供比较函数</li>
+<li>支持遍历包括前向和反向</li>
+<li>支持atomic write</li>
+<li>支持filter policy(bloomfilter)</li>
+<li>数据支持自动压缩(使用snappy压缩算法.关于snappy分析可以看<a href="snappy.html">这里</a>)</li>
+<li>底层提供了抽象接口，允许用户定制</li>
+</ul>
+<p>
+当然也存在一定的限制
+</p>
+<ul class="org-ul">
+<li>不是SQL数据库，没有数据关系模型</li>
+<li>一个table只允许一个process访问</li>
+<li>单机系统没有client-server.</li>
+</ul>
+
+<p>
+目录层次划分是这样的(意图是我猜想的)
+</p>
+<ul class="org-ul">
+<li>db // 和db逻辑相关的内容</li>
+<li>helpers // 里面有一个内存db接口</li>
+<li>include // Interface</li>
+<li>port // 操作系统相关的移植接口</li>
+<li>table // 表存储结构</li>
+<li>util // 公用部分.</li>
+</ul>
+
+<p>
+leveldb还是比较麻烦的.开始阅读的时候(像我)很多策略细节就可以直接忽略.比如什么时候触发compaction的,以及挑选什么层次进行compaction的输出,
+选择那些文件进行compaction等.阅读的时候需要了解每个类到底是用来做什么的.个人觉得里面最迷惑的东西就是Version/VersionEdit/VersionSet是用来做什么的.
+所谓Version就是做一个compaction时候产生的一个对象.VersionSet是当前DB里面所有的Version.VersionEdit是针对Version的修改.包括添加和删除哪些文件等.
+每次compaction时候会产生version表示这个哪些文件是需要的.在回收文件的时候会查看每一个version持有的文件,这样就可以确定哪些文件是不需要的了.
+每次进行compaction都会产生这么一个version对象.将对version进行的操作称为version_edit.同时会将这个version_edit写入manifest文件里面去.
+这样在恢复DB的时候，首先可以从manifest里面读取到挂掉之前的version是怎么样的.然后通过读取剩余的version_edit得到挂掉之前的version.
+同时会读取log文件将挂掉之前操作的kv恢复.
+</p>
+
+<p>
+最近看到一篇文章比较leveldb和mysql存储引擎性能(可能是innodb).里面提到了连续插入性能的抖动很大.这可能和底层为了达到读取高效率不断地进行compaction有关的.关于compaction挑选以及触发这个策略的话以后可以好好研究一下.
+</p>
+
+<p>
+compaction策略没有仔细分析，但是这个部分是精髓。如何控制compaction策略来针对应用达到最好的读写平衡。另外对于Recovery部分没有仔细看代码，但是我觉得这个部分倒不是很大的问题，可能学到的东西不多但是需要非常仔细地阅读才行。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org45b7010" class="outline-2">
+<h2 id="org45b7010"><span class="section-number-2">2.</span> WriteBatch</h2>
+<div class="outline-text-2" id="text-2">
+<p>
+leveldb使用WriteBatch来达到atomic write操作.WriteBatch过程非常简单，就是将atomic write的内容全部写到一个内存buffer上，然后提交这个WriteBatch.
+至于具体的分析可以查看"Code Analysis/Batch/WriteBatch"这节的分析。使用WriteBatch一方面可以做到原子操作，另外一方面可以提高吞吐。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgbaf1d00" class="outline-2">
+<h2 id="orgbaf1d00"><span class="section-number-2">3.</span> BloomFilter</h2>
+<div class="outline-text-2" id="text-3">
+<p>
+相关资源：
+</p>
+<ul class="org-ul">
+<li>Bloom Filter. <a href="http://en.wikipedia.org/wiki/Bloom_filter">http://en.wikipedia.org/wiki/Bloom_filter</a></li>
+<li>LevelDB Bloom Filter实现. <a href="http://duanple.blog.163.com/blog/static/7097176720123227403134/">http://duanple.blog.163.com/blog/static/7097176720123227403134/</a></li>
+</ul>
+
+<p>
+bloom filter原理非常简单，似乎没有必要详细分析。关于代码部分的话可以看Code Analysis/Util/BloomFilter.
+至于filter在磁盘上面是如何存储的可以参看下面一节Storage/DiskTable分析。
+</p>
+
+<p>
+meta block存放了bloom filter信息，这样可以减少磁盘读取。关于Table内部支持bloom filter在table/filter_block.h有实现。
+分别是FilterBlockBuilder和FilterBlockReader.
+</p>
+</div>
+
+<div id="outline-container-org00d00fa" class="outline-3">
+<h3 id="org00d00fa"><span class="section-number-3">3.1.</span> Format</h3>
+<div class="outline-text-3" id="text-3-1">
+<p>
+leveldb是这么分配filter block的.以base(2KB)计算.如果block offset在[base*i,base*(i+1)-1]之间的话，那么就在filter i上面。存储格式是这样的。
+</p>
+<pre class="example" id="org789c9c4">
+[filter 0]
+[filter 1]
+[filter 2]
+...
+[filter N-1]
+[offset of filter 0]                  : 4 bytes
+[offset of filter 1]                  : 4 bytes
+[offset of filter 2]                  : 4 bytes
+...
+[offset of filter N-1]                : 4 bytes
+[offset of beginning of offset array] : 4 bytes
+lg(base)                              : 1 byte
+</pre>
+<p>
+那么这个就是一个filter block的格式。filter block存放在meta block里面。在meta index block内部会记录key,filter block handle.其中key就是这个filter的名字,handle就是这个filter block offset.看看下面代码会更容易理解。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org362de9d" class="outline-3">
+<h3 id="org362de9d"><span class="section-number-3">3.2.</span> FilterBlockBuilder</h3>
+<div class="outline-text-3" id="text-3-2">
+<p>
+对于Table在初始化之前会调用StartBlock.并且在每次进行Flush Data Block时候也会根据Data Block offset调用。
+</p>
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-type">void</span> <span class="org-constant">FilterBlockBuilder</span>::<span class="org-function-name">StartBlock</span>(<span class="org-type">uint64_t</span> <span class="org-variable-name">block_offset</span>) {
+  <span class="org-type">uint64_t</span> <span class="org-variable-name">filter_index</span> = (block_offset / kFilterBase);
+  assert(filter_index &gt;= filter_offsets_.size());
+  <span class="org-keyword">while</span> (filter_index &gt; filter_offsets_.size()) {
+    GenerateFilter();
+  }
+}
+</pre>
+</div>
+<p>
+可以看到两个data block offset跨越超过base的话那么会产生几个empty filter.但是默认实现的话empty filter不占用太多空间。
+</p>
+
+<p>
+然后每次Table在AddKey时候也会调用FilterBlock::AddKey
+</p>
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-type">void</span> <span class="org-constant">FilterBlockBuilder</span>::<span class="org-function-name">AddKey</span>(<span class="org-keyword">const</span> <span class="org-type">Slice</span>&amp; <span class="org-variable-name">key</span>) {
+  <span class="org-type">Slice</span> <span class="org-variable-name">k</span> = key;
+  start_.push_back(keys_.size());
+  keys_.append(k.data(), k.size());
+}
+</pre>
+</div>
+<p>
+注意这里keys_是一个string.start_记录每个新增key的偏移。AddKey是将这段时间内添加的Key全部缓存下来。
+</p>
+
+<p>
+然后每次Flush的时候都会产生filter.
+</p>
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-type">void</span> <span class="org-constant">FilterBlockBuilder</span>::<span class="org-function-name">GenerateFilter</span>() {
+  <span class="org-keyword">const</span> <span class="org-type">size_t</span> <span class="org-variable-name">num_keys</span> = start_.size();
+  <span class="org-keyword">if</span> (num_keys == 0) {
+    <span class="org-comment-delimiter">// </span><span class="org-comment">Fast path if there are no keys for this filter</span>
+    filter_offsets_.push_back(result_.size());
+    <span class="org-keyword">return</span>;
+  }
+
+  <span class="org-comment-delimiter">// </span><span class="org-comment">Make list of keys from flattened key structure</span>
+  start_.push_back(keys_.size());  <span class="org-comment-delimiter">// </span><span class="org-comment">Simplify length computation</span>
+  tmp_keys_.resize(num_keys);
+  <span class="org-keyword">for</span> (<span class="org-type">size_t</span> <span class="org-variable-name">i</span> = 0; i &lt; num_keys; i++) {
+    <span class="org-keyword">const</span> <span class="org-type">char</span>* <span class="org-variable-name">base</span> = keys_.data() + start_[i];
+    <span class="org-type">size_t</span> <span class="org-variable-name">length</span> = start_[i+1] - start_[i];
+    tmp_keys_[i] = Slice(base, length);
+  }
+
+  <span class="org-comment-delimiter">// </span><span class="org-comment">Generate filter for current set of keys and append to result_.</span>
+  filter_offsets_.push_back(result_.size()); <span class="org-comment-delimiter">// </span><span class="org-comment">&#35760;&#24405;&#27599;&#20010;filter&#30340;&#20559;&#31227;.</span>
+  policy_-&gt;CreateFilter(&amp;tmp_keys_[0], num_keys, &amp;result_);
+
+  tmp_keys_.clear();
+  keys_.clear();
+  start_.clear();
+}
+</pre>
+</div>
+
+<p>
+最后filter block需要刷新出去调用Flush方法。
+</p>
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-type">Slice</span> <span class="org-constant">FilterBlockBuilder</span>::<span class="org-function-name">Finish</span>() {
+  <span class="org-keyword">if</span> (<span class="org-negation-char">!</span>start_.empty()) {
+    GenerateFilter();
+  }
+
+  <span class="org-comment-delimiter">// </span><span class="org-comment">Append array of per-filter offsets</span>
+  <span class="org-keyword">const</span> <span class="org-type">uint32_t</span> <span class="org-variable-name">array_offset</span> = result_.size();
+  <span class="org-keyword">for</span> (<span class="org-type">size_t</span> <span class="org-variable-name">i</span> = 0; i &lt; filter_offsets_.size(); i++) {
+    PutFixed32(&amp;result_, filter_offsets_[i]); <span class="org-comment-delimiter">// </span><span class="org-comment">&#36825;&#37324;&#20351;&#29992;Fixed32&#34920;&#31034;&#20063;&#38750;&#24120;&#22909;&#29702;&#35299;</span>
+    <span class="org-comment-delimiter">// </span><span class="org-comment">&#36825;&#26679;&#25165;&#33021;&#24555;&#36895;&#22320;&#26144;&#23556;&#21040;&#23545;&#24212;&#30340;filter&#19978;&#38754;&#12290;</span>
+  }
+
+  PutFixed32(&amp;result_, array_offset); <span class="org-comment-delimiter">// </span><span class="org-comment">&#36825;&#20010;array offset&#34920;&#31034;filter offset&#30340;&#36215;&#22987;&#22320;&#22336;</span>
+  result_.push_back(kFilterBaseLg);  <span class="org-comment-delimiter">// </span><span class="org-comment">Save encoding parameter in result</span>
+  <span class="org-keyword">return</span> Slice(result_); <span class="org-comment-delimiter">// </span><span class="org-comment">&#36825;&#20010;slice&#23601;&#26159;&#26368;&#32456;&#38656;&#35201;write&#30340;&#25968;&#25454;.</span>
+}
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org1324d73" class="outline-3">
+<h3 id="org1324d73"><span class="section-number-3">3.3.</span> FilterBlockReader</h3>
+<div class="outline-text-3" id="text-3-3">
+<p>
+了解上面的filter block的存储格式之后Reader就非常简单。构造函数首先计算出各个参数。simple huh?
+</p>
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-constant">FilterBlockReader</span>::<span class="org-function-name">FilterBlockReader</span>(<span class="org-keyword">const</span> <span class="org-type">FilterPolicy</span>* <span class="org-variable-name">policy</span>,
+                                     <span class="org-keyword">const</span> <span class="org-type">Slice</span>&amp; <span class="org-variable-name">contents</span>)
+    : policy_(policy),
+      data_(<span class="org-constant">NULL</span>),
+      offset_(<span class="org-constant">NULL</span>),
+      num_(0),
+      base_lg_(0) {
+  <span class="org-type">size_t</span> <span class="org-variable-name">n</span> = contents.size();
+  <span class="org-keyword">if</span> (n &lt; 5) <span class="org-keyword">return</span>;  <span class="org-comment-delimiter">// </span><span class="org-comment">1 byte for base_lg_ and 4 for start of offset array</span>
+  base_lg_ = contents[n-1];
+  <span class="org-type">uint32_t</span> <span class="org-variable-name">last_word</span> = DecodeFixed32(contents.data() + n - 5);
+  <span class="org-keyword">if</span> (last_word &gt; n - 5) <span class="org-keyword">return</span>;
+  data_ = contents.data();
+  offset_ = data_ + last_word;
+  num_ = (n - 5 - last_word) / 4;
+}
+</pre>
+</div>
+
+<p>
+阅读完成后面的Storage一节之后就会发现query key的话首先是在data index block找到这个key所在的data block offset的。
+所以这里filter就是判断某个offset的data block是否含所有key.
+</p>
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-type">bool</span> <span class="org-constant">FilterBlockReader</span>::<span class="org-function-name">KeyMayMatch</span>(<span class="org-type">uint64_t</span> <span class="org-variable-name">block_offset</span>, <span class="org-keyword">const</span> <span class="org-type">Slice</span>&amp; <span class="org-variable-name">key</span>) {
+  <span class="org-type">uint64_t</span> <span class="org-variable-name">index</span> = block_offset &gt;&gt; base_lg_;
+  <span class="org-keyword">if</span> (index &lt; num_) {
+    <span class="org-type">uint32_t</span> <span class="org-variable-name">start</span> = DecodeFixed32(offset_ + index*4); <span class="org-comment-delimiter">// </span><span class="org-comment">filter&#36215;&#22987;&#22320;&#22336;</span>
+    <span class="org-type">uint32_t</span> <span class="org-variable-name">limit</span> = DecodeFixed32(offset_ + index*4 + 4); <span class="org-comment-delimiter">// </span><span class="org-comment">filter&#32456;&#27490;&#22320;&#22336;</span>
+    <span class="org-keyword">if</span> (start &lt;= limit &amp;&amp; limit &lt;= (offset_ - data_)) {
+      <span class="org-type">Slice</span> <span class="org-variable-name">filter</span> = Slice(data_ + start, limit - start);
+      <span class="org-keyword">return</span> policy_-&gt;KeyMayMatch(key, filter); <span class="org-comment-delimiter">// </span><span class="org-comment">filter&#21028;&#26029;&#26159;&#21542;&#23384;&#22312;key.</span>
+    } <span class="org-keyword">else</span> <span class="org-keyword">if</span> (start == limit) {
+      <span class="org-comment-delimiter">// </span><span class="org-comment">Empty filters do not match any keys</span>
+      <span class="org-keyword">return</span> <span class="org-constant">false</span>;
+    }
+  }
+  <span class="org-keyword">return</span> <span class="org-constant">true</span>;  <span class="org-comment-delimiter">// </span><span class="org-comment">Errors are treated as potential matches</span>
+}
+</pre>
+</div>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org74c398c" class="outline-2">
+<h2 id="org74c398c"><span class="section-number-2">4.</span> Storage</h2>
+<div class="outline-text-2" id="text-4">
+<p>
+相关资源：
+</p>
+<ul class="org-ul">
+<li>Table Format. <a href="http://leveldb.googlecode.com/svn/trunk/doc/table_format.txt">http://leveldb.googlecode.com/svn/trunk/doc/table_format.txt</a> sst table存储格式。</li>
+<li>Log Format. <a href="http://leveldb.googlecode.com/svn/trunk/doc/log_format.txt">http://leveldb.googlecode.com/svn/trunk/doc/log_format.txt</a> block存储格式。</li>
+<li>LevelDB SSTable格式详解. <a href="http://wenku.baidu.com/view/19f83f51be23482fb4da4c29.html">http://wenku.baidu.com/view/19f83f51be23482fb4da4c29.html</a></li>
+</ul>
+</div>
+
+<div id="outline-container-org120daa7" class="outline-3">
+<h3 id="org120daa7"><span class="section-number-3">4.1.</span> MemTable</h3>
+<div class="outline-text-3" id="text-4-1">
+<p>
+memtable在leveldb内部实现就是一个skiplist.所有的update都不是in-place的，对于memtable里面的修改来说的话使用的也是使用添加的方式完成的。
+对于每个操作都会分配一个sequence number.所以底层也没有办法直接覆盖。对于sequence number很明显就是需要实现snapshot.底层的话leveldb
+持有两个memtable,一个memtable用于接收当前的操作是mutable的，一个memtable是immutable专门用于dump to disk的，内部实现类似于双buffer机制。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgeebbaa5" class="outline-3">
+<h3 id="orgeebbaa5"><span class="section-number-3">4.2.</span> RedoLog</h3>
+<div class="outline-text-3" id="text-4-2">
+<p>
+我们首先阅读Log Format文档看看log存储格式(leveldb采用redo-log来记日志)。每个block都划分成为32KB，里面可能会存在很多条记录，
+对于跨块的记录来说的里面存在type字段用来标记这个块是否已经结束。另外值得注意的就是每个记录之前带上了32bit的checksum.对于每条记录多4字节还是很大开销的，
+但是其实这也反应了leveldb的定位，就是针对fault-tolerant的分布式系统设计。这些分布式系统架在commodity PC上面，磁盘可能很容易出现问题。
+在文档最后作者也给给出了这种block存储方式(recordio)的利弊。
+</p>
+<pre class="example" id="orgd5afe1e">
+Some benefits over the recordio format:
+
+(1) We do not need any heuristics for resyncing - just go to next
+block boundary and scan.  If there is a corruption, skip to the next
+block.  As a side-benefit, we do not get confused when part of the
+contents of one log file are embedded as a record inside another log
+file.
+
+(2) Splitting at approximate boundaries (e.g., for mapreduce) is
+simple: find the next block boundary and skip records until we
+hit a FULL or FIRST record.
+
+(3) We do not need extra buffering for large records.
+
+Some downsides compared to recordio format:
+
+(1) No packing of tiny records.  This could be fixed by adding a new
+record type, so it is a shortcoming of the current implementation,
+not necessarily the format.
+
+(2) No compression.  Again, this could be fixed by adding new record types.
+</pre>
+<p>
+pros有：
+</p>
+<ul class="org-ul">
+<li>如果磁盘数据发生损坏的话，那么对于数据定位的话非常简单。如果这个block出现问题的话那么直接跳过这个block即可。</li>
+<li>程序处理方面可以很容易地找到边界。</li>
+<li>对于单条大数据处理的话我们不需要分配很大的内存来做buffer.</li>
+</ul>
+<p>
+cons有：
+</p>
+<ul class="org-ul">
+<li>没有针对小record进行优化，比如如果record足够小的话完全可以在length部分使用1个字节。</li>
+<li>没有进行压缩。对于压缩率完全取决于实现。对于小数据来说的话压缩比可能不高，对于大数据来说比如超过32KB的话，</li>
+</ul>
+<p>
+取决于是按照32KB单个block压缩呢(压缩率可能不高),还是先针对整体压缩(压缩率可能比较耗，但是却需要很大的buffer).
+</p>
+</div>
+</div>
+
+<div id="outline-container-org28f9b0e" class="outline-3">
+<h3 id="org28f9b0e"><span class="section-number-3">4.3.</span> DiskTable</h3>
+<div class="outline-text-3" id="text-4-3">
+<p>
+然后可以看看Table Format文档关于table存储格式。table存储格式里面主要包括几个部分：
+</p>
+<ul class="org-ul">
+<li>data block</li>
+<li>meta block</li>
+<li>meta index block</li>
+<li>data index block</li>
+<li>footer</li>
+</ul>
+<p>
+footer部分是放在最末尾的，里面包含了data index block以及meta index block的偏移信息，读取table时候从末尾读取。
+</p>
+
+<p>
+首先我们看看data block是如何组织的。对于DiskTable(TableBuilder)就是不断地Add(Key,Value).当缓存的数据达到一定大小之后，
+就会调用Flush这样就形成了一个Block.对于一个Block内部而言的话，有个很重要的概念就是restart point.所谓restart point就是为了解决
+前缀压缩的问题的，所谓的restart point就是基准key。假设我们顺序加入abcd,abce,abcf.我们以abcd为restart point的话，那么abce可以存储为
+(3,e),abcf存储为(3,f).对于restart point采用全量存储，而对于之后的部分采用增量存储。一个restart block可能存在多个restart point,
+将这些restart point在整个table offset记录下来，然后放在data block最后面。每个data block尾部还有一个type和CRC32.其中type可以选择是否
+需要针对这个data block进行snappy压缩，而CRC32是针对这个data block的校验。
+</p>
+
+<p>
+data index block组织形式和data block非常类似，只不过有两个不同。1)data index block从不刷新直到Table构造完成之后才会刷新，所以
+对于一个table而言的话只有一个data index block.2)data index block添加的key/value是在data block形成的时候添加的，添加key非常取巧
+，是上一个data block和这个data block的一个key seperator.比如上一个data block的max key是abcd,而这个data block的min key是ad.那么这个
+seperator可以设置成为ac.seperator的生成可以参考Comparator.使用尽量短的seperator可以减小磁盘开销并且提高效率。而对于添加的value就是
+这个data block的offset.同样在data index block也会存在restart point.
+</p>
+
+<p>
+然后看看进行一个key的query是如何进行的。首先读取出data index block(这个部分可以常驻内存)，得到里面的restart point部分。针对restart point
+进行二分。因为restart point指向的key都是全量的key.如果确定在某两个restart point之间之后，就可以遍历这个restart point之间范围分析seperator.
+得到想要查找的seperator之后对应的value就是某个data block offset.读取这个data block和之前的方法一样就可以查找key了。对于遍历来说，过程是一样的。
+</p>
+
+<p>
+这里我们稍微分析一下这样的工作方式的优缺点。对于写或者是merge来说的话，效率相当的高，所有写都是顺序写并且还可以进行压缩。影响写效率的话一个重要参数就是flush block的参数。
+但是对于读来说的话，个人觉得过程有点麻烦，但是可以实现得高效率。对于flush block调节会影响到data index block和data block占用内存大小。如果flush block过大的话，
+那么会造成data index block耗费内存小，但是每次读取出一个data block内存很大。如果flush block过小的话，那么data index block耗费内存很大，但是每次读取data block内存很小。
+而restart point数量会影响过多的话，那么可能会占用稍微大一些的内存空间，但是会使得查找过程更快(遍历数更少).
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org57019c3" class="outline-2">
+<h2 id="org57019c3"><span class="section-number-2">5.</span> Compaction</h2>
+<div class="outline-text-2" id="text-5">
+<p>
+对于Compaction触发的策略牵扯到了算法问题，自己表示没有仔细看这个策略(其实当时看了但是完全没有理解).这里谈谈compaction如何删除文件的问题。
+在leveldb里面每次做一个compaction都会产生一个version对象添加到versionset里面，version里面包含了这个version管理了哪些文件。
+每次进行读取都会从某个version读取，然后针对这个version做一个引用计数。然后每次需要删除一些不必要的文件时候就会遍历versionset了解哪些文件
+还需要，然后对比文件系统目录下面的文件就知道哪些文件不再需要，即可删除。
+</p>
+
+<p>
+这里稍微总结一下 <a href="http://leveldb.googlecode.com/svn/trunk/doc/impl.html">http://leveldb.googlecode.com/svn/trunk/doc/impl.html</a> 提到的compaction策略。可能阅读完了这些策略之后反过头来看看
+代码可能会更好，只是记得当时阅读compaction策略太痛苦了所以直接忽略了。
+</p>
+
+<p>
+每个level都有一定的大小限制，并且每个level里面的文件的key都是不会overlap的(L0除外).触发条件很多，文档上描述是某个level超过一定限制。
+但是之前阅读代码发现其实并不是这样的，可以参看函数VersionSet::PickCompaction.可以看到有两个触发条件size_compaction和seek_compaction.
+所谓的size_compaction就是说某个level超过一定大小，而seek_compaction指某个文件被seek次数超过一定次数之后会触发(关于这个值的更新可以查看VersionSet::Builder::Apply,
+在一个文件初始创建的时候就已经设置好了allowed_seeks次数).
+</p>
+
+<p>
+前面是触发条件，后面来说说compaction策略.文档上描述非常简单但是事实不是这样。如果需要compact某个level的话，如果level&gt;0的话那么对于这个level
+只会选出一个file来和level+1中存在overlap的文件进行合并然后生成一个新的文件。如果level==0的话那么对于这个level可能选择多个文件出来和level+1中overlap
+文件合并。对于选取level中文件来说的话是采用rotate keyspace的方式来挑选的。在生成新文件的时候，通常会有两个情况拆分出一个新文件。1)
+文件过大 2)文件和level+2中超过10个存在overlap. 2)情况非常好理解，因为如果产生一个大文件和level+2 overlap文件数量过多的话，那么进行level+1的compaction
+时间就会非常长并且随机读非常严重。
+</p>
+
+<p>
+<a href="http://leveldb.googlecode.com/svn/trunk/doc/impl.html">http://leveldb.googlecode.com/svn/trunk/doc/impl.html</a> 文档Timing这节个人感觉非常有价值。作者估算了一下compaction对于整个系统带宽带来的影响。
+按照2MB一个sst文件在level(&gt;0)上面的compaction来计算的话，一次compaction需要read 26MB和write 26MB~=50MB.假设磁盘带宽100MB/s我们通过后台线程限制速度的话，
+那么做compaction需要耗费5s时间。假设用户写速度也在10MS/s的话，那么会生成50MB数据相当于25个sst level0文件。这样对读来说会造成很大影响。
+作者给出的建议包括：
+</p>
+<pre class="example" id="org4ee85a3">
+Solution 1: To reduce this problem, we might want to increase the log switching threshold when the number of level-0 files is large.
+Though the downside is that the larger this threshold, the more memory we will need to hold the corresponding memtable.
+
+Solution 2: We might want to decrease write rate artificially when the number of level-0 files goes up.
+
+Solution 3: We work on reducing the cost of very wide merges. Perhaps most of the level-0 files will have their blocks sitting uncompressed
+in the cache and we will only need to worry about the O(N) complexity in the merging iterator.
+</pre>
+<p>
+其中第二点感觉非常好就是认为控制写入速度当level0文件过多的时候。在db_impl.cc DBImpl::MakeRoomForWrite这个应该是在memtable缺少空间的时候的函数.
+</p>
+<div class="org-src-container">
+<pre class="src src-C++">  allow_delay &amp;&amp;
+  versions_-&gt;NumLevelFiles(0) &gt;= <span class="org-constant">config</span>::kL0_SlowdownWritesTrigger) {
+<span class="org-comment-delimiter">// </span><span class="org-comment">We are getting close to hitting a hard limit on the number of</span>
+<span class="org-comment-delimiter">// </span><span class="org-comment">L0 files.  Rather than delaying a single write by several</span>
+<span class="org-comment-delimiter">// </span><span class="org-comment">seconds when we hit the hard limit, start delaying each</span>
+<span class="org-comment-delimiter">// </span><span class="org-comment">individual write by 1ms to reduce latency variance.  Also,</span>
+<span class="org-comment-delimiter">// </span><span class="org-comment">this delay hands over some CPU to the compaction thread in</span>
+<span class="org-comment-delimiter">// </span><span class="org-comment">case it is sharing the same core as the writer.</span>
+mutex_.Unlock();
+env_-&gt;SleepForMicroseconds(1000);
+allow_delay = <span class="org-constant">false</span>;  <span class="org-comment-delimiter">// </span><span class="org-comment">Do not delay a single write more than once</span>
+mutex_.Lock();
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org638d470" class="outline-2">
+<h2 id="org638d470"><span class="section-number-2">6.</span> Recovery</h2>
+<div class="outline-text-2" id="text-6">
+<p>
+这里稍微总结一下 <a href="http://leveldb.googlecode.com/svn/trunk/doc/impl.html">http://leveldb.googlecode.com/svn/trunk/doc/impl.html</a> 提到的关于recovery的部分。幸运的是在阅读这个文档的时候也让我重新仔细地思考了一下这个recovery过程可能会如何进行的。
+</p>
+
+<p>
+我们主要关注三个数据的恢复：
+</p>
+<ul class="org-ul">
+<li>用户的data(log)</li>
+<li>leveldb所管理的文件(MANIFEST)</li>
+<li>内部生成的sequence number(MANIFEST)</li>
+</ul>
+
+<p>
+对于用户的data而言可以通过记录log来完成。注意这个log里面都是db的insert/delete等操作。值得注意的是，每次生成新的memtable也会生成新的log文件。
+这点是非常必要的，因为这样才可以将需要恢复哪些log对应起来。并且log里面每条日志都带上了sequence number,所以log里面的sequence number也有助于
+sequence number恢复。
+</p>
+
+<p>
+记录leveldb所管理的文件非常简单。我们观察管理文件变化只会发生在compaction的时候，在当前version下面删除一部分文件生成一部分文件。我们将
+这些变化称为VersionEdit.每次compaction完成之后的话我们将这个version edit记录在MANIFEST内部，同时生成一个Version。version edit是增量,version是全量。
+(至于如何记录这个没有仔细看.但是看代码里面似乎有全量也有增量的记录).如果创建一个新的MANIFEST文件的话，会将MANIFEST文件名称记录在CURRENT内部。
+这样启动之后就知道读取哪个MANIFEST文件了。当然记录在MANIFEST内部的不仅仅是文件的变化，还有生成这个Version时候对应的log以及sequence number.
+</p>
+
+<p>
+这样我们的recovery过程就非常简单了。读取CURRENT文件知道读取哪个MANIFEST文件。从MANIFEST文件里面构造Version并且回放VersionEdit.
+根据当前的状态知道需要读取哪些log.然后回放log更新sequence number等状态。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org591783d" class="outline-2">
+<h2 id="org591783d"><span class="section-number-2">7.</span> Snapshot</h2>
+<div class="outline-text-2" id="text-7">
+<p>
+Snapshot集合在leveldb里面组织成为一个链表，oldest的节点必然最小的snapshot。对于每一个snapshot配备一个sequence number,
+所以很明显oldest的节点的sequence number应该是最小的。每次进行compaction的时候会判断当前最小的sequence number
+是多少然后将一些不必要的节点删除。另外在查询key的时候也会结合这个snapshot sequence number结合成为一个复合key进行查询。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org5d40f6d" class="outline-2">
+<h2 id="org5d40f6d"><span class="section-number-2">8.</span> Cache</h2>
+<div class="outline-text-2" id="text-8">
+<p>
+对于leveldb来说的话存在两个cache系统，一个是TableCache，一个是BlockCache.其中TableCache是用来缓存文件描述符的，
+而BlockCache是用来做data block的缓存的(Table::BlockeReader).对于leveldb只有一个cache实现在Code Analysis/Cache里面做了详细分析。
+</p>
+
+<p>
+我们这里最感兴趣的东西，应该就是每个cache的kv分别是什么。对于TableCahce的k是file_number,v是Table的Iterator
+(Table::NewIterator).对于leveldb来说的话文件的file_number都是自增的所以使用file_number没有任何问题。对于BlockCache
+来说的话k是(cache_id,offset),v是Block的内存。(#todo: 对于这个cache_id现在还不是非常理解，但是个人觉得
+这个cache_id可以==file_number.使用cache_id就是每次Open的时候这个cache_id都会改变)
+</p>
+
+<p>
+和BlockCache是针对disk block来进行cache的，另外一种cache方案就是Record Cache.相对Block Cache,Record Cache无疑更能够
+提高使用效率包括内存大小以及Cache命中率。但是大家拒绝在内部使用RecordCache的原因非常简答，就是这个在应用层完成似乎更好，
+应用层可以更好地进行Cache。在应用层完成同时会引入一个问题就是Cache一致性，但是其实维持这个一致性并不是一件很复杂的事情，
+Cache主要用来解决读取问题，做写穿透并且让Cache失效即可。leveldb维护BlockCache一致性并不麻烦，因为leveldb的update并不是in-place的。
+</p>
+
+<p>
+不过后来仔细想了一下觉得Record Cache还是在应用层做比较好，可以控制缓存策略比如大小失效时间。对于底层库还是在做BlockCache会比较好一些.
+</p>
+</div>
+</div>
+
+<div id="outline-container-org3e0f987" class="outline-2">
+<h2 id="org3e0f987"><span class="section-number-2">9.</span> Option</h2>
+<div class="outline-text-2" id="text-9">
+<p>
+在options.h里面有一些leveldb可选的选项。
+</p>
+<ul class="org-ul">
+<li>comparator.用户可以指定比较器</li>
+<li>create_if_missing.如果数据库不存在就创建</li>
+<li>error_if_exists.如果数据库存在就报错</li>
+<li>paranoid_checks.尽可能多地进行错误检查</li>
+<li>env.用户可以模拟db环境</li>
+<li>info_log.leveldb本身logger.</li>
+<li>write_buffer_size.memtable大小</li>
+<li>max_open_files.最大打开fd数量</li>
+<li>block_cache.Table读取data block的cache.</li>
+<li>block_size.Table里面Block大小</li>
+<li>block_restart_interval.在一个Block里面每隔多少个key创建一个restart point.</li>
+<li>compression.DataBlock是否需要压缩</li>
+<li>filter_policy.过滤策略默认就是bloom filter.</li>
+<li>verify_checksums.读取block时候是否校验checksum</li>
+<li>fill_cache.读取block是否会Cache.通常scan时候不要做cache</li>
+<li>sync.leveldb内部发起write的话是否会调用fsync.</li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-orge0ac02a" class="outline-2">
+<h2 id="orge0ac02a"><span class="section-number-2">10.</span> Discussion</h2>
+<div class="outline-text-2" id="text-10">
+<p>
+leveldb通过iterator遍历，对于相同的key如何保证获取到最新的值（hpplinux)
+</p>
+
+<p>
+<b>Question</b>
+</p>
+
+<pre class="example" id="orgf32983e">
+我在看LevelDB代码的时候遇到了一个问题，百思不得其解，也找不到可以探讨请教的人，所以冒昧的给您发了这封邮件，希望得到您的帮助。
+我遇到的问题是这样的：
+在
+void Version::AddIterators(const ReadOptions&amp; options,
+                           std::vector&lt;Iterator*&gt;* iters) {
+  // Merge all level zero files together since they may overlap
+  for (size_t i = 0; i &lt; files_[0].size(); i++) {
+    iters-&gt;push_back(
+        vset_-&gt;table_cache_-&gt;NewIterator(
+            options, files_[0][i]-&gt;number, files_[0][i]-&gt;file_size));
+  }
+
+  // For levels &gt; 0, we can use a concatenating iterator that sequentially
+  // walks through the non-overlapping files in the level, opening them
+  // lazily.
+  for (int level = 1; level &lt; config::kNumLevels; level++) {
+    if (!files_[level].empty()) {
+      iters-&gt;push_back(NewConcatenatingIterator(options, level));
+    }
+  }
+}
+
+中对于Level 0层是按照下标从0到N开始遍历的， 但是由于数据加入的时候老的文件在前，新的在后，所以这样的话在iters数组中
+下标最小的不一定是最新的。
+而在DBImpl::NewInternalIterator 中会把该函数的返回结果直接进行merging，而且原则是key相同的话选取丢弃后面出现的。
+
+这样的策略的话会不会导致较老的数据被留下，较新的被删除 ？
+</pre>
+
+<hr />
+
+<p>
+<b>Answer</b>
+</p>
+
+<p>
+是这样的，你可以看到AddIterators这个部分是被DBImpl::NewInternalIterator调用的，得到所有的iterators之后，构造一个MergingIterator对象。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-comment-delimiter">// </span><span class="org-comment">&#23545;&#20110;version&#26469;&#35828;&#21487;&#33021;&#23384;&#22312;&#24456;&#22810;&#25991;&#20214;&#38656;&#35201;&#36941;&#21382;.</span>
+versions_-&gt;current()-&gt;AddIterators(options, &amp;list);
+<span class="org-comment-delimiter">// </span><span class="org-comment">&#23558;&#36825;&#20123;&#20869;&#23481;&#26500;&#36896;&#31216;&#20026;&#19968;&#20010;merge iterator.</span>
+<span class="org-comment-delimiter">// </span><span class="org-comment">&#27880;&#24847;&#36825;&#37324;&#30340;&#20869;&#23481;&#37117;&#21152;&#20102;&#24341;&#29992;&#35745;&#25968;.</span>
+<span class="org-type">Iterator</span>* <span class="org-variable-name">internal_iter</span> =
+    NewMergingIterator(&amp;internal_comparator_, &amp;list[0], list.size());
+</pre>
+</div>
+
+<p>
+注意它这里提供的comparator是一个internal_comparator. 这个comparator不仅仅比较user key, 还比较sequence number. 因为sequence number是顺序分配的，所以新的kv得到更大的sequence number. 代码在这里：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-type">int</span> <span class="org-constant">InternalKeyComparator</span>::<span class="org-function-name">Compare</span>(<span class="org-keyword">const</span> <span class="org-type">Slice</span>&amp; <span class="org-variable-name">akey</span>, <span class="org-keyword">const</span> <span class="org-type">Slice</span>&amp; <span class="org-variable-name">bkey</span>) <span class="org-keyword">const</span> {
+  <span class="org-comment-delimiter">// </span><span class="org-comment">Order by:</span>
+  <span class="org-comment-delimiter">//    </span><span class="org-comment">increasing user key (according to user-supplied comparator)</span>
+  <span class="org-comment-delimiter">//    </span><span class="org-comment">decreasing sequence number</span>
+  <span class="org-comment-delimiter">//    </span><span class="org-comment">decreasing type (though sequence# should be enough to disambiguate)</span>
+  <span class="org-type">int</span> <span class="org-variable-name">r</span> = user_comparator_-&gt;Compare(ExtractUserKey(akey), ExtractUserKey(bkey));
+  <span class="org-keyword">if</span> (r == 0) {
+    <span class="org-keyword">const</span> <span class="org-type">uint64_t</span> <span class="org-variable-name">anum</span> = DecodeFixed64(akey.data() + akey.size() - 8);
+    <span class="org-keyword">const</span> <span class="org-type">uint64_t</span> <span class="org-variable-name">bnum</span> = DecodeFixed64(bkey.data() + bkey.size() - 8);
+    <span class="org-keyword">if</span> (anum &gt; bnum) { <span class="org-comment-delimiter">// </span><span class="org-comment">&#25353;&#29031;sequence number&#27604;&#36739;.</span>
+     <span class="org-comment-delimiter">// </span><span class="org-comment">&#20043;&#21069;&#25105;&#20204;&#22312;MemTableInserter&#37324;&#38754;&#21487;&#20197;&#30475;&#21040;sequence number&#26159;&#19981;&#26029;&#22686;&#21152;&#30340;.</span>
+      r = -1;
+    } <span class="org-keyword">else</span> <span class="org-keyword">if</span> (anum &lt; bnum) {
+      r = +1;
+    }
+  }
+  <span class="org-keyword">return</span> r;
+}
+
+</pre>
+</div>
+
+<p>
+然后这个就好解释问题了。首先每个iterator内部都是按照key做好排序的，多路iterator如果出现相同的key那么使用sequence number大的那个，这样就可以保证始终首先看到的是新值。
+</p>
+</div>
+</div>
+</div>
+<div id="content"><!-- DISQUS BEGIN --><div id="disqus_thread"></div><script>/***  RECOMMENDED CONFIGURATION VARIABLES: EDIT AND UNCOMMENT THE SECTION BELOW TO INSERT DYNAMIC VALUES FROM YOUR PLATFORM OR CMS.*  LEARN WHY DEFINING THESE VARIABLES IS IMPORTANT: https://disqus.com/admin/universalcode/#configuration-variables*/var disqus_config = function () {this.page.url = 'https://dirtysalt.github.io/html/leveldb.html';this.page.identifier = 'leveldb.html';};(function() {var d = document, s = d.createElement('script');s.src = 'https://dirlt.disqus.com/embed.js';s.setAttribute('data-timestamp', +new Date());(d.head || d.body).appendChild(s);})();</script><noscript>Please enable JavaScript to view the <a href="https://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript><!-- DISQUS END --></div></body>
+</html>

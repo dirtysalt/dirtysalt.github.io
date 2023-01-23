@@ -1,0 +1,83 @@
+#+title: LC 建信04. 电学实验课
+
+https://leetcode-cn.com/contest/ccbft-2021fall/problems/lSjqMF/
+
+这题细想一下的话，可以知道是个矩阵运算。假设有4行的话，那么矩阵就是这样的：
+
+#+BEGIN_EXAMPLE
+   0  1  2  3
+0  x  x  o  o
+1  x  x  x  o
+2  o  x  x  x
+3  o  o  x  x
+#+END_EXAMPLE
+
+
+我最开始的实现方式是这样的，假设要从(r0, c0) -> (r1, c1)的话，假设基本矩阵是T
+- 计算 Tx = T ^(c1 - c0)
+- 然后选择 Tx[r0][r1] 这个值
+
+但是使用这种计算的话，时间复杂度大约是 O(N^3 * lg(c1-c0)).
+
+如果N=20的话，lg(c1-c0) ~=32, 然后有1000个目标，所以总体计算量大约是 20^3 * 32 * 1000 ~= 256 * 10^6. 这个肯定是会超时的。
+
+----------
+
+后来看了第一名的算法，基本思路也差不多，但是矩阵运行不是这么搞的的。正确的思路应该是
+- 预先计算 T0 = T^0, T1 = T^1,  T2 = T^2, ...
+- 生成 x 列矩阵，然后x[r0][0] = 1
+- 计算 y= T^(c1-c0) * x. 这个计算可以转换成为x和T0, T1, T2的乘法
+- 然后取 y[r1][0] 这个值
+
+预先计算的代价可以不用考虑，之后的每次矩阵计算量则可以减少为 20*20*1 * lg(c1-c0). 可以认为整个时间复杂度下降了1/20.
+
+#+BEGIN_SRC cpp
+class Solution:
+    def electricityExperiment(self, row: int, col: int, position: List[List[int]]) -> int:
+        MOD = 10 ** 9 + 7
+
+        def make_unit():
+            mat = [[0] * row for _ in range(row)]
+            for i in range(row):
+                if i > 0:
+                    mat[i][i - 1] = 1
+                mat[i][i] = 1
+                if (i + 1) < row:
+                    mat[i][i + 1] = 1
+            return mat
+
+        def mat_mul(a, b):
+            R, K, C = len(a), len(a[0]), len(b[0])
+            res = [[0] * C for _ in range(R)]
+            for k in range(K):
+                for i in range(R):
+                    for j in range(C):
+                        res[i][j] += (a[i][k] * b[k][j]) % MOD
+                        res[i][j] %= MOD
+            return res
+
+        cache = [None] * 32
+        cache[0] = make_unit()
+        for i in range(1, len(cache)):
+            cache[i] = mat_mul(cache[i - 1], cache[i - 1])
+
+        def solve(r0, r1, step):
+            b = [[0] * 1 for _ in range(row)]
+            b[r0][0] = 1
+            for i in range(32):
+                if (step >> i) & 0x1:
+                    b = mat_mul(cache[i], b)
+            return b[r1][0]
+
+        position = [(r, c) for (r, c) in position]
+        position.sort(key=lambda x: x[1])
+        ans = 1
+        for i in range(1, len(position)):
+            r0, c0 = position[i - 1]
+            r1, c1 = position[i]
+            res = solve(r0, r1, c1 - c0)
+            ans = (ans * res) % MOD
+            if ans == 0:
+                break
+        return ans
+#+END_SRC

@@ -1,0 +1,124 @@
+#+title: fast memcpy/memcmp中的SIMD
+
+----------
+memcpy这个话题我是从 [[https://www.zhihu.com/question/35172305/answer/77398099][怎样写出一个更快的 memset/memcpy ？ - 知乎]] 这里看到的。skywind写了个FastMemcpy的实现，并且用几篇文章做了说明
+- [[http://www.skywind.me/blog/archives/143][内存拷贝优化（1）-小内存拷贝优化 - Skywind Inside]]
+- [[http://www.skywind.me/blog/archives/1573#][内存拷贝优化（2）-全尺寸拷贝优化 - Skywind Inside]]
+- [[http://www.skywind.me/blog/archives/1587][内存拷贝优化（3）-深入优化 - Skywind Inside]]
+- https://joryanick.com/retro-fast-x86-memcpy.htm 这篇文章也提到了这个FastMemcpy
+
+github代码在这里 https://github.com/skywind3000/FastMemcpy. 不看AVX512的版本，直接看SSE2的版本 https://github.com/skywind3000/FastMemcpy/blob/master/FastMemcpy.h
+
+首先是对于短串的处理非常巧妙，将两个相关的case放在一起，然后利用C语言的fallthrough特性。这是个利用好switch fallthrough的样例。
+
+对短串单独处理的原因就是避免循环开销，因为对于短串来说可能循环额外的开销更大，直接根据大小选择指令会更好。根据长度做如下选择进行拷贝：
+1. 64/32/16字节用 4/2/1个128bit 寄存器（非对齐）
+2. 8/4/2/1字节用 uint64/32/16/8 变量
+
+#+BEGIN_SRC cpp
+static INLINE void *memcpy_tiny(void *dst, const void *src, size_t size) {
+	unsigned char *dd = ((unsigned char*)dst) + size;
+	const unsigned char *ss = ((const unsigned char*)src) + size;
+
+	switch (size) {
+	case 64:
+		memcpy_sse2_64(dd - 64, ss - 64);
+	case 0:
+		break;
+
+	case 65:
+		memcpy_sse2_64(dd - 65, ss - 65);
+	case 1:
+		dd[-1] = ss[-1];
+		break;
+    ...
+    case 86:
+		memcpy_sse2_64(dd - 86, ss - 86);
+	case 22:
+		memcpy_sse2_16(dd - 22, ss - 22);
+		*((uint32_t*)(dd - 6)) = *((uint32_t*)(ss - 6));
+		*((uint16_t*)(dd - 2)) = *((uint16_t*)(ss - 2));
+		break;
+   ...
+}
+
+static INLINE void memcpy_sse2_32(void *dst, const void *src) {
+	__m128i m0 = _mm_loadu_si128(((const __m128i*)src) + 0);
+	__m128i m1 = _mm_loadu_si128(((const __m128i*)src) + 1);
+	_mm_storeu_si128(((__m128i*)dst) + 0, m0);
+	_mm_storeu_si128(((__m128i*)dst) + 1, m1);
+}
+#+END_SRC
+
+大串的拷贝则按照下面步骤处理：
+1. 对目标地址进行对齐，这样在写入的时候使用store而不是storeu
+2. 但是没有办法保证src也是对齐的，所以始终使用loadu
+3. 对源地址进行了prefetch, 但是不知道不使用差别有多大。
+4. 超过一定大小的话（L2 cache size，其实具体值无所谓），使用non-temporal store，类似bypass cache write.
+5. 但是如果使用non-temporal store的话，最后需要接上mm_sfence做个内存屏障。
+
+还看到一个 [[https://gist.github.com/zuowang/0f363b12d4bd40bf5608][rte_memcpy]] 的实现，说实话我看不太下去，有点乱。
+
+memcpy一个可能的改写（不一定是优化）是，比如对于47字节这样的拷贝，是否可以改写为：
+- memcpy_sse2_32(dd - 47, ss - 47);
+- memcpy_sse2_16(dd - 16, ss - 16);
+也就是说通过overc copy来节省指令，或许对memcpy不是个好的idea（可能bound不在CPU上），但是对于memcmp可能就是个不错的优化。
+
+#+BEGIN_SRC cpp
+case 47:
+		memcpy_sse2_32(dd - 47, ss - 47);
+		*((uint64_t*)(dd - 15)) = *((uint64_t*)(ss - 15));
+		*((uint64_t*)(dd - 8)) = *((uint64_t*)(ss - 8));
+		break;
+#+END_SRC
+
+----------
+memcmp 我是从这个链接看来的 [[https://www.yuque.com/zzqcn/perf/vmhhg5][使用SIMD指令加速字符串处理 · 语雀]]. 作者给了一个rte_memcmp的实现 https://github.com/zzqcn/storage/blob/main/code/c/fast_memcmp/rte_memcmp.h
+
+基本思想也是成块成块的比较，对于非成块的比较，没有什么特别的。可以看一下比较32个字节的实现：
+- 先把两个32字节载入到 m11 和 m21 上
+- 如果32字节完全相同，那么就可以直接返回0，剩下就是不同的情况
+- 现在低字节是在低地址，为了变成减法，需要把低字节变为高地址
+  - 可以认为是little endian的问题，如果是big endian则不需要
+  - 这个操作类似shuffle, 但是不能cross 128bits lane进行shuffle （_mm256_shuffle_epi8）
+  - _mm256_permute2f128_si256 进行cross 128 bits lane的shuffle
+- 上面操作有点类似 reverse(a + b)
+  1. A = reverse(a), B = reverse(b)
+  2. reverse(a + b) = B + A
+- 然后按照4字节进行比较，注意低地址的字符串已经在高地址了，所以大的字符对应的值也就越大，值是0xffff或者是0
+- 最后一步最关键就是将这些值的msb collect起来生成就是一个uint8, 看哪边的uint8值更大。
+
+#+BEGIN_SRC cpp
+static inline int
+rte_cmp32(const void *src_1, const void *src_2)
+{
+	__m256i    ff = _mm256_set1_epi32(-1);
+	__m256i    idx = _mm256_setr_epi8(
+			15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0,
+			15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0);
+	__m256i    sign = _mm256_set1_epi32(0x80000000);
+	__m256i    mm11, mm21;
+	__m256i    eq, gt0, gt1;
+
+	mm11 = _mm256_lddqu_si256((const __m256i *)src_1);
+	mm21 = _mm256_lddqu_si256((const __m256i *)src_2);
+
+	eq = _mm256_cmpeq_epi32(mm11, mm21);
+	/* Not equal */
+	if (!_mm256_testc_si256(eq, ff)) {
+		mm11 = _mm256_shuffle_epi8(mm11, idx);
+		mm21 = _mm256_shuffle_epi8(mm21, idx);
+
+		mm11 = _mm256_xor_si256(mm11, sign);
+		mm21 = _mm256_xor_si256(mm21, sign);
+		mm11 = _mm256_permute2f128_si256(mm11, mm11, 0x01);
+		mm21 = _mm256_permute2f128_si256(mm21, mm21, 0x01);
+
+		gt0 = _mm256_cmpgt_epi32(mm11, mm21);
+		gt1 = _mm256_cmpgt_epi32(mm21, mm11);
+		return _mm256_movemask_ps(_mm256_castsi256_ps(gt0)) - _mm256_movemask_ps(_mm256_castsi256_ps(gt1));
+	}
+
+	return 0;
+}
+#+END_SRC

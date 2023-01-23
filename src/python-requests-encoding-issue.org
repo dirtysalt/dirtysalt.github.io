@@ -1,0 +1,93 @@
+#+title: Python Requests库编码问题
+
+多语言爬虫很重要的一个问题就是编码，如何根据请求以及网页内容判断出正确的编码，还是一个比较麻烦的事情。
+
+Python Requests库判断网页内容编码是下面这些策略，按优先节排列：
+1. 使用响应头里面'content-type'字段里面的'charset'填写的内容
+2. 使用 `chardet` 这个库，通过网页内容来猜测编码
+
+策略1是在下面这个函数里面完成的
+#+BEGIN_SRC Python
+def get_encoding_from_headers(headers):
+    """Returns encodings from given HTTP Header Dict.
+
+    :param headers: dictionary to extract encoding from.
+    """
+
+    content_type = headers.get('content-type')
+
+    if not content_type:
+        return None
+
+    content_type, params = cgi.parse_header(content_type)
+
+    if 'charset' in params:
+         return params['charset'].strip("'\"")
+
+    if 'text' in content_type:
+        return 'ISO-8859-1'
+#+END_SRC
+如果没有填写charset的话并且是text类型，那么使用'ISO-8859-1'这个编码
+
+策略2是在下面这个函数里面完成的
+#+BEGIN_SRC Python
+    @property
+    def apparent_encoding(self):
+        """The apparent encoding, provided by the chardet library."""
+        return chardet.detect(self.content)['encoding']
+#+END_SRC
+
+在策略1里面使用'ISO-8859-1'这个编码，逻辑比较奇怪，这个在github也有人问过这个问题 [[https://github.com/requests/requests/issues/1774][issue]]. 不过这个策略在RFC里面是有规定的
+#+BEGIN_QUOTE
+github comment:
+
+RFC 2616 is very clear here: if no encoding is declared in the Content-Type header, the encoding for text/html is assumed to be ISO-8859-1. If you know better, you are encouraged to either decode Response.content yourself or to set Response.encoding to the relevant encoding.
+
+RFC 2616:
+
+The "charset" parameter is used with some media types to define the
+   character set (section 3.4) of the data. When no explicit charset
+   parameter is provided by the sender, media subtypes of the "text"
+   type are defined to have a default charset value of "ISO-8859-1" when
+   received via HTTP. Data in character sets other than "ISO-8859-1" or
+   its subsets MUST be labeled with an appropriate charset value. See
+   section 3.4.1 for compatibility problems.
+
+#+END_QUOTE
+
+-----
+上面这些策略可能出现的问题以这个 http://wasai.org/feed.xml 网页为例。
+#+BEGIN_EXAMPLE
+In [1]: url = 'http://wasai.org/feed.xml'
+
+In [2]: import requests
+
+In [3]: r = requests.get(url)
+
+In [4]: r
+Out[4]: <Response [200]>
+
+In [5]: r.encoding
+Out[5]: 'ISO-8859-1'
+
+In [6]: from bs4 import BeautifulSoup
+
+In [7]: bs = BeautifulSoup(r.text)
+
+In [8]: bs.find('title')
+Out[8]:
+<title>æ°é»é
+¸èé¦</title>
+
+In [9]: bs = BeautifulSoup(r.content)
+
+In [10]: bs.find('title')
+Out[10]: <title>新闻酸菜馆</title>
+
+In [11]: r.headers
+Out[11]: {'Content-Type': 'text/xml', 'Content-Encoding': 'gzip', 'Last-Modified': 'Wed, 17 Jan 2018 06:51:40 GMT', 'Accept-Ranges': 'bytes', 'ETag': '"0666ca05f8fd31:0"', 'Vary': 'Accept-Encoding', 'Server': 'Microsoft-IIS/8.5', 'X-Powered-By': 'ASP.NET', 'Date': 'Fri, 19 Jan 2018 03:54:29 GMT', 'Content-Length': '16782'}
+#+END_EXAMPLE
+
+这个页面在'Content-Type'里面没有设置任何charset，并且是个xml页面，所以requests判断成为'ISO-8859-1'这个编码，但是其实这个页面的编码是'utf8'.
+
+所以其实更好的策略应该是，如果在content-type里面没有设置编码的话，那么最好不要做任何假设，应该让`chardet`来判断或者是外部来设置。

@@ -1,0 +1,164 @@
+#+title: swig
+SWIG(Simple Wrapper Interface Generator)是一个C/C++多语言扩展接口生成器。
+
+update@201509: 相比boost::python可以更容易地使用C++来编写Python扩展
+
+** how it works
+首先我们需要编写一个输入文件里面有我们需要包装的C++类或者是函数的声明并且加上一些特殊的标记，然后SWIG内部有一个C++解析器能够解析这些标记以及C++
+的类或者是函数的声明，然后生成包装代码。这个C++解析器来支持预处理的过程，能够处理宏并且进行#include头文件。如果在SWIG预处理处理的时候，那么会定义
+宏SWIG.我们可以通过#ifdef SWIG来在我们的.h文件里面包含一些特殊标记。这些特殊标记在被SWIG预处理器处理的时候会生效。
+
+** a simple example
+#+BEGIN_EXAMPLE
+%module pycompack_  // 生成pycompack_.py和pycompack_wrap.cxx.
+// 其中pycompack_.py是包装python代码，而pycompack_wrap.cxx是包装的C++代码。
+%include "std_string.i" // 使用std::string返回二进制，我们通常会使用
+%inline %{
+#include "pycompack.h" // C++类或者是函数声明
+%}
+#+END_EXAMPLE
+
+然后我们看看pycompack.h内部的片段代码
+#+BEGIN_SRC C++
+#ifndef SWIG // 如果没有在SWIG预处理下面的话那么包含头文件
+#include "compack/compack.h"
+#endif
+
+#ifndef __STDC_LIMIT_MACROS
+#define __STDC_LIMIT_MACROS
+#endif
+//we have to include this one
+//unless the SWIG doesn't know int8_t  ...
+#include <stdint.h>
+
+//thin wrapper class
+//because we want the UI simple.
+
+//exception
+#ifdef SWIG // 我们可以定义异常，将std::exception重命名为std_exception
+%rename(std_exception) std::exception;
+%rename(bsl_exception) bsl::Exception;
+namespace std{
+class exception{ // 对于异常的话我们必须写清楚构造和析构函数，不然内存会存在泄漏情况
+  public:
+    exception(){}
+    ~exception(){}
+};
+}
+namespace bsl{
+class Exception{
+  public:
+    Exception(){}
+    ~Exception(){}
+};
+}
+#endif // SWIG
+#define PYCOMPACK_THROW throw(bsl::Exception,std::exception)
+#define PYCOMPACK_TRY()
+#define PYCOMPACK_CATCH()
+
+
+//to wrapper the binary data
+#ifdef SWIG // 这样对于const char* bin,unsigned int binlen这样的话就会传递python的二进制
+%apply (char *STRING, size_t LENGTH) { (const char* bin, unsigned int binlen) };
+#endif
+
+class Stream{
+  public:
+#ifndef SWIG
+    compack::AutoBuffer _buffer;
+#endif
+    std::string content(size_t size) PYCOMPACK_THROW{ // 在这里我们可以抛异常
+        PYCOMPACK_TRY();
+        return std::string(static_cast<char*>(_buffer.buffer()),size);
+        PYCOMPACK_CATCH();
+    }
+};
+#+END_SRC
+
+然后我们看看如何使用swig这个工具
+#+BEGIN_EXAMPLE
+// -python 表示为python扩展
+// -c++ 表示我们使用c++语言
+// -I 和编译器相同
+// -includeall 会将所有的头文件全部包含进来
+swig -Wall -python -c++ -I/usr/include -includeall pycompack.swg
+#+END_EXAMPLE
+然后会有pycompack_wrap.cxx和pycompack_.py生成，至于如何如何生成python扩展的话在python扩展一节说明。
+因为python有自己的构建扩展的方式。
+
+** options
+- -c++ // 使用C++编写扩展
+- -python // 生成python扩展
+- -globals // 如果不加的话全局变量是在module.cvar对象下面定义的，如果加上的话那么全局变量直接出现在module下面。
+
+** instructions
+- %rename(x) y; // 能够将y重名为x
+- %template(x) y<z>; // 将y<z>这个模板实例化定义为类型x导出
+
+** about types
+默认情况下面的话SWIG只是支持几个C/C++类型比如char,unsigned char,int,unsigned int等，而对于其他类型都认为是opaque pointer.我们经常遇到的问题就是
+我们使用int64_t这样的类型，但是SWIG认为这个是一个pointer.当然我们可以使用typedef来进行类型定义，显示地告诉SWIG这个是一个基本类型，比如
+#+BEGIN_SRC C++
+typedef long long int64_t;
+#+END_SRC
+或者是显示地包含stdint.h这个头文件进来(会更加方便).如果我们返回的不是一个基本类型的话，那么底层SWIG包装的时候就会使用malloc来分配这个类型的大小，
+然后返回python这个指针对象，通常这样来说就会造成内存泄露，所以我们最好还是不要返回非基本类型。这里有必要说明的就是C++引用和指针对于SWIG是相同的。
+
+-----
+二进制参数. 传入二进制的话我们可以使用swig的typemap搞定
+#+BEGIN_EXAMPLE
+// 这样只要参数中含有const char* bin,unsigned int binlen这样形参的话
+// 那么就认为这个部分接收的就是二进制数据
+%apply (char *STRING, size_t LENGTH) { (const char* bin, unsigned int binlen) };
+#+END_EXAMPLE
+
+传出二进制的话我们可以使用std::string传出，然后再我们的swg描述文件里面加上
+#+BEGIN_EXAMPLE
+%include "std_string.i" // 使用std::string返回二进制，我们通常会使用
+#+END_EXAMPLE
+
+-----
+传递异常. 首先我们必须构造异常。构造异常非常简单就是编写一个类，但是需要注意的是必须在public下面定义构造和析构函数，不然在抛出异常时候会出现内存泄露问题。
+然后使用异常的时候只需要在函数声明部分加上throw即可。
+#+BEGIN_SRC C++
+#ifdef SWIG
+%rename(bsl_exception) bsl::Exception;
+namespace bsl{
+class Exception{
+  public:
+    Exception(){}
+    ~Exception(){}
+};
+}
+#endif // SWIG
+void foo() throw (bsl::Excption);
+#+END_SRC
+
+** python extension
+python本身提供了非常简单的方式来编译扩展，使用内置的distutils模块即可搞定。我们编写setup.py内容如下：
+#+BEGIN_SRC Python
+from distutils.core import setup,Extension
+import os
+// 首先我们定义我们要编译的扩展对象(.so)
+pycompack=Extension('_pycompack_', # _pycompack_.so
+                    sources=['pycompack_wrap.cxx','pycompack.cc'], # 源文件
+                    include_dirs=['..'],  # 头文件路径
+                    libraries=['pthread'], # 库文件
+                    library_dirs=['..']) # 库文件路径
+
+// 然后定义我们编译和发布信息
+setup(name='pycompack', # 模块名称
+      version='1.0.0.0', # 版本
+      description='compack python extension', # 简要描述
+      long_description='Fuck,This is the Fucking compack python extenison.Still confusing???', # 长描述
+      author='dirtysalt',
+      maintainer='dirtysalt',
+      maintainer_email='zhangyan04@baidu,com',
+      author_email='zhangyan04@baidu.com',
+      url='http://hi.baidu.com/dirlt',
+      license='BSD 3-Clause',
+      py_modules=['pycompack','pycompack_'], # 需要发布的python模块
+      ext_modules=[pycompack])  # 需要发布的扩展模块
+#+END_SRC
+然后我们使用python setup.py build/install进行构建和安装了。

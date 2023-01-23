@@ -1,0 +1,155 @@
+#+title: a page about call/cc
+
+http://www.madore.org/~david/computers/callcc.html
+
+介绍的内容包括：
+1. call/cc的来源
+2. call/cc和exception的关系
+3. call/cc和setjmp/longjmp的关系
+4. continuation的本质
+
+** Outgoing-only continuations: exceptions
+
+exception可以看做是特殊的cont, 它只能往一个方向跳转（向caller跳转）。
+
+weak exception是类似block/break这样结果. 这个跳转不涉及到栈的恢复
+#+BEGIN_SRC Java
+label:
+for(;;) {
+    break label
+}
+#+END_SRC
+
+而true exception则是大部分编程语言里面实现的。
+
+
+Exceptions are present in many programming languages, and most people seem to have no problem understanding them. We review them briefly.
+
+An exception signals that a special condition (generally an error) was encountered in the course of the execution of a program. Signaling the condition (highly inappropriate term) is called raising the exception (most people use the term “throwing” here, but I prefer the former term). When this happens, normal execution ceases: the function in which the exception was raised terminates immediately, raising the exception again in its caller (parent), which terminates in turn, and so on until either the entire program is terminated or until it is caught. Catching the exception involves putting the code which might raise it in a special block; if the exception is raised, control is transferred to the exception handler which decides what to do; after the exception handler has returned, normal execution is resumed (at the end of the block, not where the exception was raised), as if the code had terminated normally.
+
+With the exception is associated certain data, which are specified when the exception is raised, and which will be passed to the exception handler when (and if) the exception is caught. Several different exceptions might be raised by the same block of code: they will be handled independently, in that an exception handler can be put for any subset of the exceptions which might occur, and those exceptions which are not caught will continue to cause termination.
+
+The weakest form of exceptions are lexically scoped ones, also called block/break exceptions: they are not true exceptions but merely a structured form of labels and gotos. This means that the exception may be raised only if a lexically surrounding block is there to catch it (something that can be checked statically at compile time). In its very weakest form, this is the return, break and continue statements of C; however, C does not have labeled breaks (like Perl or Java do) [XXX — any projects on adding this feature?], so these “exceptions” are limited to one-at-a-time local exits (or, if you prefer, lexical scoping with a single-name namespace). Beyond that, the labeled breaks of Java (next in Perl) are examples of lexically scoped exceptions; still, these are a far cry from true exceptions, and even further from first-class continuations. Note how we say that these lexically scoped exceptions propagate outward through the program (“outward” in the sense of lexical block scoping, of course).
+
+True exceptions (the raise/catch sort and not the break/block one) are of a different nature: any block can raise an exception, it does need to have to be lexically embedded within a catch block. And the exception will be caught (if at all) by the innermost catch that is dynamically surrounding the raise. We say that (dynamically scoped) exceptions propagate upward through the program (“upward” through the program stack, that is), from callee to caller. One important thing to note is that whereas with lexically scoped exceptions the block (catching the exception) associated to a break (raising the exception) is well-defined and can be determined at compile time, on the other hand with true (dynamically scoped) exceptions the catch that will actually catch an exception thrown with a given raise cannot be determined in advance, and can vary from time to time according to the way the function containing the raise is called.
+
+** Exceptions in C: setjmp() and longjmp()
+
+setjmp实现上是保存当前stack point到jmp_buf里面，而longjmp而跳转到这个jmp_buf上并且带一个value.
+longjmp这点上和call/cc非常类似，call/cc里面的continuation也需要传入一个value, 语义是相同的。
+
+既然setjmp涉及到保存stack point, 所以不能return，这样C-runtime会将stack删除。因此如果setjmp/longjmp
+最终实现的也是outgoing-only的continuation. 如果希望可以双向跳转的话，那么需要保存栈(getcontext)
+
+另外云风有一篇关于setjmp的正确用法的文章: [[https://blog.codingnow.com/2010/05/setjmp.html][云风的 BLOG: setjmp 的正确使用]]
+
+The C programming language (or, rather, the POSIX standard) defines two functions, setjmp() and longjmp() which are the nearest thing C has to exceptions or continuations. We shall look at them in some detail because they have some interesting common points with call/cc and throw respectively.
+
+The setjmp() function stores the so-called “stack context” (not a very appropriate name for outgoing-only continuations like these, but let us stick to it) in a variable passed to it, the “jump buffer”; it then returns 0. The longjmp() function takes a jump buffer and a (non zero) return value: it makes the execution point jump (non-locally) to the return of the setjmp() function which had set that jump buffer, and the function returns the proposed return value. In other words, the longjmp() never returns, it makes the setjmp() function return instead. As for the setjmp() function, it can return in two different ways: with a return code of 0 the first time, and possibly one or more times later, with the return code that was passed to the longjmp() function. This key point of one function making another return a specific value will be crucial in understanding call/cc, so keep it in mind.
+
+These functions are used to implement exceptions in C: an exception handler is installed with the setjmp() function, and the exception is raised with longjmp(). What the functions actually do is that setjmp() stores the size of the stack in the jump buffer, and longjmp() restores it. (Of course, there is a heavy amount of black magic involved, notably on the compiler's part, so that this not mess up with the various optimizations, and there are some complicated restrictions on the use of these functions; in the case where the longjmp() function is called from a signal handler, things get pretty messy indeed. But we are floating far above such worries.)
+
+One important restriction of the setjmp() and longjmp() functions is that the function that called setjmp() must not have returned between the call to setjmp() and that to longjmp(). The following code, for example, is invalid:
+
+#+BEGIN_SRC C
+#include <stdio.h>
+#include <setjmp.h>
+
+jmp_buf buf;
+
+int
+foo (volatile int n)
+{
+  if ( setjmp (buf) )
+    {
+      printf ("%d\n", n);
+      return 0;
+    }
+  else
+    return 1;
+}
+
+int
+main (void)
+{
+  if ( foo (42) )
+    longjmp (buf, 1);
+    /* Yow!  DEMONS are flying through my NOSE! */
+  exit (0);
+}
+#+END_SRC
+
+(In practice, though, it works reasonably. But more complex examples would fail miserably.) The reason for this restriction is the way setjmp() functions: it works by remembering just the size of the stack (marking the current stack pointer), and longjmp() essentially just reduces the size to that size, so that program execution appears to have jumped to the point where setjmp() was about to return. This works well so far as everything that was below the marked point on the stack remained unaltered, i.e. so long as the function that called setjmp() did not return. This is why we say that we have “outgoing-only” (or, more precisely, “upgoing-only” since we are talking of dynamic scoping) continuations.
+
+Think of a setjmp() function that would not have this limitation and you have a good approximation of call/cc. If you adhere to a stack-based paradigm of computation, or things to work in all cases we would need a full copy of the stack as per getcontext().
+
+** What call/cc does: a first description
+
+这里可以继续对比一下call/cc和longjmp的代码
+
+#+BEGIN_SRC Scheme
+(call/cc (lambda k (k 42)))
+#+END_SRC
+
+这里42相当于`longjmp(jmp_buf, 42)`. 然后在另外一个 `setjmp`返回值就是42.
+
+call/cc会改变程序的控制流，以某个value返回到原来的执行点上。
+
+The call/cc function takes one argument. That argument should itself be a function f (hence, our programming language should allow first-class citizenship of functions). call/cc will apply f to the current continuation. The current continuation is something which looks a lot like a function (at least in the Scheme version of call/cc it does; in the SML/NJ version it is a bit different but that is unimportant). If a continuation is applied to a value (or, as some prefer to say, thrown a value), it has the effect of making the call/cc (which produced that continuation) return that value.
+
+We give a few examples. These are written in Scheme, but little or no knowledge of Scheme should be required to understand them. Keep in mind that (lambda (variables) body) is the notation for an anonymous function with given parameters (variables) that performs the given function (body), and that the function f applied to the variables x1,...,xn is written (f x1 ... xn).
+
+Consider the first example: (call/cc (lambda (k) (k 42))). This applies call/cc to the function (lambda (k) (k 42)); hence, the latter function is called with argument (k) equal to the current continuation. But the body of the function is (k 42), in other words, the continuation is thrown the value 42. This makes the call/cc return the value 42. Hence, the entire expression evaluates to 42.
+
+Now consider (call/cc (lambda (k) (+ (k 42) 1729))). Here, the function throws the value 42 to the continuation, and attempts to do something afterward. Only this has no effect, because as soon as a continuation is invoked (by throwing a value to it), the program jumps (to be precise, the current continuation becomes the continuation invoked) and the program bit (the continuation) which was going to take an x and perform (+ x 1729) has been lost in space (it has become GC-fodder). So the result is still 42.
+
+On the other hand, consider (call/cc (lambda (k) 42)). Here, the function applied to the current continuation (namely (lambda (k) 42)) does not make use of the said continuation. It returns in the “normal” way. In the case of Scheme (and also SML/NJ and Unlambda, so, as far as I know, every implementation of call/cc), when this happens, the call/cc function also returns the same value. Hence the result is 42 again. But other approaches are possible, so this should not be taken as part of the “fundamental” nature of call/cc but only as a contingent property of its main implementations.
+
+For the next example, we need to add two more elements of Scheme: (let ((variable value) ...) body) is used to bind initially variable to value in body. And (set! variable value) is used to change the value of variable to value. In what follows, #f (the “false” boolean) is used as a dummy value representing something unspecified. So, here is the example: (let ((cont #f)) (call/cc (lambda (k) (set! cont k))) (cont #f)). Here we have a variable cont: its initial value is unimportant. We call call/cc upon a function (lambda (k) (set! cont k)) that takes the continuation (k) and binds the variable cont to it; it then returns in the normal way. We ignore the return value of the call/cc and we call the saved continuation cont with an unimportant value. But when that continuation is called, it has the effect of going, so to speak, “back in time”, to the point where the call/cc returned, and make it return again, after which the continuation is again called, so call/cc returns again, and so on: we are caught in a “time warp” and our example loops endlessly.
+
+The interesting thing about the last variable is that the continuation escaped, i.e. it became visible outside of the function that is the argument to call/cc (namely (lambda (k) (set! cont k))); this is precisely what was impossible with exceptions. It (meaning the continuation) was captured and bound to the variable cont, and used outside the scope permitted for outgoing-only continuations (exceptions; in fact, with exceptions it is not possible to produce an endless loop like this).
+
+** What are continuations?
+
+我觉得这里continuation的介绍非常好，我觉得应该在补充一点就是"执行点并且期待某个value"
+然后当执行这个conitiunation的时候，它是不会返回的。当然你也可以把它看做function也行。
+
+因为continuation涉及到”执行点"这个概念，所以它和解释器/编译器相关，因为这关系到后面的控制流是什么。
+
+另外这里可以在看看尾递归的，如果当前的continuation和之后的continuation相同的话，那么就是尾递归
+
+#+BEGIN_SRC Scheme
+[B] (def sum (n)
+  (if (n == 0) 0
+  (+ [A](sum (- n 1 )) 1)))
+#+END_SRC
+
+如果是上面形式的话，那么在A的continuation是(+ x 1), 之后的continuation是(sum x). 这两个continuation不同，所以不是尾递归。
+
+但是如果换一种形式的话
+#+BEGIN_SRC Scheme
+[B](def sum (n v)
+  (if (= n 0) v
+  [A] (sum (- n 1) (+ v 1))))
+#+END_SRC
+[A]的continution是(sum x y), 而之后的cont是(sum x y) 两个cont是一致的，那么可以认为是尾递归。
+
+It is time by now to explain the meaning of the central keyword in all this discussion: that of a continuation.
+
+A continuation is “something which waits for a value” in order to perform some calculations with it. This is a very vague definition, but I think it nevertheless makes things clear. With every intermediate value in a computation, there is a continuation associated, which represents the future of the computation once that value is known. A continuation is not something, like a function, which takes a value and returns another: it just takes a value and does everything that follows to it, and never returns.
+
+Consider a computation such as (* (+ 2 4) (+ 1 6)). We have several continuations involved here. The continuation for (+ 2 4) says: take this value, keep it aside; now add one and six, take the result and multiply it with the value we had kept aside; then finish. The continuation for (+ 1 6) says: take this value, multiply it with the value (6) we had kept aside; then finish. Notice in particular how the result of (+ 2 4)is part of the continuation of (+ 1 6), because it has been calculated and kept aside. Continuations are not something static that can be determined at compile time: they are dynamic entities that are created and invoked as program execution proceeds.
+
+At each step in the program, when a value is being evaluated, there is a current continuation, waiting for the value to be thrown to it [why is it that I suddenly have the clear image in my mind of a lion waiting for fresh meat to be thrown to it?]; the current continuation will perform the remainder of the computation, including calculating other values and calling other continuations.
+
+It can be argued, if we believe in the stack-based paradigm for computation, that a continuation represents the execution stack, i.e. the sequence of nested functions that are the callers of a given value, at a given point in the program execution history.
+
+The basic evaluation element in a programming language is this: evaluate an expression exp (possibly in a given environment env if the language has named variables which is frequent) with a continuation cont (the current continuation) waiting for the result. Keep this in mind as we will say that we are evaluating an expression (in an environment) with a continuation, the “with” referring to the continuation that is waiting for the value.
+
+One important particular case is that when the result of one computation immediately determines (gives, yields, provides — or, more simply, “is”) the result of another, that is, when the one is in tail position in another, such as the last instruction in a compound instruction or function body, then the continuation of the one is the same as the continuation of the other.
+
+If we allow the program to explicitly manipulate continuations, which is the whole point of call/cc, we are reifying these continuations. If they can be manipulated in exactly the same way as, say, integers (they can be passed as arguments to functions, returned as return values, passed to other continuations, and so on), then we have given them first-class citizenship.
+
+So, when we apply call/cc to a function f with a continuation k (the current continuation hungrily waiting for the result of the said call/cc), call/cc applies f to k, with continuation k. Notice how k plays a double role: it is passed as the argument to f, and it is also the continuation to that same call. (The latter fact, as we have already pointed out that this fact is not so important, being more a convention in existing implementations of call/cc than a fundamental property of it. This says, in a way, that the function call is in tail position in the call/cc call.)
+
+We reconsider the previous examples. First, (call/cc (lambda (k) (k 42))). Here, k is bound to the continuation waiting for call/cc to terminate. So we are evaluating (k 42), k being bound to the said continuation, with k again as (current) continuation; the latter fact is not used, since k is immediately thrown the value 42, making call/cc return. Second example: (call/cc (lambda (k) (+ (k 42) 1729))). Here, we have two continuations, k, the continuation waiting for call/cc to finish, and also for (+ (k 42) 1729), and another continuation, say l, waiting for (k 42) to finish so as to add 1729 to it and throw it to k; but that l will be left waiting (and eventually garbage-collected) because (k 42) never finishes, since k is a continuation. Third, (call/cc (lambda (k) 42)): this time we really need to use the fact that the function f (here (lambda (k) 42)) gets applied with the same continuation k as the call/cc (the double role mentioned above).

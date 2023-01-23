@@ -1,0 +1,45 @@
+#+title: 计算整数长度
+
+比如 25 的长度就是2，1987 的长度就是4. 如果按照数学公式计算就是 floor(log10(x)). 通常我们的实现方式是会下面这样的。其中 `x = x | 1` 的作用是将0进行特殊处理。
+
+#+BEGIN_SRC cpp
+int to_digits(uint32_t x) {
+    x = x | 1;
+    int ans = 0;
+    while(x) {
+        x = x / 10;
+        ans += 1;
+    }
+    return ans;
+}
+#+END_SRC
+
+这种方式对于小数值会比较快，对于大数值的话可能有多达9次的循环。最近我看到一篇文章有个很好的实现 https://lemire.me/blog/2021/05/28/computing-the-number-of-digits-of-an-integer-quickly/. 文章后面还给出了升级版本，但是我觉得我看不太懂，这个版本还行。
+
+#+BEGIN_SRC cpp
+int int_log2(uint32_t x) { return 31 - __builtin_clz(x|1); }
+int to_digits2(uint32_t x) {
+    static uint32_t table[] = {9, 99, 999, 9999, 99999,
+                               999999, 9999999, 99999999, 999999999};
+    int y = (9 * int_log2(x)) >> 5;
+    y += x > table[y];
+    return y + 1;
+}
+#+END_SRC
+
+作者给了实现解释：log10(x) = log2(x) * log10(2). 然后log10(2) ~= (9 / 32). 所有这些数都是在向下取值，所以对于边界情况需要做额外判断，比如9, 99, 999这些。因为整个函数是单调递增的，所以测试也比较容易，只需要在边界情况下进行验证就好。
+
+关于这个实现的效率，作者在文中给出了汇编代码，基本上就是直白地翻译过来，里面有几个细节：
+1. __builtin_clz 实现是 bsr
+2. 9 * x 实现是 lea eax, [rax + 8 * rax]. 一条指令就做到了，所以类似5x, 9x, 17x这种指令还是很高效的
+3. 如果是 + (a>b) 这样的代码，可以翻译为 adc(add carry), 其中carry在上一条指令被置位，没有分支
+
+#+BEGIN_SRC asm
+        or      eax, 1
+        bsr     eax, eax
+        lea     eax, [rax + 8*rax]
+        shr     eax, 5
+        cmp     dword ptr [4*rax + table], edi
+        adc     eax, 0
+        add     eax, 1
+#+END_SRC

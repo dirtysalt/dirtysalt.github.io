@@ -1,0 +1,150 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>orcfile</title>
+<meta name="author" content="dirtysalt" />
+<meta name="generator" content="Org Mode" />
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content" class="content">
+<h1 class="title">orcfile</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>Table of Contents</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#org8334bad">1. ORC文件格式分析</a></li>
+<li><a href="#orgd6e0c8a">2. ORC文件尺寸分析</a></li>
+<li><a href="#org881c08d">3. ORC读取优化代码</a></li>
+</ul>
+</div>
+</div>
+<p>
+<a href="https://orc.apache.org/">https://orc.apache.org/</a>
+</p>
+
+<div id="outline-container-org8334bad" class="outline-2">
+<h2 id="org8334bad"><span class="section-number-2">1.</span> ORC文件格式分析</h2>
+<div class="outline-text-2" id="text-1">
+<p>
+<a href="http://docs.hortonworks.com/HDPDocuments/HDP2/HDP-2.0.0.2/ds_Hive/orcfile.html">http://docs.hortonworks.com/HDPDocuments/HDP2/HDP-2.0.0.2/ds_Hive/orcfile.html</a>
+</p>
+
+<p>
+Compared with RCFile format, for example, ORC file format has many advantages such as:
+</p>
+<ul class="org-ul">
+<li>a single file as the output of each task, which reduces the NameNode's load</li>
+<li>Hive type support including datetime, decimal, and the complex types (struct, list, map, and union)（复杂数据类型）</li>
+<li>light-weight indexes stored within the file
+<ul class="org-ul">
+<li>skip row groups that don't pass predicate filtering</li>
+<li>seek to a given row</li>
+</ul></li>
+<li>block-mode compression based on data type
+<ul class="org-ul">
+<li>run-length encoding for integer columns（RLE针对整数压缩效果更好）</li>
+<li>dictionary encoding for string columns</li>
+</ul></li>
+<li>concurrent reads of the same file using separate RecordReaders</li>
+<li>ability to split files without scanning for markers（不使用同步标记）</li>
+<li>bound the amount of memory needed for reading or writing</li>
+<li>metadata stored using Protocol Buffers, which allows addition and removal of fields</li>
+</ul>
+
+<p>
+An ORC file contains groups of row data called stripes, along with auxiliary information in a file footer.
+</p>
+<ul class="org-ul">
+<li>At the end of the file a postscript holds compression parameters and the size of the compressed footer.</li>
+<li>The default stripe size is 250 MB. Large stripe sizes enable large, efficient reads from HDFS.</li>
+<li>The file footer contains a list of stripes in the file, the number of rows per stripe, and each column's data type. It also contains column-level aggregates count, min, max, and sum.</li>
+</ul>
+
+
+<div id="org12b3798" class="figure">
+<p><img src="../images/orcfile-layout.png" alt="orcfile-layout.png" />
+</p>
+</div>
+
+
+<p>
+As shown in the diagram, each stripe in an ORC file holds index data, row data, and a stripe footer.
+</p>
+<ul class="org-ul">
+<li>The stripe footer contains a directory of stream locations. Row data is used in table scans. (和 <a href="rcfile.html">RCFile</a> 相比row-data这个部分应该类似)</li>
+<li>Index data includes min and max values for each column and the row positions within each column (A bit field or bloom filter could also be included.) Row index entries provide offsets that enable seeking to the right compression block and byte within a decompressed block. (和 <a href="rcfile.html">RCFile</a> 相比，index-data应该对应的是meta-data部分。index-data包括了概要信息以及bloom filter可以用来skip整个stripe. index-data的row-position是基于compression block偏移，所以不用像rcfile一样需要解压整个column, 这样读取量会减少不少)</li>
+<li>Having relatively frequent row index entries enables row-skipping within a stripe for rapid reads, despite large stripe sizes. By default every 10,000 rows can be skipped.</li>
+<li>With the ability to skip large sets of rows based on filter predicates, you can sort a table on its secondary keys to achieve a big reduction in execution time. For example, if the primary partition is transaction date, the table can be sorted on state, zip code, and last name. Then looking for records in one state will skip the records of all other states.(可以选择性地针对column做排序)</li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-orgd6e0c8a" class="outline-2">
+<h2 id="orgd6e0c8a"><span class="section-number-2">2.</span> ORC文件尺寸分析</h2>
+<div class="outline-text-2" id="text-2">
+<p>
+这个是分析tpch_100g_zlib.lineitem表看到的
+</p>
+
+<p>
+Let's take a ORC file from lineitem table(TPCH-100G compressed in zlib) for example.
+</p>
+
+<pre class="example" id="orgf22f2bc">
+java -jar ~/installed/orc-tools-1.7.0-SNAPSHOT-uber.jar meta hdfs://172.26.194.238:9000/user/hive/warehouse/tpch_100g_zlib.db/lineitem/000000_0`
+</pre>
+
+<p>
+The `File Footer` section takes 700-800 bytes. We discussed if we can cache this data section to save latency/throughput, but it looks like meaingless now. Because usually a ORC file is splitted to 3-4 parts, and read by 3-4 `HDFSScanNode` instances. Even we can cache this data section, we just save 3-4 reads(and about 3000 bytes).
+</p>
+
+<p>
+And this ORC file has 10 stripes, one stripe information is following:
+</p>
+
+<pre class="example" id="orgf986578">
+Stripe: offset: 304806283 data: 24542859 rows: 827152 tail: 267 index: 19678
+</pre>
+
+<p>
+`tail` stands for size of `Stripe Footer`, it's 267 bytes.
+</p>
+
+<p>
+`index` stands for size of `Index Data`, it's 19678 bytes.
+</p>
+
+<p>
+针对index data通常不是太大的情况，我在实现ORC文件延迟物化的时候，尽可能地一次读取整个index data部分，而不是按照column分别读取每个index data.
+</p>
+</div>
+</div>
+
+<div id="outline-container-org881c08d" class="outline-2">
+<h2 id="org881c08d"><span class="section-number-2">3.</span> ORC读取优化代码</h2>
+<div class="outline-text-2" id="text-3">
+<p>
+延迟物化:
+</p>
+<ul class="org-ul">
+<li>Implement ORC late materialization mechanism by dirtysalt · Pull Request #3419 · StarRocks/starrocks <a href="https://github.com/StarRocks/starrocks/pull/3419">https://github.com/StarRocks/starrocks/pull/3419</a></li>
+<li>Implement ORC late materialization by dirtysalt · Pull Request #3479 · StarRocks/starrocks <a href="https://github.com/StarRocks/starrocks/pull/3479">https://github.com/StarRocks/starrocks/pull/3479</a></li>
+<li>optimize ORC late materialization by dirtysalt · Pull Request #3657 · StarRocks/starrocks <a href="https://github.com/StarRocks/starrocks/pull/3657">https://github.com/StarRocks/starrocks/pull/3657</a></li>
+</ul>
+
+<p>
+其他优化：
+</p>
+<ul class="org-ul">
+<li>202106 <a href="efficient-bit-unpacking.html">有效地进行bit-unpacking</a></li>
+<li>优化小文件读取 Optimize small read on ORC(small row group index/stripe/file) by dirtysalt · Pull Request #3962 · StarRocks/starrocks <a href="https://github.com/StarRocks/starrocks/pull/3962">https://github.com/StarRocks/starrocks/pull/3962</a></li>
+</ul>
+</div>
+</div>
+</div>
+<div id="content"><!-- DISQUS BEGIN --><div id="disqus_thread"></div><script>/***  RECOMMENDED CONFIGURATION VARIABLES: EDIT AND UNCOMMENT THE SECTION BELOW TO INSERT DYNAMIC VALUES FROM YOUR PLATFORM OR CMS.*  LEARN WHY DEFINING THESE VARIABLES IS IMPORTANT: https://disqus.com/admin/universalcode/#configuration-variables*/var disqus_config = function () {this.page.url = 'https://dirtysalt.github.io/html/orcfile.html';this.page.identifier = 'orcfile.html';};(function() {var d = document, s = d.createElement('script');s.src = 'https://dirlt.disqus.com/embed.js';s.setAttribute('data-timestamp', +new Date());(d.head || d.body).appendChild(s);})();</script><noscript>Please enable JavaScript to view the <a href="https://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript><!-- DISQUS END --></div></body>
+</html>

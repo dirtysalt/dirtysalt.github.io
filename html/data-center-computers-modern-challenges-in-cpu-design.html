@@ -1,0 +1,234 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Data Center Computers: Modern Challenges in CPU Design</title>
+<meta name="author" content="dirtysalt" />
+<meta name="generator" content="Org Mode" />
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content" class="content">
+<h1 class="title">Data Center Computers: Modern Challenges in CPU Design</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>Table of Contents</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#org19b815f">1. Move data: big and small</a></li>
+<li><a href="#org9d058ad">2. Real-time transactions: 1000s per second</a></li>
+<li><a href="#org42e8219">3. Isolation between programs</a></li>
+<li><a href="#org7ed66fe">4. Measurement underpinnings</a></li>
+</ul>
+</div>
+</div>
+<p>
+<a href="https://www.youtube.com/watch?v=QBu2Ae8-8LM">https://www.youtube.com/watch?v=QBu2Ae8-8LM</a>
+</p>
+
+<p>
+Data Center环境下面对于CPU设计的挑战。虽然是标题是关于CPU设计挑战，但是其实里面没有说怎么设计CPU，而是点出了问题背景。了解这些问题背景，对于分析data center环境下面的应用程序，是非常有帮助的。
+</p>
+
+<p>
+数据中心机器面临4个问题：
+</p>
+<ol class="org-ol">
+<li>Move data: big and small 如何在内存中快速地移动数据</li>
+<li>Real-time transactions: 1000s per second  大量的实时事务，不可避免地会遇到长尾问题</li>
+<li>Isolation between programs 程序之间是通过软件进行隔离的，隔离效果并不理想</li>
+<li>Measurement underpinnings 更好的测量方式(sampling vs tracing) <a href="http://danluu.com/perf-tracing/">http://danluu.com/perf-tracing/</a></li>
+</ol>
+
+<div id="outline-container-org19b815f" class="outline-2">
+<h2 id="org19b815f"><span class="section-number-2">1.</span> Move data: big and small</h2>
+<div class="outline-text-2" id="text-1">
+<p>
+数据中心的Server好像是下面这样的，CPU L3 Cache(i7 12MB)相比RAM简直没有办法比，大量的money也放在RAM上。
+</p>
+
+
+<div id="orgf843b0b" class="figure">
+<p><img src="../images/data-center-computers-modern-cpu-design-0.png" alt="data-center-computers-modern-cpu-design-0.png" />
+</p>
+</div>
+
+
+<p>
+因为数据中心设计到大量的数据move, 如果我们想快速移动数据，比如16 bytes CPU cycle. 那么我们需要做到：
+</p>
+<ol class="org-ol">
+<li>至少16字节的寄存器，并且每个周期会有load/store/test/branch. 并且是至少4路并行。</li>
+<li>如果是3.2Ghz的CPU，那么吞吐必须在50GB/s. 如果加上读写那么就是100GB/s</li>
+<li>如果write之前还需要读cache line的话，那么就需要150GB/s. 所以还需要使用non-temporary write. 最后加一个mfence.</li>
+</ol>
+
+
+<div id="org3e18149" class="figure">
+<p><img src="../images/data-center-computers-modern-cpu-design-1.png" alt="data-center-computers-modern-cpu-design-1.png" />
+</p>
+</div>
+
+<p>
+因为还涉及到比较短的字符串挪动，为了处理对齐情况，CPU上最好支持比如 load/store partial R1,R2, R3这样的指令可以快速挪动16字节以内的变长字节。
+</p>
+
+
+<div id="org3140404" class="figure">
+<p><img src="../images/data-center-computers-modern-cpu-design-2.png" alt="data-center-computers-modern-cpu-design-2.png" />
+</p>
+</div>
+
+<p>
+如果整个pipeline都能保持100GB/s的话，那么L3 Cache/RAM之间的持续带宽必须在400GB/s.
+</p>
+
+
+<div id="orgf6beb8d" class="figure">
+<p><img src="../images/data-center-computers-modern-cpu-design-3.png" alt="data-center-computers-modern-cpu-design-3.png" />
+</p>
+</div>
+
+
+<div id="org9d32a11" class="figure">
+<p><img src="../images/data-center-computers-modern-cpu-design-4.png" alt="data-center-computers-modern-cpu-design-4.png" />
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org9d058ad" class="outline-2">
+<h2 id="org9d058ad"><span class="section-number-2">2.</span> Real-time transactions: 1000s per second</h2>
+<div class="outline-text-2" id="text-2">
+<p>
+如何更好地控制长尾延迟：锁持有时间，调度延迟， 以及共享资源之间相互影响（这个和后面资源隔离性有关系）
+</p>
+
+<blockquote>
+<p>
+Modern challenges in CPU design
+</p>
+<ul class="org-ul">
+<li>A single transaction can touch thousands of servers in parallel</li>
+<li>The slowest parallel path dominates</li>
+<li>Tail latency is the enemy
+<ul class="org-ul">
+<li>Must control lock-holding times</li>
+<li>Must control scheduler delays</li>
+<li>Must control interference via shared resources</li>
+</ul></li>
+</ul>
+</blockquote>
+</div>
+</div>
+
+
+<div id="outline-container-org42e8219" class="outline-2">
+<h2 id="org42e8219"><span class="section-number-2">3.</span> Isolation between programs</h2>
+<div class="outline-text-2" id="text-3">
+<p>
+影响主要来自于软件，但是硬件上需要提供机制来进行隔离，比如CPU Cache可以根据cpu thread来进行隔离
+</p>
+
+<blockquote>
+<p>
+Many Sources of Interference
+</p>
+<ul class="org-ul">
+<li>Most interference comes from software</li>
+<li>But a bit from the hardware underpinnings</li>
+<li>In a shared apartment building, most interference comes from jerky neighbors</li>
+<li>But thin walls and bad kitchen venting can be the hardware underpinnings</li>
+</ul>
+
+<p>
+Isolation between programs
+</p>
+<ul class="org-ul">
+<li>Good fences make good neighbors</li>
+<li>We need better hardware support for program isolation in shared memory systems</li>
+</ul>
+
+<p>
+Modern challenges in CPU design
+</p>
+<ul class="org-ul">
+<li>Isolating programs from each other on a shared server is hard</li>
+<li>As an industry, we do it poorly
+<ul class="org-ul">
+<li>Shared CPU scheduling</li>
+<li>Shared caches</li>
+<li>Shared network links</li>
+<li>Shared disks</li>
+</ul></li>
+<li>More hardware support needed</li>
+<li>More innovation needed</li>
+</ul>
+</blockquote>
+
+
+<div id="org4363d97" class="figure">
+<p><img src="../images/data-center-computers-modern-cpu-design-5.png" alt="data-center-computers-modern-cpu-design-5.png" />
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org7ed66fe" class="outline-2">
+<h2 id="org7ed66fe"><span class="section-number-2">4.</span> Measurement underpinnings</h2>
+<div class="outline-text-2" id="text-4">
+<p>
+Samples只能看到大体状况，而Traces则可以提供更多的细节。 <a href="http://danluu.com/perf-tracing/">http://danluu.com/perf-tracing/</a>
+</p>
+
+
+<div id="orgac73910" class="figure">
+<p><img src="../images/data-center-computers-modern-cpu-design-6.png" alt="data-center-computers-modern-cpu-design-6.png" />
+</p>
+</div>
+
+
+<div id="org41b2494" class="figure">
+<p><img src="../images/data-center-computers-modern-cpu-design-7.png" alt="data-center-computers-modern-cpu-design-7.png" />
+</p>
+</div>
+
+
+<p>
+作者介绍了根据trace发现的一个因为CPU throttle造成disk server经常出现高延迟的问题，而这种东西使用sampling是发现不了的。然后作者搞了一个Sites' corollary:  如果一个问题可以解释为软件复杂性的，那就不要解释成为愚蠢。
+</p>
+
+
+<div id="orgf584052" class="figure">
+<p><img src="../images/data-center-computers-modern-cpu-design-8.png" alt="data-center-computers-modern-cpu-design-8.png" />
+</p>
+</div>
+
+<p>
+对于CPU设计上要提供low overhead的tracing机制，这样可以zoom in发现更加细微的问题。
+</p>
+
+<blockquote>
+<p>
+Modern challenges in CPU design
+</p>
+<ul class="org-ul">
+<li>Need low-overhead tools to observe the dynamics of performance anomalies
+<ul class="org-ul">
+<li>Transaction IDs</li>
+<li>RPC trees</li>
+<li>Timestamped transaction begin/end</li>
+</ul></li>
+<li>Traces
+<ul class="org-ul">
+<li>CPU kernel+user, RPC, lock, thread traces</li>
+<li>Disk, network, power-consumption</li>
+</ul></li>
+</ul>
+</blockquote>
+</div>
+</div>
+</div>
+<div id="content"><!-- DISQUS BEGIN --><div id="disqus_thread"></div><script>/***  RECOMMENDED CONFIGURATION VARIABLES: EDIT AND UNCOMMENT THE SECTION BELOW TO INSERT DYNAMIC VALUES FROM YOUR PLATFORM OR CMS.*  LEARN WHY DEFINING THESE VARIABLES IS IMPORTANT: https://disqus.com/admin/universalcode/#configuration-variables*/var disqus_config = function () {this.page.url = 'https://dirtysalt.github.io/html/data-center-computers-modern-challenges-in-cpu-design.html';this.page.identifier = 'data-center-computers-modern-challenges-in-cpu-design.html';};(function() {var d = document, s = d.createElement('script');s.src = 'https://dirlt.disqus.com/embed.js';s.setAttribute('data-timestamp', +new Date());(d.head || d.body).appendChild(s);})();</script><noscript>Please enable JavaScript to view the <a href="https://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript><!-- DISQUS END --></div></body>
+</html>

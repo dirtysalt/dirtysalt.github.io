@@ -1,0 +1,179 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>FlumeJava: Easy, Efficient Data-Parallel Pipelines</title>
+<meta name="author" content="dirtysalt" />
+<meta name="generator" content="Org Mode" />
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content" class="content">
+<h1 class="title">FlumeJava: Easy, Efficient Data-Parallel Pipelines</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>Table of Contents</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#orgbc09f3f">1. Abstract</a></li>
+<li><a href="#orgfc3ae9a">2. Introduction</a></li>
+<li><a href="#orgdd187bb">3. Background on MapReduce</a></li>
+<li><a href="#org0a9d76f">4. The FlumeJava Library</a></li>
+<li><a href="#org3d19e74">5. Optimizer</a></li>
+<li><a href="#org50d6a25">6. Executor</a></li>
+<li><a href="#orgae6086d">7. Evaluation</a></li>
+<li><a href="#orgd50676d">8. Related Work</a></li>
+<li><a href="#org9c01df4">9. Conclusion</a></li>
+</ul>
+</div>
+</div>
+<p>
+<a href="http://pages.cs.wisc.edu/~akella/CS838/F12/838-CloudPapers/FlumeJava.pdf">http://pages.cs.wisc.edu/~akella/CS838/F12/838-CloudPapers/FlumeJava.pdf</a> @ 2010
+</p>
+
+<div id="outline-container-orgbc09f3f" class="outline-2">
+<h2 id="orgbc09f3f"><span class="section-number-2">1.</span> Abstract</h2>
+<div class="outline-text-2" id="text-1">
+<p>
+At the core of the FlumeJava library are a cou-ple of classes that represent immutable parallel collections, each supporting a modest number of operations for processing them in parallel. Parallel collections and their operations present a simple, high-level, uniform abstraction over different data representations and execution strategies. 不可变的并行集合和上面的操作
+</p>
+
+<p>
+To enable parallel operations to run effi-ciently, FlumeJava defers their evaluation, instead internally con-structing an execution plan dataflow graph. When the final results of the parallel operations are eventually needed, FlumeJava first op-timizes the execution plan, and then executes the optimized opera-tions on appropriate underlying primitives (e.g., MapReduces). 延迟计算. 在真正计算之前构造计算图并且优化执行计划, 然后使用原语来执行比如MR
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgfc3ae9a" class="outline-2">
+<h2 id="orgfc3ae9a"><span class="section-number-2">2.</span> Introduction</h2>
+<div class="outline-text-2" id="text-2">
+<p>
+FlumeJava’s parallel collections abstract away the details of how data is represented, including whether the data is represented as an in-memory data structure, as one or more files, or as an ex-ternal storage service such as a MySql database or a Bigtable. # collection抽象数据表示
+</p>
+
+<p>
+Similarly, FlumeJava’s parallel operations abstract away their im-plementation strategy, such as whether an operation is implemented as a local sequential loop, or as a remote parallel MapReduce invo-cation, or (in the future) as a query on a database or as a streaming computation. # operation抽象实现策略
+</p>
+
+<p>
+These abstractions enable an entire pipeline to be ini-tially developed and tested on small in-memory test data, running in a single process, and debugged using standard Java IDEs and de-buggers, and then run completely unchanged over large production data. They also confer a degree of adaptability of the logical Flume-Java computations as new data storage mechanisms and execution services are developed.
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgdd187bb" class="outline-2">
+<h2 id="orgdd187bb"><span class="section-number-2">3.</span> Background on MapReduce</h2>
+</div>
+<div id="outline-container-org0a9d76f" class="outline-2">
+<h2 id="org0a9d76f"><span class="section-number-2">4.</span> The FlumeJava Library</h2>
+<div class="outline-text-2" id="text-4">
+<p>
+data representation
+</p>
+<ul class="org-ul">
+<li>PCollection&lt;T&gt;</li>
+<li>PTable&lt;K,V&gt; extend PCollection&lt;Pair&lt;K,V&gt;&gt;</li>
+<li>PObject # to inspect PCollection and PTable</li>
+</ul>
+
+<p>
+primitive operation
+</p>
+<ul class="org-ul">
+<li>parallelDo # (PCollection&lt;T&gt;,&#x2026;) =&gt; PCollection&lt;S&gt;</li>
+<li>groupByKey # PTable&lt;K,V&gt; =&gt; PTable&lt;K, Collection&lt;V&gt;&gt;</li>
+<li>combineValue # PTable&lt;K, Collection&lt;V&gt;&gt; =&gt; PTable&lt;K, V&gt;</li>
+<li>flatten # (PCollection&lt;T&gt;, PCollection&lt;T&gt;&#x2026;) =&gt; PCollection&lt;T&gt;</li>
+</ul>
+
+<p>
+derived operation
+</p>
+
+<p>
+deferred evaluation # FlumeJava.run() to trigger evaluation
+</p>
+</div>
+</div>
+
+<div id="outline-container-org3d19e74" class="outline-2">
+<h2 id="org3d19e74"><span class="section-number-2">5.</span> Optimizer</h2>
+<div class="outline-text-2" id="text-5">
+<p>
+parallelDo fusion # 相当于把多个mapper放在一个MR里面来完成.
+</p>
+
+
+<div id="org6e96e53" class="figure">
+<p><img src="../images/flumejava-paralleldo-fusion.png" alt="flumejava-paralleldo-fusion.png" />
+</p>
+</div>
+
+<hr />
+
+<p>
+MSCR Fusion # MSCR = MapShuffleCombineReduce.
+</p>
+
+<p>
+这里的MSCR扩展了原始MR操作. 1)允许多路输入 2)允许多路输出 3)允许不经过reducer而直接输出(pass-through).
+</p>
+
+
+<div id="org48c8c30" class="figure">
+<p><img src="../images/flumejava-mscr-operation.png" alt="flumejava-mscr-operation.png" />
+</p>
+</div>
+
+<p>
+这里关于MSCR优化应该和Pig里面优化是一样的, 都是以groupByKey为boundary来划分MapReduce. 尽可能地将多个MSCR合并成为一个MR.
+</p>
+
+
+<div id="orgcc058b3" class="figure">
+<p><img src="../images/flumejava-mscr-fusion.png" alt="flumejava-mscr-fusion.png" />
+</p>
+</div>
+
+<hr />
+
+<p>
+The optimizer performs a series of passes over the execution plan, with the overall goal to produce the fewest, most efficient MSCR operations in the final optimized plan. 最终目的是将整个计算过程用最少的MSCR算子表示出来.
+</p>
+</div>
+</div>
+
+<div id="outline-container-org50d6a25" class="outline-2">
+<h2 id="org50d6a25"><span class="section-number-2">6.</span> Executor</h2>
+<div class="outline-text-2" id="text-6">
+<p>
+FlumeJava automatically creates temporary files to hold the outputs of each operation it executes. It automatically deletes these temporary files as soon as they are no longer needed by some unevaluated operation later in the pipeline. 删除不必要的中间文件
+</p>
+
+<p>
+FlumeJava strives to make building and running pipelines feel as similar as possible to running a regular Java program. Using local, sequential evaluation for modest-sized inputs is one way. Another way is by automatically routing any output to System.out or System.err from within a user’s DoFn, such as debugging print statements, from the corresponding remote MapReduce worker to the main FlumeJava program’s output streams. Likewise, any exceptions thrown within a DoFn running on a remote MapReduce worker are captured, sent to the main FlumeJava program, and rethrown. 算子输出和异常都会重定向到标准输出和标准错误.
+</p>
+
+<p>
+When developing a large pipeline, it can be time-consuming to find a bug in a late pipeline stage, fix the program, and then reexecute the revised pipeline from scratch, particularly when it is not possible to debug the pipeline on small-size data sets. To aid in this cyclic process, the FlumeJava library supports a cached execution mode. In this mode, rather than recompute an operation, FlumeJava first attempts to reuse the result of that operation from the previous run, if it was saved in a (internal or user-visible) file and if FlumeJava determines that the operation’s result has not changed. An operation’s result is considered to be unchanged if (a) the operation’s inputs have not changed, and (b) the operation’s code and captured state have not changed. FlumeJava performs an automatic, conservative analysis to identify when reuse of previous results is guaranteed to be safe; the user can direct additional previous results to be reused. Caching can lead to quick edit-compile-run-debug cycles, even for pipelines that would normally take hours to run. 重复利用cache住的中间结果.
+</p>
+
+<p>
+FlumeJava currently implements a batch evaluation strategy, for a single pipeline at a time. In the future, it would be interesting to experiment with a more incremental, streaming, or continuous execution of pipelines, where incrementally added input leads to quick, incremental update of outputs. It also would be interesting to investigate optimization across pipelines run by multiple users over common data sources. 扩展到增量/流式处理.
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgae6086d" class="outline-2">
+<h2 id="orgae6086d"><span class="section-number-2">7.</span> Evaluation</h2>
+</div>
+<div id="outline-container-orgd50676d" class="outline-2">
+<h2 id="orgd50676d"><span class="section-number-2">8.</span> Related Work</h2>
+</div>
+<div id="outline-container-org9c01df4" class="outline-2">
+<h2 id="org9c01df4"><span class="section-number-2">9.</span> Conclusion</h2>
+</div>
+</div>
+<div id="content"><!-- DISQUS BEGIN --><div id="disqus_thread"></div><script>/***  RECOMMENDED CONFIGURATION VARIABLES: EDIT AND UNCOMMENT THE SECTION BELOW TO INSERT DYNAMIC VALUES FROM YOUR PLATFORM OR CMS.*  LEARN WHY DEFINING THESE VARIABLES IS IMPORTANT: https://disqus.com/admin/universalcode/#configuration-variables*/var disqus_config = function () {this.page.url = 'https://dirtysalt.github.io/html/flumejava.html';this.page.identifier = 'flumejava.html';};(function() {var d = document, s = d.createElement('script');s.src = 'https://dirlt.disqus.com/embed.js';s.setAttribute('data-timestamp', +new Date());(d.head || d.body).appendChild(s);})();</script><noscript>Please enable JavaScript to view the <a href="https://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript><!-- DISQUS END --></div></body>
+</html>

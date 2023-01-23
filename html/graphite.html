@@ -1,0 +1,189 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>graphite</title>
+<meta name="author" content="dirtysalt" />
+<meta name="generator" content="Org Mode" />
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content" class="content">
+<h1 class="title">graphite</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>Table of Contents</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#org842ca0c">1. Overview</a></li>
+<li><a href="#org792b84a">2. Installation</a></li>
+</ul>
+</div>
+</div>
+<p>
+<a href="https://graphite.readthedocs.org/en/latest/">https://graphite.readthedocs.org/en/latest/</a>
+</p>
+
+<div id="outline-container-org842ca0c" class="outline-2">
+<h2 id="org842ca0c"><span class="section-number-2">1.</span> Overview</h2>
+<div class="outline-text-2" id="text-1">
+<p>
+Graphite consists of 3 software components:
+</p>
+
+<ul class="org-ul">
+<li>carbon - a <a href="http://www.twistedmatrix.com/">Twisted</a> daemon that listens for time-series data</li>
+<li>whisper - a simple database library for storing time-series data (similar in design to <a href="http://oss.oetiker.ch/rrdtool/">RRD</a>)</li>
+<li>graphite webapp - A <a href="http://www.djangoproject.com/">Django</a> webapp that renders graphs on-demand using <a href="http://www.cairographics.org/">Cairo</a></li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-org792b84a" class="outline-2">
+<h2 id="org792b84a"><span class="section-number-2">2.</span> Installation</h2>
+<div class="outline-text-2" id="text-2">
+<p>
+graphite几个组件都是python编写的, 所以推荐使用pip/virtualenv来安装
+</p>
+
+<ul class="org-ul">
+<li>pip install whisper</li>
+<li>pip install carbon</li>
+<li>pip install graphite-web</li>
+</ul>
+
+<p>
+如果使用virtualenv安装在自定义目录下的话，可以使用下面两个命令安装. 这里安装位置是$HOME/utils/graphite/app.
+</p>
+<pre class="example" id="orgdb9c83a">
+pip install carbon --install-option="--prefix=$HOME/utils/graphite/app" --install-option="--install-lib=$HOME/utils/graphite/app/lib/"
+pip install graphite-web --install-option="--prefix=/$HOME/utils/graphite/app" --install-option="--install-lib=$HOME/utils/graphite/app/webapp"
+</pre>
+<p>
+但是安装完成之后还需要修改两个地方(修改路径字符串，默认都是/opt/graphite)，一个是graphite_wsgi.py, 另外一个是local_settings.py里面的GRAPHITE_ROOT.
+</p>
+
+<p>
+可能还需要安装一些dependency.
+</p>
+<ul class="org-ul">
+<li>pip install django==1.8.5 # 高版本Django(1.9.x)似乎不能正常执行migrate</li>
+<li>pip install django-tagging</li>
+<li>pip install MySQL-python</li>
+<li>yum install python27-pycairo-devel.x86_64</li>
+<li>yum install libffi-devel.x86_64</li>
+<li>pip install cffi cairocffi</li>
+<li>pip install pytz gunicorn zope.interface</li>
+</ul>
+
+<p>
+默认安装路径是/opt/graphite.
+</p>
+<ul class="org-ul">
+<li>storage/
+<ul class="org-ul">
+<li>log/ # carbon和graphite-web日志</li>
+<li>rrd/ # RRD files</li>
+<li>whisper/ # whisper数据文件</li>
+</ul></li>
+<li>webapp/
+<ul class="org-ul">
+<li>graphite/ # django项目</li>
+<li>content/ # django静态文件</li>
+</ul></li>
+</ul>
+
+<p>
+配置carbon可以看 <a href="https://graphite.readthedocs.org/en/latest/config-carbon.html">这里</a>. 主要考虑的问题是数据如何滚动, 每种粒度的数据各保存多久. 比如1min级别数据保存7天, 10min数据保存30天, 其他数据都以小时级别保存的话. 在storage-schemas.conf保存, 不同前缀数据留存时间不同
+</p>
+<pre class="example" id="org771f195">
+[carbon]
+pattern = ^carbon\.
+retentions = 10:1d
+
+[collectd]
+pattern = ^collectd\.*
+retentions = 10s:1d,1m:7d,10m:1y
+
+[statsd]
+pattern = ^stats\.*
+retentions = 10s:1d,1m:7d,10m:1y
+
+[default]
+pattern = .*
+retentions = 10s:1d
+</pre>
+<p>
+然后使用 ./bin/carbon-cache.py start 来启动
+</p>
+
+<p>
+接下来就是配置webapp可以看 <a href="https://graphite.readthedocs.org/en/latest/config-local-settings.html">这里</a>. 修改graphite/local_settings.py数据库来保存web数据.
+</p>
+<div class="org-src-container">
+<pre class="src src-Python">DATABASES = {
+   'default': {
+       # 'NAME': '/opt/graphite/storage/graphite.db',
+       'NAME' : 'graphitedb',
+       # 'ENGINE': 'django.db.backends.sqlite3',
+       'ENGINE': 'django.db.backends.mysql',
+       'USER': 'root',
+       'PASSWORD': '123456',
+       'HOST': '',
+       'PORT': ''
+   }
+}
+</pre>
+</div>
+<p>
+然后执行`python manage.py migrate`创建数据库.
+</p>
+
+<p>
+在执行migrate的时候可能出现下面这个问题: `Django.db.utils.IntergrityError: 'Cannot add foreing key contraint`. 在 <a href="http://stackoverflow.com/questions/29483119/django-1-8-syncdb-not-working-throwing-a-foreign-key-constraint-error">SO</a> 上可以找到解决办法
+</p>
+<div class="org-src-container">
+<pre class="src src-Python">DATABASES = {
+'default': {
+    ...
+    'OPTIONS': {
+         "init_command": "SET foreign_key_checks = 0;",
+    },
+ }
+}
+</pre>
+</div>
+
+<p>
+然后配置nginx来转发请求和处理静态文件. 让nginx在10000端口处理, 转发到10001端口.
+</p>
+<pre class="example" id="org5cb843f">
+server {
+    listen 10000;
+    access_log /opt/graphite/storage/log/webapp/nginx_access.log;
+    error_log  /opt/graphite/storage/log/webapp/nginx_error.log;
+    location / {
+        proxy_pass http://127.0.0.1:10001;
+    }
+    location /content {
+        alias /opt/graphite/webapp/content;
+    }
+}
+</pre>
+
+<p>
+最后通过gunicorn启动django webapp. graphite_wsgi.py可以从conf/graphite.wsgi.example复制过来
+</p>
+<pre class="example" id="orgd1e1eaa">
+gunicorn graphite_wsgi:application -b 0.0.0.0:10001 -w 4
+</pre>
+
+<p>
+虽然carbon和redis类似, 也是使用<a href="http://graphite.readthedocs.org/en/latest/feeding-carbon.html">plaintext protcol</a>, 但是使用起来依然有所不便. 不过plaintext protocol好处就是可以让许多第三方系统对接. <a href="http://graphite.readthedocs.org/en/latest/tools.html">这里</a> 列举了一些可以和graphite对接的系统和库. 这里以 <a href="https://github.com/etsy/statsd">statsd</a> 和 <a href="https://github.com/sivy/pystatsd">pystatsd</a> 为例.
+</p>
+</div>
+</div>
+</div>
+<div id="content"><!-- DISQUS BEGIN --><div id="disqus_thread"></div><script>/***  RECOMMENDED CONFIGURATION VARIABLES: EDIT AND UNCOMMENT THE SECTION BELOW TO INSERT DYNAMIC VALUES FROM YOUR PLATFORM OR CMS.*  LEARN WHY DEFINING THESE VARIABLES IS IMPORTANT: https://disqus.com/admin/universalcode/#configuration-variables*/var disqus_config = function () {this.page.url = 'https://dirtysalt.github.io/html/graphite.html';this.page.identifier = 'graphite.html';};(function() {var d = document, s = d.createElement('script');s.src = 'https://dirlt.disqus.com/embed.js';s.setAttribute('data-timestamp', +new Date());(d.head || d.body).appendChild(s);})();</script><noscript>Please enable JavaScript to view the <a href="https://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript><!-- DISQUS END --></div></body>
+</html>

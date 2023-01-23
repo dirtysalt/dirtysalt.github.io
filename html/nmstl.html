@@ -1,0 +1,360 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>nmstl</title>
+<meta name="author" content="dirtysalt" />
+<meta name="generator" content="Org Mode" />
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content" class="content">
+<h1 class="title">nmstl</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>Table of Contents</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#org04b6965">1. Overview</a></li>
+<li><a href="#org94ac503">2. SEDA</a></li>
+<li><a href="#orgd38def5">3. 动态线程池</a>
+<ul>
+<li><a href="#org33c6f2d">3.1. 增加线程</a></li>
+<li><a href="#org684c738">3.2. 回收线程</a></li>
+<li><a href="#org3c90d1a">3.3. 逻辑总结</a></li>
+</ul>
+</li>
+</ul>
+</div>
+</div>
+<p>
+<a href="http://sourceforge.net/projects/nmstl/">http://sourceforge.net/projects/nmstl/</a>
+</p>
+
+<div id="outline-container-org04b6965" class="outline-2">
+<h2 id="org04b6965"><span class="section-number-2">1.</span> Overview</h2>
+<div class="outline-text-2" id="text-1">
+<p>
+代码非常精简大概6000多行，但是完成不是一个库而是一个框架的功能。代码非常飘逸清爽，并且很好地被注释了。
+</p>
+
+<p>
+里面也使用了很多C++的特性但是却没有滥用，所以不管是从代码实现角度还是从设计思想角度，都是值得阅读的。
+</p>
+
+<p>
+整体思想和muduo非常相似，唯一不同的地方就是工作线程有策略地动态进程调整。这也是特色的地方，我们将这个特色地方，称之为SEDA并且在后面分析。
+</p>
+
+<p>
+NMSTL和Asio一样都是template-heavy code,大部分都是头文件。NMSTL设计者考虑到使用这种东西编写C++代码出错的话，很容易在模板的错误中迷失，所以在bin目录下面用perl编写了一个wtf工具，可以将g++编译错误信息很好地表现出来。使用也非常简单，分析效果比原来的g++错误信息好多了。
+</p>
+<pre class="example" id="org937e7a4">
+./bin/wtf g++ &lt;command&gt;
+</pre>
+
+<p>
+下面是NMSTL主要文件列表，这里给出简要的说明
+</p>
+<ul class="org-ul">
+<li>atomic.原子操作。</li>
+<li>callback.回调函数封装(boost::bind).</li>
+<li>debug.调试和日志工具。</li>
+<li>internal.主要是提供对象的to_string等方法，要求对象本身提供as_string这样的方法。</li>
+<li>io.提供各种buffer,并且提供IOHandle封装各种读写操作。IOHandle里面有fd并且有对fd引用计数。</li>
+<li>ioevent.select实现的reactor.每个fd绑定到IOHandler上面，一旦触发可读可写使用调用对应IOHandler的ravil和wavil事件。</li>
+<li>net.网络地址和socket相关操作。</li>
+<li>netioevent.封装网络异步IO操作。实现上和muduo非常相似，对MsgHandler稍加修改可以支持HTTP协议，而MsgHandler本身比较适合RPC.</li>
+<li>ntime.时间封装。</li>
+<li>ptr.多线程安全指针(boost::shared_ptr).内部有引用计数。</li>
+<li>rpc.RPC实现，没有仔细阅读。</li>
+<li>seda.提出SEDAStage这个概念允许将多个操作串联起来，然后可以配合线程池和异步队列动态修改工作线程。</li>
+<li>serial.序列化和反序列化部分，没有仔细阅读。</li>
+<li>terminal.封装终端异步IO操作，使用了readline库，没有仔细阅读。</li>
+<li>thread.线程方面封装，锁，条件变量，线程和线程池。</li>
+<li>tqueue.异步队列。</li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-org94ac503" class="outline-2">
+<h2 id="org94ac503"><span class="section-number-2">2.</span> SEDA</h2>
+<div class="outline-text-2" id="text-2">
+<p>
+<a href="http://www.eecs.harvard.edu/~mdw/proj/seda/">http://www.eecs.harvard.edu/~mdw/proj/seda/</a>.
+</p>
+
+<p>
+SEDA并不是NMSTL提出的，SEDA主要思想就是提出动态线程池这个概念。动态线程池可以在吞吐和响应上平衡，而划分成为stage的话可以让整个设计更加灵活，甚至一个stage都可以使用block方式处理(如果异步编写比较麻烦的话)通过线程来支持，当然一个stage推荐还是使用nonblock方式处理。我们这里看看NMSTL怎么实现动态线程池的。首先看看SEDAStage这么一个概念。在NMSTL里面定义是这样的
+</p>
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-keyword">template</span>&lt;<span class="org-keyword">class</span> <span class="org-type">In</span>, <span class="org-keyword">class</span> <span class="org-type">Out</span> = <span class="org-type">void</span>&gt;
+<span class="org-keyword">class</span> <span class="org-type">SEDAStage</span>;
+</pre>
+</div>
+
+<p>
+一个SEDAStage和一个In/Out类型绑定形成一个stage.这个stage允许不断地插入In对象，实现起来内部能够非常高效地处理这些In对象生成Out对象。然后一个stage可能后面会挂上一个next stage,这个next stage接收Out对象然后不断地继续。对于这里的高效处理就是使用异步队列+线程池模型来处理了，我们可以看看处理这个部分的代码
+</p>
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-keyword">class</span> <span class="org-type">my_thread</span> : <span class="org-keyword">public</span> <span class="org-type">Thread</span> {
+<span class="org-type">bool</span> <span class="org-variable-name">quit</span>;
+<span class="org-type">bool</span> <span class="org-variable-name">pending</span>;
+<span class="org-type">SEDAStage</span>&lt;In&gt;&amp; <span class="org-variable-name">stage</span>;
+
+  <span class="org-keyword">public</span>:
+<span class="org-function-name">my_thread</span>(<span class="org-type">SEDAStage</span>&lt;In&gt;&amp; <span class="org-variable-name">stage</span>) :
+    quit(<span class="org-constant">false</span>), pending(<span class="org-constant">true</span>), stage(stage) {}
+
+<span class="org-keyword">virtual</span> <span class="org-type">void</span> <span class="org-function-name">run</span>() {
+    <span class="org-keyword">while</span> (<span class="org-constant">true</span>) {
+    <span class="org-type">In</span> <span class="org-variable-name">in</span>;
+    <span class="org-keyword">if</span> (<span class="org-negation-char">!</span>stage.inq.wait(in, &amp;pending)) <span class="org-comment-delimiter">// </span><span class="org-comment">&#20854;&#20013;&#36825;&#37324;&#30340;stage.inq&#23601;&#26159;&#24322;&#27493;&#38431;&#21015;</span>
+        <span class="org-keyword">break</span>; <span class="org-comment-delimiter">// </span><span class="org-comment">&#27880;&#24847;&#36825;&#20010;&#22320;&#26041;&#65292;&#36825;&#20010;&#22320;&#26041;&#33021;&#22815;&#36890;&#36807;&#24322;&#27493;&#38431;&#21015;&#30340;&#36820;&#22238;&#20540;&#26469;&#36890;&#30693;&#32447;&#31243;&#26159;&#21542;&#38656;&#35201;&#33258;&#24049;&#38144;&#27585;&#12290;</span>
+
+    stage.handle(in); <span class="org-comment-delimiter">// </span><span class="org-comment">&#20174;&#24322;&#27493;&#38431;&#21015;&#21462;&#20986;in&#20043;&#21518;&#20132;&#32473;stage::handle&#26469;&#22788;&#29702;&#12290;</span>
+    }
+
+    <span class="org-keyword">if</span> (<span class="org-negation-char">!</span>stage.inq.is_closed()) { <span class="org-comment-delimiter">// </span><span class="org-comment">&#22914;&#26524;stage&#26412;&#36523;&#27809;&#26377;&#20851;&#38381;&#30340;&#35805;&#65292;&#37027;&#20040;&#35828;&#26126;&#26159;&#21160;&#24577;&#21462;&#28040;&#32447;&#31243;</span>
+    delete_on_completion(); <span class="org-comment-delimiter">// </span><span class="org-comment">&#37027;&#20040;&#32447;&#31243;&#38656;&#35201;&#22312;&#36864;&#20986;&#20570;&#19968;&#20123;&#20107;&#24773;&#12290;&#20027;&#21160;&#36864;&#20986;&#30340;&#35805;&#36890;&#24120;&#32447;&#31243;&#38656;&#35201;detach.</span>
+    stage.thread_dying(<span class="org-keyword">this</span>); <span class="org-comment-delimiter">// </span><span class="org-comment">&#28982;&#21518;&#20174;&#32447;&#31243;&#27744;&#20013;&#31227;&#38500;&#36825;&#20010;&#32447;&#31243;&#12290;</span>
+    } <span class="org-keyword">else</span> { <span class="org-comment-delimiter">// </span><span class="org-comment">&#22914;&#26524;&#26159;stage&#20027;&#21160;&#25346;&#25481;&#30340;&#35805;&#65292;&#37027;&#20040;&#23601;&#38656;&#35201;&#35753;&#32447;&#31243;&#33258;&#24049;&#38144;&#27585;&#65292;&#26681;&#25454;&#29366;&#24577;&#20915;&#23450;&#26159;&#21542;&#38656;&#35201;join.</span>
+    <span class="org-comment-delimiter">// </span><span class="org-comment">The stage is dying; let the destructor reap this</span>
+    <span class="org-comment-delimiter">// </span><span class="org-comment">Thread</span>
+    }
+}
+};
+</pre>
+</div>
+
+<p>
+然后我们看看多个Stage是如何相连在一起的.
+</p>
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-keyword">template</span>&lt;<span class="org-keyword">class</span> <span class="org-type">In</span>, <span class="org-keyword">class</span> <span class="org-type">Out</span>&gt;
+<span class="org-keyword">class</span> <span class="org-type">SEDAStage</span> : <span class="org-keyword">public</span> <span class="org-type">SEDAStage</span>&lt;<span class="org-type">In</span>, <span class="org-type">void</span>&gt; {
+    <span class="org-type">SEDAStage</span>&lt;<span class="org-type">Out</span>&gt;* <span class="org-variable-name">next</span>;
+
+  <span class="org-keyword">public</span>:
+    <span class="org-function-name">SEDAStage</span>(<span class="org-type">string</span> <span class="org-variable-name">name</span> = string()) :
+    SEDAStage&lt;<span class="org-type">In</span>, <span class="org-type">void</span>&gt;(name)
+    {
+    }
+    <span class="org-comment-delimiter">// </span><span class="org-comment">&#35774;&#32622;&#19979;&#19968;&#20010;&#38454;&#27573;Stage</span>
+    <span class="org-comment-delimiter">/// </span><span class="org-comment">Specifies the stage to be used after this stage.</span>
+    <span class="org-comment-delimiter">/// </span><span class="org-comment">This stage will be used when the handler invokes</span>
+    <span class="org-comment-delimiter">/// </span><span class="org-comment">output(Out&amp; out).</span>
+    <span class="org-type">void</span> <span class="org-function-name">set_next</span>(<span class="org-type">SEDAStage</span>&lt;<span class="org-type">Out</span>&gt;&amp; <span class="org-variable-name">next</span>) { <span class="org-keyword">this</span>-&gt;next = &amp;next; }
+
+  <span class="org-keyword">protected</span>:
+    <span class="org-comment-delimiter">// </span><span class="org-comment">&#36825;&#26679;&#20801;&#35768;&#25105;&#20204;&#22312;handle&#20043;&#21518;&#24471;&#21040;Out&#32467;&#26524;&#20043;&#21518;&#65292;output(handle(in))</span>
+    <span class="org-comment-delimiter">// </span><span class="org-comment">&#36825;&#26679;Out&#37096;&#20998;&#21448;&#21487;&#20197;&#25918;&#21040;&#19979;&#19968;&#20010;&#27493;&#39588;&#36827;&#34892;&#22788;&#29702;&#20102;&#12290;</span>
+    <span class="org-comment-delimiter">// </span><span class="org-comment">&#19981;&#36807;&#20174;&#20195;&#30721;&#19978;&#30475;&#31867;&#22411;&#19978;&#38754;&#26377;&#28857;&#38382;&#39064;&#65292;&#22914;&#26524;&#26159;&#22810;&#20010;stage&#32423;&#32852;&#30340;&#35805;</span>
+    <span class="org-comment-delimiter">// </span><span class="org-comment">&#31867;&#22411;&#19978;&#30475;&#38656;&#35201;&#36827;&#34892;&#24378;&#36716;&#12290;</span>
+    <span class="org-comment-delimiter">/// </span><span class="org-comment">Injects the output element into the queue which has</span>
+    <span class="org-comment-delimiter">/// </span><span class="org-comment">previous been specified by set_next(SEDAStage&lt;Out&gt;&amp;).</span>
+    <span class="org-type">void</span> <span class="org-function-name">output</span>(<span class="org-type">Out</span>&amp; <span class="org-variable-name">out</span>) {
+    ASSERT(next != 0);
+    next-&gt;inject(out);
+    }
+};
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgd38def5" class="outline-2">
+<h2 id="orgd38def5"><span class="section-number-2">3.</span> 动态线程池</h2>
+<div class="outline-text-2" id="text-3">
+<p>
+首先SEDAStage对于动态线程池有三个指标
+</p>
+<ul class="org-ul">
+<li>min_threads.</li>
+<li>max_threads.</li>
+<li>reached_capacity(rc).</li>
+</ul>
+<p>
+我们主要关注第三个参数。rc初始化为0.然后我们开始进行输出In对象
+</p>
+</div>
+
+<div id="outline-container-org33c6f2d" class="outline-3">
+<h3 id="org33c6f2d"><span class="section-number-3">3.1.</span> 增加线程</h3>
+<div class="outline-text-3" id="text-3-1">
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-comment-delimiter">/// </span><span class="org-comment">Injects an element into the queue.</span>
+<span class="org-type">void</span> <span class="org-function-name">inject</span>(<span class="org-type">In</span>&amp; <span class="org-variable-name">in</span>) {
+<span class="org-keyword">if</span> (<span class="org-negation-char">!</span>inq.push(in)) <span class="org-comment-delimiter">// </span><span class="org-comment">&#22914;&#26524;&#24322;&#27493;&#38431;&#21015;push&#36820;&#22238;false&#30340;&#35805;&#65292;&#37027;&#20040;&#23601;&#20250;&#35843;&#29992;clogged.</span>
+    clogged(in);
+}
+
+<span class="org-comment-delimiter">/// </span><span class="org-comment">Called when someone tries to inject an element into the queue,</span>
+<span class="org-comment-delimiter">/// </span><span class="org-comment">but there are no handlers available to service it.  This is</span>
+<span class="org-comment-delimiter">/// </span><span class="org-comment">invoked on the same Thread which calls inject (before inject</span>
+<span class="org-comment-delimiter">/// </span><span class="org-comment">returns) so it must return very quickly.</span>
+<span class="org-keyword">virtual</span> <span class="org-type">void</span> <span class="org-function-name">clogged</span>(<span class="org-type">In</span>&amp; <span class="org-variable-name">in</span>) {
+locking (<span class="org-keyword">this</span>) {
+    reached_capacity = 0; <span class="org-comment-delimiter">// </span><span class="org-comment">rc=0</span>
+    add_threads(); <span class="org-comment-delimiter">// </span><span class="org-comment">&#22686;&#21152;&#32447;&#31243;</span>
+}
+}
+<span class="org-type">void</span> <span class="org-function-name">add_threads</span>() {
+<span class="org-comment-delimiter">// </span><span class="org-comment">Requires lock on this</span>
+<span class="org-keyword">while</span> (num_threads &lt; min_threads ||
+       (num_threads &lt; max_threads &amp;&amp; inq.extra_capacity() &lt; 0))
+{
+    inq.waiter_pending();
+    ++num_threads;
+    <span class="org-type">my_thread</span> *<span class="org-variable-name">th</span> = <span class="org-keyword">new</span> <span class="org-type">my_thread</span>(*<span class="org-keyword">this</span>);
+    threads.insert(th);
+
+    th-&gt;start();
+}
+}
+</pre>
+</div>
+
+<p>
+然后我们看看异步队列返回false和和waiter_pending的操作是如何的。从上面看到waiter_pending就是
+增加线程的数量，所以这里waiters可以认为是可以使用的线程数目。而waiters&gt;=q.size()表示工作线程数目
+大于task数量，那么这个时候可以认为没有必要增加线程。不过这里我们没有分析extra_capacity这个意思。
+</p>
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-comment-delimiter">/// </span><span class="org-comment">Adds an item to the back of the queue.  Returns true if the item</span>
+<span class="org-comment-delimiter">/// </span><span class="org-comment">will be immediately dispatched.</span>
+<span class="org-type">bool</span> <span class="org-function-name">push</span>(<span class="org-keyword">const</span> <span class="org-type">value_type</span>&amp; <span class="org-variable-name">v</span>) {
+locking(m) {
+    q.push(v);
+        c.signal();
+        <span class="org-keyword">return</span> waiters &gt;= q.size();
+}
+}
+
+<span class="org-type">void</span> <span class="org-function-name">waiter_pending</span>() {
+locking(m)
+    ++waiters; <span class="org-comment-delimiter">// </span><span class="org-comment">waiters&#26159;&#24050;&#32463;&#24320;&#36767;&#30340;&#32447;&#31243;&#25968;&#30446;</span>
+}
+</pre>
+</div>
+<p>
+如果阅读完成回收线程就会发现extra_capacity意思就是当前空余线程数目。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org684c738" class="outline-3">
+<h3 id="org684c738"><span class="section-number-3">3.2.</span> 回收线程</h3>
+<div class="outline-text-3" id="text-3-2">
+<p>
+然后我们还是回来看看导致线程减少的这部分逻辑
+</p>
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-keyword">while</span> (<span class="org-constant">true</span>) {
+<span class="org-type">In</span> <span class="org-variable-name">in</span>;
+<span class="org-keyword">if</span> (<span class="org-negation-char">!</span>stage.inq.wait(in, &amp;pending))
+    <span class="org-keyword">break</span>;
+
+stage.handle(in);
+}
+</pre>
+</div>
+<p>
+如果异步队列在wait返回false的话那么就会取消线程。阅读wait这个部分代码的话就会发现只有两个地方是返回false
+</p>
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-comment-delimiter">/// </span><span class="org-comment">Waits for the queue to become non-empty, then atomically</span>
+<span class="org-comment-delimiter">/// </span><span class="org-comment">retrieves an item from the queue, sets out, and returns true; or</span>
+<span class="org-comment-delimiter">/// </span><span class="org-comment">returns false if the queue has been closed.</span>
+<span class="org-type">bool</span> <span class="org-function-name">wait</span>(<span class="org-type">T</span>&amp; <span class="org-variable-name">out</span>, <span class="org-type">bool</span> *<span class="org-variable-name">pending</span> = 0) {
+locking(m) {
+    <span class="org-keyword">if</span> (<span class="org-type">pending</span> &amp;&amp; *<span class="org-variable-name">pending</span>) {
+    --waiters;
+    *pending = <span class="org-constant">false</span>;
+    }
+
+    <span class="org-keyword">while</span> (1) {
+    <span class="org-keyword">if</span> (waiters_starve) { <span class="org-comment-delimiter">// </span><span class="org-comment">&#19968;&#31181;&#24773;&#20917;&#26159;&#23384;&#22312;waiters_starve.</span>
+        --waiters_starve;
+
+        <span class="org-comment-delimiter">// </span><span class="org-comment">Because starve decremented waiters, and we</span>
+        <span class="org-comment-delimiter">// </span><span class="org-comment">decremented it again in this loop...</span>
+        ++waiters;
+
+        <span class="org-keyword">return</span> <span class="org-constant">false</span>;
+    }
+
+    <span class="org-keyword">if</span> (<span class="org-negation-char">!</span>q.empty()) {
+        out = q.front();
+        q.pop();
+        <span class="org-keyword">return</span> <span class="org-constant">true</span>;
+    }
+
+    <span class="org-keyword">if</span> (closed) <span class="org-comment-delimiter">// </span><span class="org-comment">&#21478;&#22806;&#19968;&#31181;&#23601;&#26159;&#36825;&#20010;&#24322;&#27493;&#38431;&#21015;&#20851;&#38381;</span>
+        <span class="org-keyword">return</span> <span class="org-constant">false</span>;
+
+            <span class="org-comment-delimiter">// </span><span class="org-comment">Can only get to this point if the queue is empty</span>
+            <span class="org-comment-delimiter">// </span><span class="org-comment">but has not been closed.</span>
+
+    ++waiters;
+    c.wait(m);
+    --waiters;
+    }
+}
+}
+</pre>
+</div>
+<p>
+我们什么时候设置waiters_starve的呢？是在starve这个函数里面
+</p>
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-comment-delimiter">/// </span><span class="org-comment">Starves one waiter, causing its "wait" to return false.</span>
+<span class="org-type">void</span> <span class="org-function-name">starve</span>() {
+locking (m) {
+    ++waiters_starve;
+    --waiters;
+    c.signal();
+}
+}
+</pre>
+</div>
+<p>
+所以可以认为调用一次starve的话那么就会回收一个线程。然后我们看看starve是在什么时候触发的。
+在seda下面存在seda_clock_thread这个类，这个类单独起一个线程然后定时(默认5s)会调用SEDAStage::scan方法。
+</p>
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-comment-delimiter">/// </span><span class="org-comment">Periodic scan to see whether to kill a Thread.</span>
+<span class="org-type">void</span> <span class="org-function-name">scan</span>() {
+locking (<span class="org-keyword">this</span>) {
+    <span class="org-keyword">if</span> (reached_capacity &gt; 5 &amp;&amp; num_threads &gt; min_threads) {
+    inq.starve();
+    --num_threads;
+    }
+    ++reached_capacity;
+}
+}
+</pre>
+</div>
+<p>
+也就是说线程的删减是定时触发的。如果reached_capacity&gt;5并且当前线程数目大小最小线程数目的话，那么就会一直回收线程。
+而reached_capacity回在clogged这个部分清空。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org3c90d1a" class="outline-3">
+<h3 id="org3c90d1a"><span class="section-number-3">3.3.</span> 逻辑总结</h3>
+<div class="outline-text-3" id="text-3-3">
+<p>
+如果当前可用线程数目小于queue tasks数目的时候，那么就会添加线程并且将rc置零。然后后端会启动线程每隔5s会将rc++.
+如果rc&gt;=6的话并且当前线程个数大于最小线程个数的话，那么就会销毁一个线程。可以看出回收线程至少要达到30s以后才会操作，
+并且在这30s内没有任何添加线程的动作，如果一旦有的那么会重新计算。一旦开始回收线程之后，以后每隔5s就会回收一个。
+可以看到回收线程是一个非常平滑的过程，并且一旦增加线程的话计时又要等上30s，考虑处理性能同时考虑了线程本身的overhead.
+</p>
+</div>
+</div>
+</div>
+</div>
+<div id="content"><!-- DISQUS BEGIN --><div id="disqus_thread"></div><script>/***  RECOMMENDED CONFIGURATION VARIABLES: EDIT AND UNCOMMENT THE SECTION BELOW TO INSERT DYNAMIC VALUES FROM YOUR PLATFORM OR CMS.*  LEARN WHY DEFINING THESE VARIABLES IS IMPORTANT: https://disqus.com/admin/universalcode/#configuration-variables*/var disqus_config = function () {this.page.url = 'https://dirtysalt.github.io/html/nmstl.html';this.page.identifier = 'nmstl.html';};(function() {var d = document, s = d.createElement('script');s.src = 'https://dirlt.disqus.com/embed.js';s.setAttribute('data-timestamp', +new Date());(d.head || d.body).appendChild(s);})();</script><noscript>Please enable JavaScript to view the <a href="https://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript><!-- DISQUS END --></div></body>
+</html>

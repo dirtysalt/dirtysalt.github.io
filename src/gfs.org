@@ -1,0 +1,394 @@
+#+title: The Google File System
+http://research.google.com/archive/gfs.html @ 2003
+
+https://pdos.csail.mit.edu/6.824/notes/l-gfs.txt
+
+https://pdos.csail.mit.edu/6.824/papers/gfs-faq.txt
+
+** Abstract
+a scalable distributed file system for large distributed data-intensive applications.
+  - fault tolerance while running on inexpensive commodity hardware.
+  - high aggregate performance to a large number of clients.
+  - The largest cluster to date provides hun-dreds of terabytes of storage across thousands of disks on over a thousand machines
+  - and it is concurrently accessed by hundreds of clients.
+
+因为应用需求(数据密集型)和技术环境(分布式并且建立在不可靠的机器集群上), 所以在语义(POSIX)和设计实现上和传统的文件系统有很大不同。
+
+While sharing many of the same goals as previous distributed file systems, our design has been driven by observations of our application workloads and technological environment, both current and anticipated, that reflect a marked departure from some earlier file system assumptions. This has led us to reexamine traditional choices and explore radically different design points.
+
+** Introduction
+
+GFS shares many of the same goals as previous distributed file systems such as performance, scalability, reliability, and availability.
+
+However, its design has been driven by key observations of our application work-loads and technological environment, both current and an-ticipated, that reflect a marked departure from some earlier file system design assumptions.
+- First, component failures are the norm rather than the exception. Therefore, constant monitoring, error detection, fault tolerance, and automatic recovery must be integral to the system. 机机器故障（包括磁盘故障）是常态
+
+- Second, files are huge by traditional standards. Multi-GB files are common. Each file typically contains many applica-tion objects such as web documents. When we are regularly working with fast growing data sets of many TBs comprising billions of objects, it is unwieldy to manage billions of ap-proximately KB-sized files even when the file system could support it.（主要是针对大文件而非小文件）
+
+- Third, most files are mutated by appending new data rather than overwriting existing data. Random writes within a file are practically non-existent. Once written, the files are only read, and often only sequentially. Given this access pattern on huge files, appending becomes the fo-cus of performance optimization and atomicity guarantees, while caching data blocks in the client loses its appeal.（大量写入是append, 少量写入是random write. 写入完成之后就成为只读状态，通常都是顺序读取，所以read cache没有什么效果）
+
+- Fourth, co-designing the applications and the file system API benefits the overall system by increasing our flexibility.
+  - relaxed GFS's consistency model to vastly simplify the file system without imposing an onerous burden on the applications.（放宽文件系统的一致性。replicas之间不要求data是完全一致的，但是要保证如果读取的话可以读到一样的内容）
+  - introduced an atomic append operation so that multiple clients can append concurrently to a file without extra synchronization between them.（支持atomic append这样就不会涉及到锁冲突）
+
+Multiple GFS clusters are currently deployed for different purposes. The largest ones have over 1000 storage nodes, over 300 TB of diskstorage, and are heavily accessed by hundreds of clients on distinct machines on a continuous basis.（最大集群有1K存储节点，提供了300TB的存储，被百个client共同访问）
+
+** Design Overview
+----------
+Assumptions
+
+The workloads primarily consist of two kinds of reads: large streaming reads and small random reads. In large streaming reads, individual operations typically read hundreds of KBs, more commonly 1 MB or more. Successive operations from the same client often read through a contiguous region of a file. A small ran-dom read typically reads a few KBs at some arbitrary offset. Performance-conscious applications often batch and sort their small reads to advance steadily through the file rather than go backand forth.(读取上更关心stream read而非random read效率)
+
+The workloads also have many large, sequential writes that append data to files. Typical operation sizes are similar to those for reads. Once written, files are sel-dom modified again. Small writes at arbitrary posi-tions in a file are supported but do not have to be efficient.(写入上更关心append而非random write效率)
+
+这里说一下multi-way mergeing和producer-consumer。multi-way merging是多个writers同时往一个gfs file里面追加写入，所以需要实现atomic append的操作，这样就不用协调writers了。这样写下去可能replicas的文件不尽相同，但是如果使用reader读取上来的话，不管从哪个replica上面读都是一致的。而producer-consumer则是，一个producer往一个gfs file里面不断追加，而多个consumer可以不断地按照offset去读取这个gfs file, 有点类似于持久化的queue.
+
+The system must efficiently implement well-defined se-mantics for multiple clients that concurrently append to the same file. Our files are often used as producer-consumer queues or for many-way merging. Hundreds of producers, running one per machine, will concur-rently append to a file. Atomicity with minimal syn-chronization overhead is essential. The file may be read later, or a consumer may be reading through the file simultaneously.(需要有效地支持atomic append)
+
+High sustained bandwidth is more important than low latency. Most of our target applications place a pre-mium on processing data in bulkat a high rate, while few have stringent response time requirements for an individual read or write.(更加注重吞吐而非延迟)
+
+----------
+Interface
+
+接口看上去很像POSIX，也是采用树状的组织方式，使用pathname来找到具体某个文件。语义上肯定有所不同，另外还支持snapshot和atomic append.
+
+GFS provides a familiar file system interface, though it does not implement a standard API such as POSIX. Files are organized hierarchically in directories and identified by pathnames. We support the usual operations to create, delete, open, close, read, and write files.
+
+Moreover, GFS has snapshot and record append operations. Snapshot creates a copy of a file or a directory tree at low cost. Record append allows multiple clients to appenddata to the same file concurrently while guaranteeing the atomicity of each individual client’s append. It is useful for implementing multi-way merge results and producer consumer queues that many clients can simultaneously append to without additional locking.
+
+----------
+Architecture
+
+- A GFS cluster consists of a single master and multiple chunkservers and is accessed by multiple clients.
+
+- Files are divided into fixed-size chunks. Each chunk is identified by an immutable and globally unique 64 bit chunk handle assigned by the master at the time of chunk creation.（对于每个chunk使用unique 64bit数字表示）
+
+- Chunkservers store chunks on local disks as Linux files and read or write chunk data specified by a chunk handle and byte range.
+
+- For reliability, each chunk is replicated on multi-ple chunkservers. By default, we store three replicas, though users can designate different replication levels for different regions of the file namespace.
+
+- The master maintains all file system metadata. This in-cludes the namespace, access control information, the map-ping from files to chunks, and the current locations of chunks. It also controls system-wide activities such as chunk lease management, garbage collection of orphaned chunks, and chunk migration between chunkservers. The master peri-odically communicates with each chunkserver in HeartBeat messages to give it instructions and collect its state.
+
+- master用来管理文件系统的metadata包括：
+  1. 文件系统的名字空间
+  2. ACL权限
+  3. files到chunks的映射
+  4. chunks到chunkservers的映射
+
+- 此外master还管理:
+  1. chunk lease. 协调哪个chunkserver写入这个chunk
+  2. GC of chunks. 某些chunk写入失败的话，会重新分配另外一个chunk来写入，这样原来的chunk就是孤儿chunk
+  3. balance of chunks. 管理chunk在chunkservers之间的均匀分配
+
+- Clients interact with the master for metadata opera-tions, but all data-bearing communication goes directly to the chunkservers. We do not provide the POSIX API and therefore need not hook into the Linux vnode layer. （和master之间交换控制指令，而cs之间交换数据指令）
+- Neither the client nor the chunkserver caches file data. Client caches offer little benefit because most applications stream through huge files or have working sets too large to be cached. Chunkservers need not cache file data because chunks are stored as local files and so Linux’s buffer cache already keeps frequently accesseddata in memory.
+
+[[../images/gfs-architecture.png]]
+
+----------
+Single Master
+
+为了减少client和master的交互次数，client会缓存chunk的信息。另外还可以通过批量的方式一次请求多个chunks的信息，这样可以进一步减少交互次数。client可以选择从就近的replica上读取数据。
+
+Having a single master vastly simplifies our design and enables the master to make sophisticated chunk placement and replication decisions using global knowledge. However, we must minimize its involvement in reads and writes so that it does not become a bottleneck. Clients never read and write file data through the master. Instead, a client asks the master which chunkservers it should contact. It caches this information for a limited time and interacts with the chunkservers directly for many subsequent operations. Further reads of the same chunkrequire no more client-master interaction until the cached information expires or the file is reopened.
+
+The client then sends a request to one of the replicas, most likely the closest one. The request specifies the chunk handle and a byte range within that chunk. Further reads of the same chunk require no more client-master interaction until the cached information expires or the file is reopened. In fact, the client typically asks for multiple chunks in the same request and the master can also include the information for chunks immediately following those requested. This extra information sidesteps several future client-master interactions at practically no extra cost.
+
+----------
+Chunk Size
+
+Chunks ize is one of the key design parameters. We have chosen 64 MB, which is much larger than typical file system blocks izes. Each chunk replica is stored as a plain Linux file on a chunkserver and is extended only as needed. Lazy space allocation avoids wasting space due to internal fragmentation, perhaps the greatest objection against such a large chunksize.（即使使用lazy space allocation，过大的chunk size依然会造成空间碎片。这个碎片我理解是逻辑层面的上的，后面会看到atomic append如果cross chunk的话，那么需要开辟一个新的chunk, 原有的chunk就需要padding. 这空间就算是浪费了）
+
+A large chunk size offers several important advantages.
+- First, it reduces clients' need to interact with the master because reads and writes on the same chunk require only one initial request to the master for chunk location informa-tion.（减少和master的交互次数）
+- Second, since on a large chunk, a client is more likely to perform many operations on a given chunk, it can reduce network overhead by keeping a persis-tent TCP connection to the chunkserver over an extended period of time. （更大的chunk size意味着更少的chunks, 也就意味着只需要和更少的chunkserver交互，那么保持TCP长连接就就有很大优势）
+- Third, it reduces the size of the metadata stored on the master. This allows us to keep the metadata in memory（减少master商店额内存开销）
+
+
+On the other hand, a large chunk size, even with lazy space allocation, has its disadvantages. A small file consists of a small number of chunks, perhaps just one. The chunkservers storing those chunks may become hot spots if many clients are accessing the same file. In practice, hot spots have not been a major issue because our applications mostly read large multi-chunkfiles sequentially.（更大的chunk size会导致一个文件只存在少量的chunkservers上，那么这个chunkservers可能就会成为读取的hot spots. 但实际上这种情况并不是特别严重，因为大量的读都是scan. 我理解作者的意思是，如果是scan的话那么IO效率可以做到很高）
+
+----------
+Metadata
+
+The master stores three major types of metadata:
+- the file and chunk namespaces,
+- the mapping from files to chunks,
+- and the locations of each chunk's replicas
+
+All metadata is kept in the masters memory. The first two types (names-paces and file-to-chunk mapping) are also kept persistent by logging mutations to an operation log stored on the mas-ter's local diskand replicated on remote machines. Using a log allows us to update the master state simply, reliably, and without risking inconsistencies in the event of a master crash. The master does not store chunk location informa-tion persistently. Instead, it asks each chunkserver about its chunks at master startup and whenever a chunkserver joins the cluster. （这是设计的一个特点，master不持久化chunk->server的信息，而是通过chunkserver汇报来完成的。这个设计理由在后面也有说到）
+
+In-Memory Data Strucutres
+- Since metadata is stored in memory, master operations are fast. Furthermore, it is easy and efficient for the master to periodically scan through its entire state in the background. This periodic scanning is used to implement chunk garbage collection, re-replication in the presence of chunkserver fail-ures, and chunk migration to balance load and diskspace usage across chunkservers.
+- One potential concern for this memory-only approach is that the number of chunks and hence the capacity of the whole system is limited by how much memory the master has. This is not a serious limitation in practice. The mas-ter maintains less than 64 bytes of metadata for each 64 MB chunk. the file namespace data typically requires less then 64 bytes per file because it stores file names compactly us-ing prefix compression.(对于master在内存维护数据结构的话，需要考虑内存占用问题。但是在实际中并不是一个太大的约束。对于64MB chunk而言会保存64字节的meta数据，并且对于一个文件来说使用前缀压缩可以将文件名压缩到64字节以下)
+
+Chunk Locations
+- The master does not keep a persistent record of which chunkservers have a replica of a given chunk. It simply polls chunkservers for that information at startup. The master can keep itself up-to-date thereafter because it controls all chunk placement and monitors chunkserver status with reg-ular HeartBeat messages. This eliminated the problem of keeping the master and chunkservers in sync as chunkservers join and leave the cluster, change names, fail, restart, and so on. In a cluster with hundreds of servers, these events happen all too often. (对于chunkserver加入集群,或者是chunkserver改变名字，宕机重启等事情的话，保持master和chunkserver同步是一件非常麻烦的事情，尤其是这些事情经常发生)
+- Another way to understand this design decision is to real-ize that a chunkserver has the final word over what chunks it does or does not have on its own disks. There is no point in trying to maintain a consistent view of this information on the master because errors on a chunkserver may cause chunks to vanish spontaneously (e.g., a disk may go bad and be disabled) or an operator may rename a chunkserver.(对于chunkserver而言才是最终决定是否包含chunk的。对于master包含这种一致性view的话没有任何用户，因为对于chunkserver而言的很可能会因为故障导致某些chunk就丢失，或者是op就直接修改chunkserver名字)
+
+Operation Log
+- The operation log contains a historical record of critical metadata changes. It is central to GFS. Not only is it the only persistent record of metadata, but it also serves as a logical time line that defines the order of concurrent op-erations. Files and chunks, as well as their versions (see Section 4.5), are all uniquely and eternally identified by the logical times at which they were created.(log记录了对于meta信息关键的修改，一方面可以用来持久化metadata,另外一方面也为并发操作进行排序。file以及chunk分配的version都是按照他们创建的逻辑顺序分配的。）
+
+- Since the operation log is critical, we must store it reli-ably and not make changes visible to clients until metadata changes are made persistent. Otherwise, we effectively lose the whole file system or recent client operations even if the chunks themselves survive. Therefore, we replicate it on multiple remote machines and respond to a client opera-tion only after flushing the corresponding log record to disk both locally and remotely. The master batches several log records together before flushing thereby reducing the impact of flushing and replication on overall system throughput.（master是有active standby的replica的。对master的操作必须两个都写成功了才能返回）
+
+- The master recovers its file system state by replaying the operation log. To minimize startup time, we must keep the log small. The master checkpoints its state whenever the log grows beyond a certain size so that it can recover by loading the latest checkpoint from local disk and replaying only the limited number of log records after that. The checkpoint is in a compact B-tree like form that can be directly mapped into memory and used for namespace lookup without ex-tra parsing. This further speeds up recovery and improves availability. (checkpoint是一个可以快速载入内存的紧凑的B树格式）
+
+- Because building a checkpoint can take a while, the mas-ter's internal state is structured in such a way that a new checkpoint can be created without delaying incoming muta-tions. The master switches to a new log file and creates the new checkpoint in a separate thread. The new checkpoint includes all mutations before the switch. It can be created in a minute or so for a cluster with a few million files. When completed, it is written to diskboth locally and remotely.(checkpoint必须是lock-free的，不然就需要暂停所有的写操作）
+
+----------
+Consistency Model
+
+GFS一致性模型下面这样的：
+| op                 | Write        | Append                                 |
+|--------------------+--------------+----------------------------------------|
+| Serial Success     | defined      | defined interspersed with inconsistent |
+| Concurrent Success | consistent   | defined interspersed with inconsistent |
+| Failure            | Inconsistent | Inconsistent                           |
+
+defined意思应该是，数据写入是一个完整的(integral)（A region is defined after a file data mutation if it is consistent and clients will see what the mutation writes in its entirety）
+
+对于serial write来说，每次写入肯定都是完整的，而对于concurrent write来说的话，因为write data可能会超过一个chunk或者是在某个offset会被overwrite所以不一定是完整写入的。
+
+而对于record append来说，因为大小限制在1/4 max chunksize，并且每次都只是写一个chunk，因此数据写入也必然是完整的。但是通常record append可以由多个client不获取锁而同时往里面写，所以各个副本之间不一定完全相同。
+
+对于Append中出现inconsistent情况(其实也应该归于failure部分)是因为replicas写入失败。某次写入失败没有关系，我们继续从primary chunk的offset开始提交(其他replicas也从这个offset开始提交)。因为首先写的是primary, 所以如果其他replicas没有写成功的话，那么下一次使用primary last offset写就会出现空洞(可以被GFS识别)造成inconsistent. 对于append来说GFS保证至少原子提交一次。reader在上次需要完成两件事情： 1. 跳过哪些空洞  2. 去重. 这样reader不管从哪个replica上读取得到的数据都是一致的。
+
+
+The state of a file region after a data mutation depends on the type of mutation, whether it succeeds or fails, and whether there are concurrent mutations.
+- A file region is consistent if all clients will always see the same data, regardless of which replicas they read from.
+- A region is defined after a file data mutation if it is consistent and clients will see what the mutation writes in its entirety.
+- When a mutation succeeds without interference from concurrent writers, the affected region is defined (and by implication consistent): all clients will always see what the mutation has written.
+- Concurrent successful mutations leave the region undefined but consistent: all clients see the same data, but it may not reflect what any one mutation has written. Typically, it consists of mingled fragments from multiple mutations.
+- A failed mutation makes the region in-consistent (hence also undefined): different clients may see different data at different times.
+
+----------
+Guarantee by GFS
+
+- File namespace mutations (e.g., file creation) are atomic. They are handled exclusively by the master: namespace locking guarantees atomicity and correctness (Section 4.1); the master's operation log defines a global total order of these operations（名字空间操作是atomic的，这点由master保证）
+- Data mutations may be writes or record appends. A write causes data to be written at an application-specified file offset. A record append causes data (the "record") to be appended atomically at least once even in the presence of concurrent mutations, but at an offset of GFS's choosing (Section 3.3). (In contrast, a "regular" append is merely a write at an offset that the client believes to be the current end of file.) （随机写需要提供offset, 而record则不需要offset由primary chunkserver来决定）
+- The offset is returned to the client and marks the beginning of a defined region that contains the record. In addition, GFS may insert padding or record duplicates in between. They occupy regions considered to be inconsistent and are typically dwarfed by the amount of user data.
+- After a sequence of successful mutations, the mutated file region is guaranteed to be defined and contain the data writ-ten by the last mutation. GFS achieves this by (a) applying mutations to a chunkin the same order on all its replicas (Section 3.1), and (b) using chunkversion numbers to detect any replica that has become stale because it has missed mu-tations while its chunkserver was down (Section 4.5). Stale replicas will never be involved in a mutation or given to clients asking the master for chunk locations. They are garbage collected at the earliest opportunity. (对于一致性的话,GFS是通过所有replicas按照某个顺序进行提交，而对于一些没有成功完成mutation的chunk会变成stale状态。对于变成stale状态的chunk可以通过检查chunkvesrsion来判断。一旦chunk变成stale状态的话，那么就不能够再参与chunk的存储，所有上面的chunk都会被及早GC.)
+- GFS identifies failed chunkservers by regular handshakes between master and all chunkservers and detects data corruption by checksumming (Section 5.2). Once a problem surfaces, the data is restored from valid replicas as soon as possible (Section 4.3). A chunk is lost irreversibly only if all its replicas are lost before GFS can react, typically within minutes. Even in this case, it be-comes unavailable, not corrupted: applications receive clear errors rather than corrupt data.(GFS检测chunkserver状态是通过握手，或者是chunkserver向master汇报自己检测checksum情况来发现的)
+
+----------
+
+Implications for Applications
+
+GFS applications can accommodate the relaxed consistency model with a few simple techniques already needed for other purposes: relying on appends rather than overwrites, checkpointing, and writing self-validating, self-identifying records.
+
+** System Interactions
+----------
+Leases and Mutation Order
+
+这节主要讲GFS是如何来确定mutation order的，必须存在一个primary chunkserver角色来做mutation order定义
+
+The master grants a chunklease to one of the repli-cas, which we call the primary . The primary picks a serial order for all mutations to the chunk. All replicas follow this order when applying mutations. Thus, the global mutation order is defined first by the lease grant order chosen by the master, and within a lease by the serial numbers assigned by the primary.(对于每个chunk replicas会挑选出一个primary,并且分配一个lease.在这段lease时间内，所有这个chunk上的的mutation都会由这个primary来进行定序。)
+
+The lease mechanism is designed to minimize manage-ment overhead at the master. A lease has an initial timeout of 60 seconds.However, as long as the chunkis being mu-tated, the primary can request and typically receive exten-sions from the master indefinitely. These extension requests and grants are piggybacked on the HeartBeat messages reg-ularly exchanged between the master and all chunkserves.The master may sometimes try to revoke a lease before it expires (e.g., when the master wants to disable mutations on a file that is being renamed). Even if the master loses communication with a primary, it can safely grant a new lease to another replica after the old lease expires. (对于primary理论上可以无限地延长自己的lease.对于lease的扩展都是通过hearbeat的piggyback回去的。但是有时候master可能有时候希望可以撤回这个权限，因为可能文件需要被rename.撤回权限可以很简单地通知primary,或者如果没有通知上的话，直接等待超时即可。lease timeout通常设置在60s.所以heartbeat的频率肯定不能够低于60s一次。)
+
+交互过程大致就是（这里我们只是关注写过程）
+- client首先询问master要到所有的chunk location.如果这个chunk没有primary的话，那么就分配一个并且指定一个lease
+- client将所需要write的data部分push到所有的replicas（至于如何push后面会说）。replicas接受到之后将这个数据放在一个LRU buffer里面，直到确认写入或者是timeout.
+- client重新向primary发起通知写入刚才的数据。primary会为每个写入请求分配一个serial number，primary首先按照这个顺序写入，并且将这个顺序传播到secondary上面等待secondary按照这个顺序写入。
+- 等待primary以及secondary写完之后，primary通知client OK。如果错误的话，那么会存在inconsistent的状态。
+
+If a write by the application is large or straddles a chunk boundary, GFS client code breaks it down into multiple write operations. They all follow the control flow described above but may be interleaved with and overwritten by concurrent operations from other clients. Therefore, the shared file region may end up containing fragments from different clients, although the replicas will be identical because the individual operations are completed successfully in the same order on all replicas.
+
+[[../images/gfs-write-control-and-data-flow.png]]
+
+----------
+Data Flow
+
+While control flows from the client to the primary and then to all secondaries, data is pushed linearly along a carefully picked chain of chunkservers in a pipelined fashion. Our goals are to fully utilize each machine’s network bandwidth, avoid network bottlenecks and high-latency links, and minimize the latency to push through all the data.（各个机器之间data flow是按照pipeline的方式传输的，目的是为了最大化带宽减少延迟）
+
+To fully utilize each machine‘s network bandwidth, the data is pushed linearly along a chain of chunkservers rather than distributed in some other topology (e.g., tree). Thus, each machine’s full outbound bandwidth is used to trans-fer the data as fast as possible rather than divided among multiple recipients.（按照链式方式进行传输而不是按照其他拓扑结构比如树状）
+
+To avoid network bottlenecks and high-latency links (e.g., inter-switch links are often both) as much as possible, each machine forwards the data to the “closest” machine in the network topology that has not received it.  Our network topology is simple enough that “distances” can be accurately estimated from IP addresses.（对于每个机器来说在传输链中只是传输给最近的一个节点，这种模型可以简单地使用IP就可以判断距离）
+
+Finally, we minimize latency by pipelining the data trans-fer over TCP connections. Once a chunkserver receives some data, it starts forwarding immediately. Pipelining is espe-cially helpful to us because we use a switched network with full-duplex links. Sending the data immediately does not reduce the receive rate. （使用TCP进行数据传输，chunkserver一旦接收到就立刻进行转发。因为是全双工模式，所以同时发送和接收数据并不相互影响）
+
+----------
+Atomic Record Appends
+
+Record append is a kind of mutation and follows the control flow in Section 3.1 with only a little extra logic at the primary. The client pushes the data to all replicas of the last chunko f the file Then, it sends its request to the primary. The primary checks to see if appending the record to the current chunk would cause the chunk to exceed the maximum size (64 MB). If so, it pads the chunk to the max-imum size, tells secondaries to do the same, and replies to the client indicating that the operation should be retried on the next chunk.  If the record fits within the maximum size, which is the common case, the primary appends the data to its replica, tells the secon- daries to write the data at the exact offset where it has, and finally replies success to the client（在写入的时候，primary会判断append内容是否会超过这个chunk如果没有超过的话，那么直接写到primary当前的offset上面即可，并且也会写到其他secondary同样的offset。如果超过的话，那么会要求client重新选择一个chunk开始写。选择只写一个chunk可以保证原子性，不然会跨越多个chunk造成undefined的状态。）
+
+Record append is restricted to be at most one-fourth of the maximum chunk size to keep worst-case fragmentation at an acceptable level.（所以record在大小上不能超过chunk size. 然后为了控制碎片比例，GFS将record大小限制在1/4 * chunk size上。也就是说最多浪费1/4的空间）
+
+If a record append fails at any replica, the client retries the operation. As a result, replicas of the same chunk may con-tain different data possibly including duplicates of the same record in whole or in part. GFS does not guarantee that all replicas are bytewise identical. It only guarantees that the data is written at least once as an atomic unit.  This prop-erty follows readily from the simple observation that for the operation to report success, the data must have been written at the same offset on all replicas of some chunk. Further-more, after this, all replicas are at least as long as the end of record and therefore any future record will be assigned a higher offset or a different chunk even if a different replica later becomes the primary.（如果record在某个replica上面追加失败的话，那么client会重新发起。重新发起只会写在更高的offset，这样就不会影响到已有的数据，但是会造成其他的replica存在duplicate或者是空洞的情况。但是不管怎么样，我们至少保证record至少写入了一次）
+
+----------
+Snapshots
+
+Like AFS, we use standard copy-on-write techniques to implement snapshots. When the master receives a snapshot request, it first revokes any outstanding leases on the chunks in the files it is about to snapshot. This ensures that any subsequent writes to these chunks will require an interaction with the master to find the lease holder. This will give the master an opportunity to create a new copy of the chunk first.（和AFS类似采用COW技术来实现snapshot。master将那些需要进行snapshot的文件的chunk lease全部回收。这样下次client需要写这个chunk的话，那么需要和master交互，而master就可以实现COW了。）
+
+The first time a client wants to write to a chunk C after the snapshot operation, it sends a request to the master to find the current lease holder. The master notices that the reference count for chunk C is greater than one. It defers replying to the client request and instead picks a new chunk handle C’. It then asks each chunkserver that has a current replica of C to create a new chunk called C’.（client如果需要写chunk X的话，因为lease已经被回收了所以必须要和master进行交互。master发现chunk X的refcount>1的话，那么就会生成一份新的chunk X’）
+
+By creating the new chunk on the same chunkservers as the original, we ensure that the data can be copied locally, not over the net- work (our disks are about three times as fast as our 100 Mb Ethernet links). From this point, request handling is no dif-ferent from that for any chunk: the master grants one of the replicas a lease on the new chunk C’ and replies to the client, which can write the chunk normally, not knowing that it has just been created from an existing chunk. （对于生成的X‘，master会注意locality。尽量让之前相同的chunkserver产生新的X‘。这样对X’就有相应的replicas了。为其中一个replica指定为primary返回给client）
+
+** Master Operation
+The master executes all namespace operations. In addi-tion, it manages chunk replicas throughout the system: it makes placement decisions, creates new chunks and hence replicas, and coordinates various system-wide activities to keep chunks fully replicated, to balance load across all the chunkservers, and to reclaim unused storage. We now dis-cuss each of these topics.（负责namespace操作以及chunk replicas的管理，包括如何放置chunk，如何创建chunk以及对应的replicas，确保chunk可以fully replicated，对chunk进行load balance，回收没有使用的空间等）
+
+----------
+Namespace Management and Locking
+
+Many master operations can take a long time: for exam-ple, a snapshot operation has to revoke chunkserver leases on all chunks covered by the snapshot. We do not want to delay other master operations while they are running. Therefore, we allow multiple operations to be active and use locks over regions of the namespace to ensure proper serialization.（支持多个operations同时发起，并且在名字空间上面使用lock来保证串行操作）
+
+Unlike many traditional file systems, GFS does not have a per-directory data structure that lists all the files in that directory. Nor does it support aliases for the same file or directory (i.e, hard or symbolic links in Unix terms). GFS logically represents its namespace as a lookup table mapping full pathnames to metadata. With prefix compression, this table can be efficiently represented in memory. Each node in the namespace tree (either an absolute file name or an absolute directory name) has an associated read-write lock.（GFS并没有使用类似与Unix文件系统方式，好比directory内容下面有所有的文件名称，也不支持很多Unix文件特性比如alias或者是链接。GFS相反地使用全路径名来进行查找。全路径名可以使用prefix compression来确保可以有效使用内存。对于每一个文件或者是目录上面都会有一个相关的读写锁）
+
+Typically, if it involves /d1/d2/.../dn/leaf, it will acquire read-locks on the directory names /d1, /d1/d2, ..., /d1/d2/.../dn, and either a read lock or a write lock on the full pathname /d1/d2/.../dn/leaf. （对于前面这种路径的话，首先会取得dirname部分的所有读锁，然后根据需要得到这个文件的读锁或者写锁）
+
+File creation does not require a write lock on the parent directory because there is no “directory”, or inode-like, data structure to be protected from modification. The read lock on the name is sufficient to protect the parent directory from deletion.（这里需要注意的就是，因为不是类似于Unix这样的结构，因此对于文件的读写操作其实对于directory不需要加上写锁而至需要读锁，存在读锁的原因就是防止这个directory被删除掉）
+
+Since the namespace can have many nodes, read-write lock objects are allocated lazily and deleted once they are not in use. Also, locks are acquired in a consistent total order to prevent deadlock: they are first ordered by level in the namespace tree and lexicographically within the same level.（因为namespace里面可能会存在很多节点，这些节点都是使用lazy allocation方式分配锁的，并且在不使用之后就会被删除掉。为了防止死锁的问题，如果需要针对多个文件加锁的话，首先按照level排序，而在同一个level里面的话按照字符顺序排序。）
+
+----------
+Replica Placement
+
+A GFS cluster is highly distributed at more levels than one. It typically has hundreds of chunkservers spread across many machine racks. These chunkservers in turn may be accessed from hundreds of clients from the same or different racks. Communication between two machines on different racks may cross one or more network switches. Addition-ally, bandwidth into or out of a rack may be less than the aggregate bandwidth of all the machines within the rack.（对于GFS集群的话分布的level肯定会超过1层并且分布在很多的racks上面，而这些chunkserver也会被不同的rack上面的client所访问。对于rack之间来说可能需要经过很多网络交换机，而交换机带宽可能远远小于rack上面机器带宽。因此充分利用locality提高带宽利用率是非常重要的）
+
+The chunk replica placement policy serves two purposes: maximize data reliability and availability, and maximize net-work bandwidth utilization. For both, it is not enough to spread replicas across machines, which only guards against disk or machine failures and fully utilizes each machine’s net-work bandwidth. We must also spread chunk replicas across racks. This ensures that some replicas of a chunk will sur-vive and remain available even if an entire rack is damaged or offline (for example, due to failure of a shared resource like a network switch or power circuit). It also means that traffic, especially reads, for a chunk can exploit the aggre- gate bandwidth of multiple racks. On the other hand, write traffic has to flow through multiple racks, a tradeoff we make willingly.（对于这个问题存在一个折中，就是可用性可靠性，和带宽利用率。我们不仅仅需要让replicas跨机器来防止磁盘或者是机器的failure，并且需要让replicas能够在不同的rack上面这样可以防止整个rack offline情况出现造成可用性问题。让replicas分布在不同的rack上面，可以有效地提高来自不同rack的client read带宽利用率，但是同时write也需要将数据replicated到不同的rack上面。
+
+----------
+Creation, Re-replication, Rebalancing
+
+Chunk replicas are created for three reasons: chunk cre-ation, re-replication, and rebalancing.
+
+Creation:
+- (1) We want to place new replicas on chunkservers with below-average disk space utilization. Over time this will equalize disk utilization across chunkservers. （考虑各个chunkserver上面的磁盘利用率情况）
+- (2) We want to limit the number of “recent” creations on each chunkserver. Although creation itself is cheap, it reliably predicts immi-nent heavy write traffic because chunks are created when de-manded by writes, and in our append-once-read-many work-load they typically become practically read-only once they have been completely written. （考虑不要让一个chunkserver写的次数过于频繁，一方面这样会带来过大压力，另外一方面在read时候也会造成热点）
+- (3) As discussed above, we want to spread replicas of a chunk across racks.（考虑需要跨rack）
+
+Re-Replication
+- The master re-replicates a chunk as soon as the number of available replicas falls below a user-specified goal. This could happen for various reasons: a chunkserver becomes unavailable, it reports that its replica may be corrupted, one of its disks is disabled because of errors, or the replication goal is increased.
+- Each chunkt hat needs to be re-replicated is prioritized based on several factors.
+  - One is how far it is from its replication goal. For example, we give higher prior-ity to a chunk that has lost two replicas than to a chunk that has lost only one（丢失了2个replicas优先级肯定高于丢失了一个replica的chunk）
+  - In addition, we prefer to first re-replicate chunks for live files as opposed to chunks that belong to re-cently deleted files （优先考虑那些live的文件而不是需要被删除的文件，因为删除文件仅仅是使用标记删除的方式，超过多少天之后的文件才会彻底删除，因此在彻底删除之前还是需要进行replication）
+  - Finally, to minimize the impact of failures on running applications, we boost the priority of any chunk that is blocking client progress.（为了减少失败带来的影响，优先选择那些当前阻塞了client的chunk。通常client会存在一定的超时时间，如果能够让client尽快地访问到chunk，那么失败几率会更低）
+
+Rebalance
+- Finally, the master rebalances replicas periodically: it ex-amines the current replica distribution and moves replicas for better disk space and load balancing. Also through this process, the master gradually fills up a new chunkserver rather than instantly swamps it with new chunks and the heavy write traffic that comes with them.（对于rebalance来说的话，会通过chunk的移动来达到cluster更好的磁盘利用率以及负载均衡。对于master来说也是逐渐地进行迁移而不是一次性地大规模将所有的chunks都进行迁移，因为这样会带来过大的流量负载）
+- The placement criteria for the new replica are similar to those discussed above. In addition, the master must also choose which ex-isting replica to remove. In general, it prefers to remove those on chunkservers with below-average free space so as to equalize disk space usage.（对于选择destination来说的话和creation原则相同。master在选择那些需要move的replica，通常是选择那些free space比率相对较低的机器，这样可以平衡磁盘使用情况）
+
+----------
+Garbage Collection
+
+After a file is deleted, GFS does not immediately reclaim the available physical storage. It does so only lazily during regular garbage collection at both the file and chunk levels.
+
+When a file is deleted by the application, the master logs the deletion immediately just like other changes. However instead of reclaiming resources immediately, the file is just renamed to a hidden name that includes the deletion times-tamp. During the master’s regular scan of the file system namespace, it removes any such hidden files if they have ex-isted for more than three days (the interval is configurable) (在内部记录日志但是并不是立即删除而是做rename。这个rename操作仅仅作用在namespace上面。rename之后的文件名信息包含timestamp，这样可以用来定期回收）
+
+Until then, the file can still be read under the new, special name and can be undeleted by renaming it back to normal. When the hidden file is removed from the namespace, its in-memory metadata is erased. This effectively severs its links to all its chunks.（在没有完全删除前的话，还可以直接将起rename回来进行都写。如果一旦从namespace里面删除之后，那就再也没有办法访问了。虽然chunks还在但是和chunks的连接关系就丢失是了，这些chunks成为orphanded chunks，在接下来的时候会被GC回收）
+
+In a similar regular scan of the chunk namespace, the master identifies orphaned chunks (i.e., those not reachable from any file) and erases the metadata for those chunks. In a HeartBeat message regularly exchanged with the master, each chunkserver reports a subset of the chunks it has, and the master replies with the identity of all chunks that are no longer present in the master’s metadata. The chunkserver is free to delete its replicas of such chunks.（对于具体删除chunk而言的话，如果文件从metadata里面删除的话，那么chunk就变成孤儿chunk。在heartbeat信息中，chunkserver会告诉master自己哪些chunk。master会回复哪些chunk是orphaned的，这样就可以直接删除掉）
+
+The garbage collection approach to storage reclamation offers several advantages over eager deletion.（GC相对于与eager deletion来说有下面这些好处）：
+- First, it is simple and reliable in a large-scale distributed system where component failures are common. Chunk creation may suc-ceed on some chunkservers but not others, leaving replicas that the master does not know exist. Replica deletion mes-sages may be lost, and the master has to remember to resend them across failures, both its own and the chunkserver’s.（对于分布式系统来说需要考虑容错问题。对于creation来说可能会造成一些chunk碎片，同样在delete时候也可能因为消息丢失造成chunk碎片，对于master来说很难保证其一致性，而GC是解决这个问题的一个好办法）
+- Second, it merges storage reclamation into the regular background activities of the master, such as the regular scans of names-paces and handshakes with chunkservers. Thus, it is done in batches and the cost is amortized. Moreover, it is done only when the master is relatively free. The master can re-spond more promptly to client requests that demand timely attention. （GC能够将空间回收这件事情merge起来作为后台任务运行。能够通过batch方式完成并且将代价平摊下来提高效率。另外就是这个后台活动可以当master相对空闲的时候触发）
+- Third, the delay in reclaiming storage provides a safety net against accidental, irreversible deletion.（防止一些误操作）
+
+In our experience, the main disadvantage is that the delay sometimes hinders user effort to fine tune usage when stor-age is tight. Applications that repeatedly create and delete temporary files may not be able to reuse the storage right away. We address these issues by expediting storage recla-mation if a deleted file is explicitly deleted again. We also allow users to apply different replication and reclamation policies to different parts of the namespace.（主要缺点就是当磁盘空间比较紧缺的时候，这种延迟会阻碍用户进行调整。如果应用程序频繁地创建和删除文件的话，并不能够立刻重用空间。解决这个问题的方法就是在API允许指定强制删除，同时为了简化可以为不同的namespace指定默认的删除策略）
+
+----------
+Stale Replica Detection
+
+Chunk replicas may become stale if a chunkserver fails and misses mutations to the chunk while it is down. For each chunk, the master maintains a chunk version number to distinguish between up-to-date and stale replicas.（如果在对某个chunk进行修改时候，这个chunkserver down的话，那么这个chuk就变成stale状态。master通过对于每个chunk赋予一个chunk version number来区分OK状态以及stale状态）。
+
+Whenever the master grants a new lease on a chunk, it increases the chunk version number and informs the up-to-date replicas. The master and these replicas all record the new version number in their persistent state. This occurs before any client is notified and therefore before it can start writing to the chunk. （在master准备grant一个lease的时候，会增加这个chunk的version number并且通知到所有的replicas上面，所有的replicas都会记录这个chunk version number，这个工作在client被通知之前完成） 这个过程我理解应该是先去inform replicas，成功之后在修改master的chunk version number. 这样就可能会出现，replica上的chunk version number比master高的情况。
+
+If another replica is currently unavail-able, its chunk version number will not be advanced. The master will detect that this chunkserver has a stale replica when the chunkserver restarts and reports its set of chunks and their associated version numbers. If the master sees a version number greater than the one in its records, the master assumes that it failed when granting the lease and so takes the higher version to be up-to-date.（如果某个replica是不可用的话，那么其对应的chunk version number也就没有改变，自然<master所持有的chunk version number，这样在汇报chunk的时候会可以发现stale chunk。至于什么时候master可能会看到更高的chunk version number呢，就是上面说的情况）
+
+The master removes stale replicas in its regular garbage collection. Before that, it effectively considers a stale replica not to exist at all when it replies to client requests for chunk information. As another safeguard, the master includes the chunk version number when it informs clients which chunkserver holds a lease on a chunk or when it instructs a chunkserver to read the chunk from another chunkserver in a cloning operation. The client or the chunkserver verifies the version number when it performs the operation so that it is always accessing up-to-date data.（master通过GC来回收stale chunk。master在返回client数据之前，是假设stale data不存在的。也就是说，client可能会拿到比较低的chunk version number，client(以及chunkserver)在和chunkserver交互的时候需要带上这个version number, 检查者两者是否匹配，确保读取到的是最新的数据）
+
+** Fault Tolerance And Diagnosis
+----------
+High Availability
+
+Among hundreds of servers in a GFS cluster, some are bound to be unavailable at any given time. We keep the overall system highly available with two simple yet effective strategies: fast recovery and replication.
+
+Fast Recovery:
+- Both the master and the chunkserver are designed to re-store their state and start in seconds no matter how they terminated. In fact, we do not distinguish between normal and abnormal termination; servers are routinely shut down just by killing the process. （没有区分正常退出和异常推出，master和chunkserver能够在秒级恢复状态）
+- Clients and other servers experi-ence a minor hiccup as they time out on their outstanding requests, reconnect to the restarted server, and retry. （而对于client来说仅仅有一个很短停顿，超时之后重新连接服务器即可）
+
+Chunk Replication
+- As discussed earlier, each chunk is replicated on multiple chunkservers on different racks. Users can specify different replication levels for different parts of the file namespace. The default is three. The master clones existing replicas as needed to keep each chunk fully replicated as chunkservers go offline or detect corrupted replicas through checksum ver-ification (see Section 5.2). （每个chunk都会在不同的rack的chunkserver上面进行副本。用户也可以指定不同名字空间的副本个数。master也会通过clone现有的chunk来保证所有的chunk副本数目足够，防止某个chunkserver挂掉或者是校验和错误）
+- Although replication has served us well, we are exploring other forms of cross-server redun-dancy such as parity or erasure codes for our increasing read-only storage requirements. （也在考虑使用一些其他的冗余方式来提高只读存储的需求）
+
+Master Replication
+- The master state is replicated for reliability. Its operation log and checkpoints are replicated on multiple machines.  If its machine or disk fails, monitoring infrastructure outside GFS starts a new master process elsewhere with the replicated operation log. Clients use only the canonical name of the master (e.g. gfs-test), which is a DNS alias that can be changed if the master is relocated to another machine （master的状态做副本主要是为了解决可靠性问题。log以及checkpoint都会备份到很多台机器上面。如果master挂掉或者是磁盘故障的话，那么监控系统就会启动另外一台master进程并且使用log恢复。客户端都是使用DNS来进行master的域名解析的）
+- Moreover, “shadow” masters provide read-only access to the file system even when the primary master is down. They are shadows, not mirrors, in that they may lag the primary slightly, typically fractions of a second. （对于shadow master仅仅是提供读操作，not mirror，因为checkpoint以及log都会延迟一段时间）
+- They enhance read availability for files that are not being actively mutated or applications that do not mind getting slightly stale results. In fact, since file content is read from chunkservers, appli-cations do not observe stale file content. What could be stale within short windows is file metadata, like directory contents or access control information.（使用这种方法适合提供那些不需要修改的文件读可用性，同时应用程序不太介意访问到stale结果。实际上，因为所有的file content都是来自与chunkserver，所以应用程序会访问到stale file content，而会访问到stale metadata，因为这个并没有及时更新）
+- It depends on the primary master only for replica location updates resulting from the primary’s decisions to create and delete replicas.（对于shadow master工作过程和master相同，启动之后都会和所有的chunkserver交换信息。但是只能够有primary master来负责更新replica位置比如创建和删除replicas）
+
+----------
+Data Integrity
+
+Each chunkserver uses checksumming to detect corruption of stored data. We can recover from corruption using other chunk replicas, but it would be impractical to detect corruption by comparing replicas across chunkservers. Moreover, divergent replicas may be legal: the semantics of GFS mutations, in particular atomic record append as discussed earlier, does not guar-antee identical replicas. Therefore, each chunkserver must independently verify the integrity of its own copy by maintaining checksums.（chunk必须确保自己的数据是完整的，所以checksum是必须的）
+
+A chunk is broken up into 64 KB blocks. Each has a corre-sponding 32 bit checksum. Like other metadata, checksums are kept in memory and stored persistently with logging, separate from user data.（每个chunk都会存被切换成为64KB的block，计算成为32bit的校验和。和其他meta信息一样，checksum保存在memory中并且会随着一起logging,但是和用户数据分开） 这个checksum是保存在chunkserver机器上的，包括内存和磁盘，而在master上面是不会保存的。如果chunk size是64KB的话，那那么checksum就需要占用32KB. 可以在chunk头部维护一个32KB的block，维护在内存里面
+
+If a block does not match the recorded checksum, the chunkserver returns an error to the requestor and reports the mismatch to the master. In response, the requestor will read from other replicas, while the master will clone the chunk from another replica. After a valid new replica is in place, the master instructs the chunkserver that reported the mismatch to delete its replica.（如果在读取的时候发现checksum没有匹配的话，那么就会通知master。而master就会从其他replicas进行clone，完成之后通知chunkserver删除掉不匹配的chunk）
+
+Checksumming has little effect on read performance for several reasons. Since most of our reads span at least a few blocks, we need to read and checksum only a relatively small amount of extra data for verification. Moreover, checksum lookups and comparison on the chunkserver are done without any I/O, and checksum calculation can often be overlapped with I/Os.
+
+Checksum computation is heavily optimized for writes that append to the end of a chunk (as opposed to writes that overwrite existing data) because they are dominant in our workloads. We just incrementally update the check- sum for the last partial checksum block, and compute new checksums for any brand new checksum blocks filled by the append. Even if the last partial checksum block is already corrupted and we fail to detect it now, the new checksum value will not match the stored data, and the corruption will be detected as usual when the block is next read.
+
+In contrast, if a write overwrites an existing range of the chunk, we must read and verify the first and last blocks of the range being overwritten, then perform the write, and finally compute and record the new checksums. If we do not verify the first and last blocks before overwriting them partially, the new checksums may hide corruption that exists in the regions not being overwritten.
+
+During idle periods, chunkservers can scan and verify the contents of inactive chunks. This allows us to detect corrup- tion in chunks that are rarely read. Once the corruption is detected, the master can create a new uncorrupted replica and delete the corrupted replica. This prevents an inactive but corrupted chunk replica from fooling the master into thinking that it has enough valid replicas of a chunk.（在空闲时间内的话，checkserver也会进行所有的chunk的扫描以及校验，一旦发现错误的话那么就会通知master，这样就可以避免一个inactive但是已经损坏的chunk没有汇报给master，而master还要努力维护其副本数）
+
+----------
+Diagnostic Tools
+
+With-out logs, it is hard to understand transient, non-repeatable interactions between machines.（没有logs的话，就很难理解那些各个机器之间短暂，不可重复的交互）
+
+GFS servers generate di-agnostic logs that record many significant events (such as chunkservers going up and down) and all RPC requests and replies. These diagnostic logs can be freely deleted without affecting the correctness of the system. However, we try to keep these logs around as far as space permits.（log里面包括很多重要事情比如chunkserver的上下线，所有的RPC交互）
+
+The RPC logs include the exact requests and responses sent on the wire, except for the file data being read or writ-ten. By matching requests with replies and collating RPC records on different machines, we can reconstruct the en-tire interaction history to diagnose a problem. The logs also serve as traces for load testing and performance analysis.（RPC里面几乎包含了所有的字段除去数据字段，通过匹配这些RPC交互记录可以重新构建整个交互过程来进行分析，同时可以用于负载测试以及性能分析）
+
+The performance impact of logging is minimal (and far outweighed by the benefits) because these logs are written sequentially and asynchronously. The most recent events are also kept in memory and available for continuous online monitoring.（对于log开销非常小，因为写log都是顺序并且是异步的。大部分最近事件都是保存在内存，非常容易持续监控）
+
+** Measurements
+** Experiences
+
+Many of our disks claimed to the Linux driver that they supported a range of IDE protocol versions but in fact re-sponded reliably only to the more recent ones. but in fact re-sponded reliably only to the more recent ones. This would corrupt data silently due to problems in the kernel. This problem motivated our use of checksums to detect data cor-ruption, while concurrently we modified the kernel to handle these protocol mismatches（大部分的磁盘声称支持各种IDE协议但是却对老协议的支持不好。这样会因为kernel造成数据损坏。一方通过checksum及时发现，另外一方面修改磁盘驱动）
+
+Earlier we had some problems with Linux 2.2 kernels due to the cost of fsync(). Its cost is proportional to the size of the file rather than the size of the modified portion. This was a problem for our large operation logs especially before we implemented checkpointing. We worked around this for a time by using synchronous writes and eventually migrated to Linux 2.4.（对于2.2的内核来说fsync开销和文件大小是比例的，这个对于在实现checkpoint之前来说，logs是非常大的所以开销也非常大，当时通过同步写来绕过去的。升级到2.4 kernel就没有这个问题了）
+
+Another Linux problem was a single reader-writer lock which any thread in an address space must hold when it pages in from disk (reader lock) or modifies the address space in an mmap() call (writer lock). （对于任何address从我disk pagein或者是通过mmap来修改内容的话，都会存在一个读写锁。） We saw transient timeouts in our system under light load and looked hard for resource bottlenecks or sporadic hardware failures.（对于当时来说我们观察到在轻负载的情况下面，主线程存在超时问题然后认为是资源瓶颈或者是间歇性的硬件错误。） Even-tually, we found that this single lock blocked the primary network thread from mapping new data into memory while the disk threads were paging in previously mapped data. Since we are mainly limited by the network interface rather than by memory copy bandwidth, we worked around this by replacing mmap() with pread() at the cost of an extra copy.（网络线程在mmap上来这个数据而另外一个磁盘线程也在page in造成超时。因为系统主要瓶颈是在网络带宽而非内存占用，所以使用pread代替mmap增加一次copy）
+
+** Related Work
+** Conclusions
+** Q&A
+>>>>> gfs所有的副本是否都一样？
+
+不是。但是gfs保证，如果写成功的话（write/append），那么写的部分在各个副本上面内容是相同的。
+
+----------
+#+BEGIN_EXAMPLE
+What was new about this in 2003? How did they get an SOSP paper accepted?
+ Not the basic ideas of distribution, sharding, fault-tolerance.
+  Huge scale.
+  Used in industry, real-world experience.
+  Successful use of weak consistency.
+  Successful use of single master.
+
+
+What are the steps when C wants to do a "record append"?
+  paper's Figure 2
+  1. C asks M about file's last chunk
+  2. if M sees chunk has no primary (or lease expired):
+     2a. if no chunkservers w/ latest version #, error
+     2b. pick primary P and secondaries from those w/ latest version #
+     2c. increment version #, write to log on disk
+     2d. tell P and secondaries who they are, and new version #
+     2e. replicas write new version # to disk
+  3. M tells C the primary and secondaries
+  4. C sends data to all (just temporary...), waits
+  5. C tells P to append
+  6. P checks that lease hasn't expired, and chunk has space
+  7. P picks an offset (at end of chunk)
+  8. P writes chunk file (a Linux file)
+  9. P tells each secondary the offset, tells to append to chunk file
+  10. P waits for all secondaries to reply, or timeout
+      secondary can reply "error" e.g. out of disk space
+  11. P tells C "ok" or "error"
+  12. C retries from start if error
+#+END_EXAMPLE

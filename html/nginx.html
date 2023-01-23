@@ -1,0 +1,173 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>nginx</title>
+<meta name="author" content="dirtysalt" />
+<meta name="generator" content="Org Mode" />
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content" class="content">
+<h1 class="title">nginx</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>Table of Contents</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#org46c8f0b">1. 站点跳转</a></li>
+<li><a href="#org9212d05">2. 支持软链接</a></li>
+<li><a href="#org709fbc2">3. 正向代理</a></li>
+<li><a href="#org8237847">4. 请求缓存</a></li>
+</ul>
+</div>
+</div>
+<p>
+<a href="http://nginx.org/">http://nginx.org/</a>
+</p>
+
+<div id="outline-container-org46c8f0b" class="outline-2">
+<h2 id="org46c8f0b"><span class="section-number-2">1.</span> 站点跳转</h2>
+<div class="outline-text-2" id="text-1">
+<p>
+从dirlt.com跳转到dirtysalt.info
+</p>
+<pre class="example" id="org96c1fff">
+http {
+    server_name dirlt.com;
+    rewrite ^ $scheme://dirtysalt.info$request_uri? permanent;
+}
+</pre>
+
+<p>
+这样访问dirlt.com时候，返回HTTP Permanent Redirect
+</p>
+
+<pre class="example" id="org1afd960">
+➜~  curl -v -S dirlt.com
+-* Rebuilt URL to: dirlt.com/
+-*   Trying 139.162.32.139...
+-* Connected to dirlt.com (127.0.0.1) port 80 (#0)
+&gt; GET / HTTP/1.1
+&gt; Host: dirlt.com
+&gt; User-Agent: curl/7.43.0
+&gt; Accept: */*
+&gt;
+&lt; HTTP/1.1 301 Moved Permanently
+&lt; Server: nginx/1.4.6 (Ubuntu)
+&lt; Date: Sat, 26 Mar 2016 02:25:22 GMT
+&lt; Content-Type: text/html
+&lt; Content-Length: 193
+&lt; Connection: keep-alive
+&lt; Location: http://dirtysalt.info/
+&lt;
+&lt;html&gt;
+&lt;head&gt;&lt;title&gt;301 Moved Permanently&lt;/title&gt;&lt;/head&gt;
+&lt;body bgcolor="white"&gt;
+&lt;center&gt;&lt;h1&gt;301 Moved Permanently&lt;/h1&gt;&lt;/center&gt;
+&lt;hr&gt;&lt;center&gt;nginx/1.4.6 (Ubuntu)&lt;/center&gt;
+&lt;/body&gt;
+&lt;/html&gt;
+</pre>
+</div>
+</div>
+
+<div id="outline-container-org9212d05" class="outline-2">
+<h2 id="org9212d05"><span class="section-number-2">2.</span> 支持软链接</h2>
+<div class="outline-text-2" id="text-2">
+<pre class="example" id="org6c9fe55">
+http {
+    disable_symlinks off;
+}
+</pre>
+</div>
+</div>
+<div id="outline-container-org709fbc2" class="outline-2">
+<h2 id="org709fbc2"><span class="section-number-2">3.</span> 正向代理</h2>
+<div class="outline-text-2" id="text-3">
+<p>
+用nginx做一个http proxy. `resolver*`这个字段是必要的。
+</p>
+<pre class="example" id="org233a034">
+server {
+    resolver 8.8.8.8;
+    resolver_timeout 5s;
+
+    listen 0.0.0.0:64441;
+
+    location / {
+        proxy_pass $scheme://$http_host$request_uri;
+        proxy_set_header Host $http_host;
+        proxy_connect_timeout 5;
+    }
+}
+</pre>
+
+<p>
+然后来测试一下
+</p>
+<pre class="example" id="org3a9afaa">
+In [10]: import requests
+
+In [11]: r = requests.get('http://www.baidu.com', **{'proxies': {'http': 'http://127.0.0.1:64441'}})
+
+In [12]: r
+Out[12]: &lt;Response [200]&gt;
+</pre>
+</div>
+</div>
+
+<div id="outline-container-org8237847" class="outline-2">
+<h2 id="org8237847"><span class="section-number-2">4.</span> 请求缓存</h2>
+<div class="outline-text-2" id="text-4">
+<p>
+可以针对某个路径下面的请求进行缓存。不过我还没有搞清楚缓存规则是怎么样的，默认应该是对query做key.
+</p>
+
+<pre class="example" id="org998d64f">
+proxy_cache_path /root/ngx-cache levels=1:2 keys_zone=my_cache:10m max_size=10g inactive=1d;
+server {
+  listen 80;
+  server_name dirlt.com;
+  location / {
+      proxy_pass http://127.0.0.1:9000;
+  }
+  location /download/ {
+      proxy_cache my_cache;
+      proxy_pass http://127.0.0.1:9000;
+  }
+}
+</pre>
+
+<p>
+UPDATE: 这篇 <a href="http://zyan.cc/nginx_cache/">文章</a> 给了一些看上去不错的配置和解释
+</p>
+
+<blockquote>
+<p>
+#设置Web缓存区名称为cache_one，内存缓存空间大小为200MB，1天没有被访问的内容自动清除，硬盘缓存空间大小为30GB。
+proxy_cache_path  /data0/proxy_cache_dir  levels=1:2   keys_zone=cache_one:200m inactive=1d max_size=30g;
+</p>
+
+<p>
+#如果后端的服务器返回502、504、执行超时等错误，自动将请求转发到upstream负载均衡池中的另一台服务器，实现故障转移。
+proxy_next_upstream http_502 http_504 error timeout invalid_header;
+</p>
+
+<p>
+#对不同的HTTP状态码设置不同的缓存时间
+proxy_cache_valid  200 304 12h;
+#以域名、URI、参数组合成Web缓存的Key值，Nginx根据Key值哈希，存储缓存内容到二级缓存目录内
+proxy_cache_key $host$uri$is_args$args;
+</p>
+</blockquote>
+
+<p>
+所以我们可以设置proxy_cache_key字段来选择cache_key.
+</p>
+</div>
+</div>
+</div>
+<div id="content"><!-- DISQUS BEGIN --><div id="disqus_thread"></div><script>/***  RECOMMENDED CONFIGURATION VARIABLES: EDIT AND UNCOMMENT THE SECTION BELOW TO INSERT DYNAMIC VALUES FROM YOUR PLATFORM OR CMS.*  LEARN WHY DEFINING THESE VARIABLES IS IMPORTANT: https://disqus.com/admin/universalcode/#configuration-variables*/var disqus_config = function () {this.page.url = 'https://dirtysalt.github.io/html/nginx.html';this.page.identifier = 'nginx.html';};(function() {var d = document, s = d.createElement('script');s.src = 'https://dirlt.disqus.com/embed.js';s.setAttribute('data-timestamp', +new Date());(d.head || d.body).appendChild(s);})();</script><noscript>Please enable JavaScript to view the <a href="https://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript><!-- DISQUS END --></div></body>
+</html>

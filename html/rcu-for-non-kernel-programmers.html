@@ -1,0 +1,110 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>CppCon 2017: Fedor Pikus “Read, Copy, Update, then what? RCU for non-kernel programmers”</title>
+<meta name="author" content="dirtysalt" />
+<meta name="generator" content="Org Mode" />
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content" class="content">
+<h1 class="title">CppCon 2017: Fedor Pikus “Read, Copy, Update, then what? RCU for non-kernel programmers”</h1>
+<p>
+read/write lock性能上存在一些问题，reader性能在没有writer和一个writer情况下几乎是相同的，没有办法做到linear scale, 而read-only却可以做到linear scale. 这就有个问题是，我们为了可能偶尔出现的update, 而需要付出巨大的性能损失。
+</p>
+
+
+<div id="orgefb06a6" class="figure">
+<p><img src="../images/rcu-for-non-kernel-programmers-0.jpg" alt="rcu-for-non-kernel-programmers-0.jpg" />
+</p>
+</div>
+
+
+<div id="org768b529" class="figure">
+<p><img src="../images/rcu-for-non-kernel-programmers-1.jpg" alt="rcu-for-non-kernel-programmers-1.jpg" />
+</p>
+</div>
+
+<p>
+Read/Copy/Update仅仅是RCU的部分. Read/Copy/Update是一套发布协议，类似于COW. 不过这套发布协议没有办法很好地解决内存回收/节点删除这类问题，而这个才是RCU真正精髓的地方。
+</p>
+
+
+<div id="orgc590047" class="figure">
+<p><img src="../images/rcu-for-non-kernel-programmers-2.jpg" alt="rcu-for-non-kernel-programmers-2.jpg" />
+</p>
+</div>
+
+
+<div id="orga1bfee9" class="figure">
+<p><img src="../images/rcu-for-non-kernel-programmers-3.jpg" alt="rcu-for-non-kernel-programmers-3.jpg" />
+</p>
+</div>
+
+
+<div id="org9a0075e" class="figure">
+<p><img src="../images/rcu-for-non-kernel-programmers-4.jpg" alt="rcu-for-non-kernel-programmers-4.jpg" />
+</p>
+</div>
+
+
+<div id="org70f4c13" class="figure">
+<p><img src="../images/rcu-for-non-kernel-programmers-5.jpg" alt="rcu-for-non-kernel-programmers-5.jpg" />
+</p>
+</div>
+
+<p>
+这个地方开始具体讲解RCU如何处理删除数据 <a href="https://youtu.be/rxQ5K9lo034?t=1525">https://youtu.be/rxQ5K9lo034?t=1525</a>  解决方式则是使用epoch + 引用计数，根据下面的逻辑可以做更多的实现上优化。
+</p>
+
+<p>
+reader执行逻辑是：
+</p>
+<ul class="org-ul">
+<li>get current epoch/generation number like `cg`</li>
+<li>rcu_read_lock 在 `cg` 这个 epoch上增加引用计数</li>
+<li>根据 `cg` 得到关联的 root pointer.</li>
+<li>rcu_read_unlock 在 `cg` 这个 epoch上减少引用计数</li>
+</ul>
+
+<p>
+writer执行逻辑是：
+</p>
+<ul class="org-ul">
+<li>create new epoch/generation number like `cg`</li>
+<li>等待上次gc epoch number到达cg，期间不断检查每个中间的epoch引用计数是否为0 `synchronize_rcu`</li>
+<li>如果某个epoch引用计数为0，那么就释放这个epoch对应的root pointer</li>
+<li>将新的root pointer和这个 `cg` 关联起来</li>
+</ul>
+
+<p>
+对于少量的writer, RCU相比read-only数据结构稍微差些，但是比rw-lock要好多了；而对于大量的writer，比read-only就要差多了，但是比rw-lock等结构依然要好很多。我理解RCU最大的问题就是因为为了追求低延迟，所以并没有同步地等待GC，所以造成memory footprint会稍大一些。
+</p>
+
+
+<div id="orgee3a24b" class="figure">
+<p><img src="../images/rcu-for-non-kernel-programmers-6.jpg" alt="rcu-for-non-kernel-programmers-6.jpg" />
+</p>
+</div>
+
+
+<div id="org3facc04" class="figure">
+<p><img src="../images/rcu-for-non-kernel-programmers-7.jpg" alt="rcu-for-non-kernel-programmers-7.jpg" />
+</p>
+</div>
+
+<p>
+RCU和其他几个数据结构对比
+</p>
+
+
+<div id="org6f1eae0" class="figure">
+<p><img src="../images/rcu-for-non-kernel-programmers-8.jpg" alt="rcu-for-non-kernel-programmers-8.jpg" />
+</p>
+</div>
+</div>
+<div id="content"><!-- DISQUS BEGIN --><div id="disqus_thread"></div><script>/***  RECOMMENDED CONFIGURATION VARIABLES: EDIT AND UNCOMMENT THE SECTION BELOW TO INSERT DYNAMIC VALUES FROM YOUR PLATFORM OR CMS.*  LEARN WHY DEFINING THESE VARIABLES IS IMPORTANT: https://disqus.com/admin/universalcode/#configuration-variables*/var disqus_config = function () {this.page.url = 'https://dirtysalt.github.io/html/rcu-for-non-kernel-programmers.html';this.page.identifier = 'rcu-for-non-kernel-programmers.html';};(function() {var d = document, s = d.createElement('script');s.src = 'https://dirlt.disqus.com/embed.js';s.setAttribute('data-timestamp', +new Date());(d.head || d.body).appendChild(s);})();</script><noscript>Please enable JavaScript to view the <a href="https://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript><!-- DISQUS END --></div></body>
+</html>

@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>计算整数长度</title>
+<meta name="author" content="dirtysalt" />
+<meta name="generator" content="Org Mode" />
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content" class="content">
+<h1 class="title">计算整数长度</h1>
+<p>
+比如 25 的长度就是2，1987 的长度就是4. 如果按照数学公式计算就是 floor(log10(x)). 通常我们的实现方式是会下面这样的。其中 `x = x | 1` 的作用是将0进行特殊处理。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-cpp"><span class="org-type">int</span> <span class="org-function-name">to_digits</span>(<span class="org-type">uint32_t</span> <span class="org-variable-name">x</span>) {
+    x = x | 1;
+    <span class="org-type">int</span> <span class="org-variable-name">ans</span> = 0;
+    <span class="org-keyword">while</span>(x) {
+        x = x / 10;
+        ans += 1;
+    }
+    <span class="org-keyword">return</span> ans;
+}
+</pre>
+</div>
+
+<p>
+这种方式对于小数值会比较快，对于大数值的话可能有多达9次的循环。最近我看到一篇文章有个很好的实现 <a href="https://lemire.me/blog/2021/05/28/computing-the-number-of-digits-of-an-integer-quickly/">https://lemire.me/blog/2021/05/28/computing-the-number-of-digits-of-an-integer-quickly/</a>. 文章后面还给出了升级版本，但是我觉得我看不太懂，这个版本还行。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-cpp"><span class="org-type">int</span> <span class="org-function-name">int_log2</span>(<span class="org-type">uint32_t</span> <span class="org-variable-name">x</span>) { <span class="org-keyword">return</span> 31 - __builtin_clz(x|1); }
+<span class="org-type">int</span> <span class="org-function-name">to_digits2</span>(<span class="org-type">uint32_t</span> <span class="org-variable-name">x</span>) {
+    <span class="org-keyword">static</span> <span class="org-type">uint32_t</span> <span class="org-variable-name">table</span>[] = {9, 99, 999, 9999, 99999,
+                               999999, 9999999, 99999999, 999999999};
+    <span class="org-type">int</span> <span class="org-variable-name">y</span> = (9 * int_log2(x)) &gt;&gt; 5;
+    y += x &gt; table[y];
+    <span class="org-keyword">return</span> y + 1;
+}
+</pre>
+</div>
+
+<p>
+作者给了实现解释：log10(x) = log2(x) * log10(2). 然后log10(2) ~= (9 / 32). 所有这些数都是在向下取值，所以对于边界情况需要做额外判断，比如9, 99, 999这些。因为整个函数是单调递增的，所以测试也比较容易，只需要在边界情况下进行验证就好。
+</p>
+
+<p>
+关于这个实现的效率，作者在文中给出了汇编代码，基本上就是直白地翻译过来，里面有几个细节：
+</p>
+<ol class="org-ol">
+<li>__builtin_clz 实现是 bsr</li>
+<li>9 * x 实现是 lea eax, [rax + 8 * rax]. 一条指令就做到了，所以类似5x, 9x, 17x这种指令还是很高效的</li>
+<li>如果是 + (a&gt;b) 这样的代码，可以翻译为 adc(add carry), 其中carry在上一条指令被置位，没有分支</li>
+</ol>
+
+<div class="org-src-container">
+<pre class="src src-asm"><span class="org-function-name">or</span>      <span class="org-keyword">eax</span>, 1
+<span class="org-function-name">bsr</span>     <span class="org-keyword">eax</span>, eax
+<span class="org-function-name">lea</span>     <span class="org-keyword">eax</span>, [rax + 8*rax]
+<span class="org-function-name">shr</span>     <span class="org-keyword">eax</span>, 5
+<span class="org-function-name">cmp</span>     <span class="org-keyword">dword</span> ptr [4*rax + table], edi
+<span class="org-function-name">adc</span>     <span class="org-keyword">eax</span>, 0
+<span class="org-function-name">add</span>     <span class="org-keyword">eax</span>, 1
+</pre>
+</div>
+</div>
+<div id="content"><!-- DISQUS BEGIN --><div id="disqus_thread"></div><script>/***  RECOMMENDED CONFIGURATION VARIABLES: EDIT AND UNCOMMENT THE SECTION BELOW TO INSERT DYNAMIC VALUES FROM YOUR PLATFORM OR CMS.*  LEARN WHY DEFINING THESE VARIABLES IS IMPORTANT: https://disqus.com/admin/universalcode/#configuration-variables*/var disqus_config = function () {this.page.url = 'https://dirtysalt.github.io/html/compute-number-of-digits-of-an-integer.html';this.page.identifier = 'compute-number-of-digits-of-an-integer.html';};(function() {var d = document, s = d.createElement('script');s.src = 'https://dirlt.disqus.com/embed.js';s.setAttribute('data-timestamp', +new Date());(d.head || d.body).appendChild(s);})();</script><noscript>Please enable JavaScript to view the <a href="https://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript><!-- DISQUS END --></div></body>
+</html>

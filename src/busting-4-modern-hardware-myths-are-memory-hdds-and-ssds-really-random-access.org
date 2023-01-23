@@ -1,0 +1,47 @@
+#+title: Busting 4 Modern Hardware Myths - Are Memory, HDDs, And SSDs Really Random Access?
+
+http://highscalability.com/blog/2013/6/13/busting-4-modern-hardware-myths-are-memory-hdds-and-ssds-rea.html
+
+*It’s all a numbers game – the dirty little secret of scalable systems*
+
+Mechanical Sympathy is term coined by Jackie Stewart, the race car driver, *to say you get the best out of a racing car when you have a good understanding of how a car works. A driver must work in harmony with the machine to get the most of out of it.* Martin extends this notion to say we need to know how the hardware works to get the most out of our computers. And he thinks normal developers can understand the hardware they are using. If you can understand Hibernate, you can understand just about anything.(对一个东西了解越深入，那么才越能够用好它)
+
+** Myth 1: CPUs Are Not Getting Faster
+- The fundamental issue is CPUs can't get hotter, not that they can't get faster. As we run CPUs faster (higher clock speeds) they get hotter and hotter and heat dissipation at these small scales is incredibly difficult. (散热问题是现在限制CPU速度提升的主要原因，而非时钟频率）
+- Clock speed isn't everything. Example, word split the text of Alice and Wonderland. Intel Core 2 Duo, 2008, 2.40GHz, 1434 operations per second. Intel Core, 2011, 2.20GHz, 2674 operations per second. Clock speed is down but operations per second have nearly doubled. Trend is continuing.(此外时钟频率也不是影响CPU速度唯一因素）
+- Sandy/Ivy Bridge goes parallel inside instead of going faster. There are 3 ALUs and 6 ports for loading and storing data. More ports are needed to feed the ALUs so you can have up to 6 instructions per cycle happening in parallel. (并行程度也会影响CPU速度）
+  - There's only one divide and one jump. Highly branched or code with a lot of division doesn't go as fast as straightforward code using +, -, *.
+- CPUs have counters so they are easy to profile. On Linux access the counters using perf stat.（如果CPU出现空闲的话，那么很可能是因为并行程度不够高而出现等待，这样的情况下提升时钟频率也无济于事）
+  - Running perf stat on Nehalem 2.8GHz in the Alice and Wonderland test we notice that the processor is idle about a 1/3rd of the time so a faster processor wouldn't help.
+  - On a later Sandy Bridge 2.4GHz the CPU is idle about 25% of the time. The reason CPUs are getting faster is not faster clock speed, but instructions are being fed into the CPU faster.
+
+** Myth 2: Memory Provides Random Access
+- At the end of the day it's a cost equation. To get to main memory is fairly expensive. We want to feed the CPUs really fast. How do we feed the CPU fast? We need the data to be close to them on something that's very very quick. Modern register to register copies don't cost anything because what is happening is a remapping, it doesn't even move.（寄存器和CPU物理距离最近因此访问最快。现在寄存器的copy都是使用remapping技术而非真正copy)
+- Layers of caches. Caches get bigger and slower so it's speed versus cost, but also power is important. Power to access a disk is so much more than accessing a L1 cache. Modern processors are starting to transfer data from network cards into cache, skipping memory, to keep the thermals down by not involving the CPU. （CPU访问更加底层的存储更加费电。现在CPU都提供设备和内存之间直接传输数据而不需要CPU参与的功能）
+- There's lot of detail on memory ordering and cache structures and coherence. The gist seems to be there's an immensely complicated circuitry between the different layers of memory and the CPU. If you can't make the memory sub-systems, caches, buses fast enough then you can't feed the CPU fast enough so there's no point in making CPUs faster.（必须让memory子系统，caches以及总线速度跟上CPU速度，否则瓶颈就不在CPU上）
+- This means software must be written to access memory in a friendly manner or you are starving the CPU. On Sandy Bridge sequentially walking through memory will take you 3 clocks for L1D, 11 clocks for L2, 14 clocks for L3, and 6ns for memory. In-page random is 3 clocks, 11 clocks, 18 clocks,  22ns. Full random access is 3 clocks, 11 clocks, 38 clocks, 65.8 ns. （也就是说在访问内存的方式上必须以友好的方式完成，不然就会造成CPU饥饿没有指令可以执行）
+- It's effectively free to walk through memory sequentially. How we access memory really really matters.（顺序访问是最友好的方式，其次是page内部随机访问，最后是完全随机访问）
+- Writing highly branched code causes more instruction misses because there's too much data to keep track of.（分支跳转因为有太多数据需要追踪造成instruction cache miss)
+- Since you can't walk memory sequentially you want to reduce coupling and increase cohesion. Keep things together. Good coupling and good cohesion makes this all just work. If your code branches everywhere and runs all over the heap it will make for slow code.
+
+** Myth 3: HDDs Provide Random Access
+- Zone bit recording. There's a big difference between writing on the inner and outer parts of the disk. More sectors are put on the outer parts of the disk so you get greater density. For one revolution of the disk you are going to see more sectors so you'll get greater throughput.（外部磁道存储密度更大）
+- On a 10K disk when sequentially reading the outer tracks you'll get 220 MB/s and when reading the innter tracks you'll get 140 MB/s.（10K RPM的磁盘读取外圈吞吐在220MB/s, 读取内圈吞吐在140MB/s)
+- The fastest disks are 15K and they haven't got any faster for many many years.（最快转速在15K，并且这个速度几年都没有变化了）
+- Hardware will prefetch and reorder queues as the head moves over the sectors. A sector is now 4K to get more data on a disk. If you read or write a byte the minimum transferred is 4K. （硬件会做预取和请求重排。单位是sector，每个sector有4K字节）
+- What makes up an operation? （可以看到通常来说seek时间是比较长的，然后是rotate时间，接着是数据传输，最后是处理）
+  - Command processing. Subsecond.
+  - Seek time. 0-6ms server drive, 0-15ms laptop drive.
+  - Rotational latency. For a 10K RPM disk rotation takes 6ms for an average of 3ms.
+  - Data transfer.  100-200MB/s.
+- For random access of a 4K block, the random latency is 10ms or 100 IOPS. Throughput at random is less than 1 MB a second, maybe 2 MB a second with really clever hardware. So randomly accessing a disk isn't practical. If you see fantastic transaction numbers then the data isn't going to disk. （因此对于4K sector来说，完全随机查询吞吐大约在1MB/s - 2MB/s. 性能是非常差的。因此如果你看到非常漂亮的transaction numbers的话，那么数据肯定没有经过磁盘）
+- A disk is really a big tape that's fast. It's not true random access.（磁盘可以看作是一个快速的大磁带，而并不是真正随机的）
+
+** SSDs Provide Random Access
+- SSDs gernerally have 2MB blocks arranged in an array of cells. SLC - single level, can store a bit. Has voltage or doesn't have a voltage. MLC - multiple voltages, so you can store 2 or 3 bits per cell.（由许多blocks组成，而block内部由许多cells组成。block通常是2MB。单个cell可以存储1bit，或者是2-3bit，分别称为SLC和MLC）
+- Expensive to address individual cells so you can address a row at a time, which is called a page, pages are usually 4K or 8K. Reading or writing a random page sized thing is really fast, there's no moving parts.（访问最小单位是page, page是由一个排cells组成的，通常是4K或者是8K。随机定位某个page非常快没有物理移动过程，而这正是物理磁盘最耗时的部分）
+- When you delete you can only erase a whole block at a time. The ways SSDs work is they write every cell to be a one. When you put data into it you turn off the bits you don't want. Turning off a bit is easy because it's draining a cell. Turning on a bit by putting voltage into the cell tends to light up the cells around it so you can't accurately set a single bit. So you must delete a whole block at a time. Bits are marked as deleted because you don't want to erase a whole block at a time because there's a limited number times you can read and write a block. You don't want a disk to wear out. So bits are marked as deleted and the new data is copied to a new block. This has a cost. In time the disk ends up fragmented. Over time you have to garbage collect, compacting blocks.(清除过程是用电压将cell置1，但是因为电压可能会影响到其他cell, 所以没有办法精确控制哪个cell置1，因此清除数据的最小单位是block）
+- Example SSD can read and write at 200 MB/s. When you starting deleting read performance looks good, but writes slow down because of the garbage collection process. For some disks performance falls off a cliff on writes and you need to reformat. There's also write amplification where small writes end up triggering a lot of copying.
+- Reads have great random and sequential performance. If you only do append only writes then performance could be quite good.
+- At 40K IOPs with 4K random reads and writes, average operation times are 100-300 microseconds with large up to half a second pauses during garbage collection.
+- Mutating in place causes poor performance.（原地修改会造成性能变差）

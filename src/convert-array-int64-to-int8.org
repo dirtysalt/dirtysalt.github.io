@@ -1,0 +1,275 @@
+#+title: int64数组转为int8数组的矢量化方式
+
+背景就不说了，目标就是把int64数组转为int8数组，不用考虑overflow的情况。
+- [[file:codes/cc/misc/ConvertI64ToI8Test.cpp][正确测试代码]]
+- [[file:codes/cc/misc/ConvertI64ToI8Bench.cpp][性能测试代码]]
+
+编译命令是 `g++ -std=c++17 -mavx512vl -mavx512bw -mavx512vbmi`, 如果不支持cpu avx512的话，那么avx512版本就不能运行。
+
+下面代码中 `RE` 是宏 `__restrict__`
+
+** native版本
+native的版本就是下面这样的，非常简单。
+
+#+BEGIN_SRC cpp
+void convert_i64toi8_native(int64_t* RE src, int8_t * RE dst, size_t size) {
+    for(size_t i = 0; i < size ; i++) {
+        dst[i] = static_cast<int8_t>(src[i]);
+    }
+}
+#+END_SRC
+
+** pack版本
+pack的版本有两个作用：
+1. 按照8个单位循环展开
+2. 合并成为int64写入
+
+#+BEGIN_SRC cpp
+void convert_i64toi8_pack(int64_t* RE src, int8_t * RE dst, size_t size) {
+    size_t offset = 0;
+    int64_t* end = src + size;
+    size_t loop = size / 8;
+    for(size_t i = 0; i < loop ; i++) {
+#define REP(x, o) int64_t x = ((*(src + o)) & 0xff) << (o * 8)
+        REP(a, 0);
+        REP(b, 1);
+        REP(c, 2);
+        REP(d, 3);
+        REP(e, 4);
+        REP(f, 5);
+        REP(g, 6);
+        REP(h, 7);
+        int64_t x = a | b | c | d;
+        int64_t y = e | f | g | h;
+        *((int64_t*)dst) = x | y;
+        dst += 8;
+        src += 8;
+    }
+    while(src < end) {
+        int8_t a = (int8_t)(*src & 0xff);
+        *dst = a;
+        dst++;
+        src++;
+    }
+}
+
+#+END_SRC
+
+** simd版本
+这个版本的想法是：
+1. 按照128字节载入a, b, c, d
+2. 对a,b,c,d里面进行shuffle, 将两个int8放在低位
+3. unpacklo, 把所有的int8最终聚合到一个m128的低位
+4. 以64bit方式写入
+
+为了简化代码，这里没有考虑对齐load/store方式。
+
+#+BEGIN_SRC cpp
+void convert_i64toi8_simd(int64_t* RE src, int8_t * RE dst, size_t size) {
+    size_t offset = 0;
+    int64_t* end = src + size;
+    size_t loop = size / 8;
+    static uint8_t mask_data[16] = {
+        0x00, 0x08
+    };
+    __m128i mask = _mm_loadu_si128((__m128i const*)mask_data);
+    for(size_t i = 0; i < loop ; i++) {
+        __m128i a = _mm_lddqu_si128((__m128i const*)src);
+        __m128i b = _mm_lddqu_si128((__m128i const*)(src+2));
+        __m128i c = _mm_lddqu_si128((__m128i const*)(src+4));
+        __m128i d = _mm_lddqu_si128((__m128i const*)(src+6));
+        a = _mm_shuffle_epi8(a, mask);
+        b = _mm_shuffle_epi8(b, mask);
+        c = _mm_shuffle_epi8(c, mask);
+        d = _mm_shuffle_epi8(d, mask);
+        __m128i e = _mm_unpacklo_epi16(a, b);
+        __m128i f = _mm_unpacklo_epi16(c, d);
+        __m128i g = _mm_unpacklo_epi32(e, f);
+        _mm_storeu_si64(dst, g);
+        dst += 8;
+        src += 8;
+    }
+    while(src < end) {
+        int8_t a = (int8_t)(*src & 0xff);
+        *dst = a;
+        dst++;
+        src++;
+    }
+}
+#+END_SRC
+
+** simd2版本
+simd版本是按照64字节写入，而对于m128i最合适的方式是按照128字节写入，所以对simd版本在做一次展开。
+
+#+BEGIN_SRC cpp
+void convert_i64toi8_simd2(int64_t* RE src, int8_t * RE dst, size_t size) {
+    size_t offset = 0;
+    int64_t* end = src + size;
+    size_t loop = size / 16;
+    static uint8_t mask_data[16] = {
+        0x00, 0x08
+    };
+    __m128i mask = _mm_loadu_si128((__m128i const*)mask_data);
+    for(size_t i = 0; i < loop ; i++) {
+        __m128i a = _mm_loadu_si128((__m128i const*)src);
+        __m128i b = _mm_loadu_si128((__m128i const*)(src+2));
+        __m128i c = _mm_loadu_si128((__m128i const*)(src+4));
+        __m128i d = _mm_loadu_si128((__m128i const*)(src+6));
+        a = _mm_shuffle_epi8(a, mask);
+        b = _mm_shuffle_epi8(b, mask);
+        c = _mm_shuffle_epi8(c, mask);
+        d = _mm_shuffle_epi8(d, mask);
+        a = _mm_unpacklo_epi16(a, b);
+        c = _mm_unpacklo_epi16(c, d);
+        __m128i x = _mm_unpacklo_epi32(a, c);
+        src += 8;
+
+        a = _mm_loadu_si128((__m128i const*)src);
+        b = _mm_loadu_si128((__m128i const*)(src+2));
+        c = _mm_loadu_si128((__m128i const*)(src+4));
+        d = _mm_loadu_si128((__m128i const*)(src+6));
+        a = _mm_shuffle_epi8(a, mask);
+        b = _mm_shuffle_epi8(b, mask);
+        c = _mm_shuffle_epi8(c, mask);
+        d = _mm_shuffle_epi8(d, mask);
+        a = _mm_unpacklo_epi16(a, b);
+        c = _mm_unpacklo_epi16(c, d);
+        __m128i y = _mm_unpacklo_epi32(a, c);
+        src += 8;
+
+        x = _mm_unpacklo_epi64(x, y);
+        _mm_storeu_si128((__m128i*)(dst), x);
+        dst += 16;
+    }
+    while(src < end) {
+        int8_t a = (int8_t)(*src & 0xff);
+        *dst = a;
+        dst++;
+        src++;
+    }
+}
+#+END_SRC
+
+** simd avx512版本
+
+在AVX512之前，寄存器内部的shuffle是不能cross 128bit-lane的，我看了好几个shuffle指令都是如此。
+简单地说就是shuffle只允许在一个128bit宽度内进行。这也是为什么上面simd版本没有按照m256去读，因为即便读上来在shuffle的时候，
+也只能得到两个int8放在一起，最后开始要解开成为m128i.
+
+在AVX512之后，如果CPU支持 AVX512_VBMI 的话，那么就有指令做cross lane的shuffle了，比如 `_mm512_permutex2var_epi8` 这个指令。
+这个指令可以对512-bit的寄存器内部按照8bit任意进行shuffle，这个真是太了不起了。而且按照 [[https://software.intel.com/sites/landingpage/IntrinsicsGuide/#text=_mm512_permutex2var_epi8&expand=3876,3965,4262][文档来看]] CPI只有2，算是比较高效的指令。
+
+#+BEGIN_SRC cpp
+#ifdef AVX512
+void convert_i64toi8_simd_avx512(int64_t* RE src, int8_t * RE dst, size_t size) {
+    static uint8_t mask_data[64] = {
+        0x00, 0x08, 0x10, 0x18, 0x20, 0x28, 0x30, 0x38,
+    };
+    size_t offset = 0;
+    int64_t* end = src + size;
+    size_t loop = size / 8;
+    __m512i mask = _mm512_loadu_epi8(mask_data);
+    for(size_t i = 0; i < loop ; i++) {
+        __m512i a = _mm512_loadu_epi8(src);
+        __m512i b = _mm512_permutex2var_epi8(a, mask, a);
+        __m128i x = _mm512_castsi512_si128(b);
+        _mm_storeu_si64(dst, x);
+        dst += 8;
+        src += 8;
+    }
+    while(src < end) {
+        int8_t a = (int8_t)(*src & 0xff);
+        *dst = a;
+        dst++;
+        src++;
+    }
+}
+#endif
+#+END_SRC
+
+** 性能结果
+
+*** clang
+在我的mac上，用clang 12.0.0，分别按照O0, O2, O3编译，O0编译主要是为了看看avx512的效果。
+
+O0 编译的话，可以看到avx512效果很好，另外pack版本也很好，估计减少了内存和寄存器的倒腾。
+#+BEGIN_EXAMPLE
+mbp :: .codes/cc/misc ‹master*› » g++ ConvertI64ToI8Bench.cpp -std=c++17 -mavx512f -mavx512vbmi -DAVX512 -O0
+mbp :: .codes/cc/misc ‹master*› » ./a.out
+native version: N = 1024000, total = 4600, avg = 1.4969ns(per item)
+simd avx512 version: N = 1024000, total = 2622, avg = 0.853231ns(per item)
+simd version: N = 1024000, total = 5611, avg = 1.82589ns(per item)
+simd2 version: N = 1024000, total = 5096, avg = 1.6583ns(per item)
+pack version: N = 1024000, total = 2659, avg = 0.865271ns(per item)
+#+END_EXAMPLE
+
+O2 编译的话，可以看到native版本就非常好了，和avx512基本持平，其他实现也不差。估计native版本已经展开成为了向量化。
+
+#+BEGIN_EXAMPLE
+mbp :: .codes/cc/misc ‹master*› » g++ ConvertI64ToI8Bench.cpp -std=c++17 -mavx512f -mavx512vbmi -DAVX512 -O2
+mbp :: .codes/cc/misc ‹master*› » ./a.out
+native version: N = 1024000, total = 1078, avg = 0.350795ns(per item)
+simd avx512 version: N = 1024000, total = 957, avg = 0.31142ns(per item)
+simd version: N = 1024000, total = 1279, avg = 0.416202ns(per item)
+simd2 version: N = 1024000, total = 1282, avg = 0.417179ns(per item)
+pack version: N = 1024000, total = 1329, avg = 0.432473ns(per item
+#+END_EXAMPLE
+
+O3 编译的话性能也就差不多了
+
+#+BEGIN_EXAMPLE
+mbp :: .codes/cc/misc ‹master*› » g++ ConvertI64ToI8Bench.cpp -std=c++17 -mavx512f -mavx512vbmi -DAVX512 -O3
+mbp :: .codes/cc/misc ‹master*› » ./a.out
+native version: N = 1024000, total = 1080, avg = 0.351445ns(per item)
+simd avx512 version: N = 1024000, total = 943, avg = 0.306864ns(per item)
+simd version: N = 1024000, total = 1318, avg = 0.428893ns(per item)
+simd2 version: N = 1024000, total = 1353, avg = 0.440283ns(per item)
+pack version: N = 1024000, total = 1393, avg = 0.453299ns(per item)
+#+END_EXAMPLE
+
+*** gcc
+然后在测试机上用gcc(9.2.0) 按照O0, O2, O3编译
+
+O0 编译的话，同样pack版本效果很好
+
+#+BEGIN_EXAMPLE
+doris-sandbox04 :: ~ » g++ ConvertI64ToI8Bench.cpp -mssse3 -O0
+doris-sandbox04 :: ~ » ./a.out
+native version: N = 1024000, total = 6989, avg = 2.27431ns(per item)
+simd version: N = 1024000, total = 9611, avg = 3.12754ns(per item)
+simd2 version: N = 1024000, total = 8860, avg = 2.88315ns(per item)
+pack version: N = 1024000, total = 3799, avg = 1.23624ns(per item)
+#+END_EXAMPLE
+
+O2 编译的话，simd效果上来了，但是pack依然很好
+
+#+BEGIN_EXAMPLE
+doris-sandbox04 :: ~ » g++ ConvertI64ToI8Bench.cpp -mssse3 -O2
+doris-sandbox04 :: ~ » ./a.out
+native version: N = 1024000, total = 2490, avg = 0.810277ns(per item)
+simd version: N = 1024000, total = 1157, avg = 0.376502ns(per item)
+simd2 version: N = 1024000, total = 1229, avg = 0.399932ns(per item)
+pack version: N = 1024000, total = 1393, avg = 0.453299ns(per item)
+#+END_EXAMPLE
+
+O3 编译的话，不知道为什么pack下来了，但是native版本效果很好，估计是使用向量化
+
+#+BEGIN_EXAMPLE
+doris-sandbox04 :: ~ » g++ ConvertI64ToI8Bench.cpp -mssse3 -O3
+doris-sandbox04 :: ~ » ./a.out
+native version: N = 1024000, total = 1245, avg = 0.405138ns(per item)
+simd version: N = 1024000, total = 1174, avg = 0.382034ns(per item)
+simd2 version: N = 1024000, total = 1175, avg = 0.38236ns(per item)
+pack version: N = 1024000, total = 1864, avg = 0.606569ns(per item)
+#+END_EXAMPLE
+
+*** 结论分析
+
+有条件的话，还是尽可能地使用simd指令加上O2编译，这个性能是有保证的。
+
+没有条件的话，那就尽可能地优化算法减少写入，同样在O2编译下，性能也是很有保证的。
+
+和clang相比，感觉gcc有点问题：
+- 如果不开-O3, 那么native实现都没有办法向量化
+- 如果开了-O3, 那么pack实现比-O2版本性能还要差（看了下汇编，指令比-O2情况多很多）
+这个是比较矛盾的事情，究竟改用-O2还是-O3呢？

@@ -1,0 +1,25 @@
+#+title: SSDs and Distributed Data Systems
+
+http://blog.empathybox.com/post/24415262152/ssds-and-distributed-data-systems
+
+** How SSDs may impact data system design
+For distributed data systems the big change SSDs introduce is the relative latency of a random disk access versus a remote network hop. In the case of a traditional hard drive a single seek may have a latency cost easily 10 or 20x that of TCP request on a local network, which means a remote cache hit is much cheaper than a local cache miss. SSDs essentially erase this difference making them fairly close in terms of latency. The consequence should be favoring designs that store more data per machine and do fewer network requests（磁盘访问和网络访问延迟差异变化）
+
+Less radically SSDs will likely change how caching is done. Many web companies have large memcached installations. Memcached is very good at serving high throughput at low latency on a small dataset, but since everything is in RAM it is actually rather expensive if you are space rather than CPU bound. If you place 32GB of cache per server, then 5TB of total cache space requires 160 servers. Having 5 servers each with 1TB of SSD space may be a huge win. Furthermore caching in RAM has a practical problem: restarts dump a full server worth of cache. This is an annoyance if you need to restart your cache servers frequently or if you need to bring up a new stack with completely cold cache as you may not actually be able to run your application without any caching (if you can, then why have caching, after all).（SSD用来作为更大的cache使用）
+
+** Making SSDs Cheap Without Losing All Your Data
+Here is a table that compares prices and write-capacity per block for MLC, SLC, RAM, and SAS drives. These are taken at random off the internet, your milage would certainly vary, but this gives some idea of the pricing as of May 2012.
+|                      | Cost/GB | Program-Erase Cycles |
+|----------------------+---------+----------------------|
+| RAM                  | $5-6    | Unlimited            |
+| 15k RPM SAS Hardrive | $0.75   | Unlimited            |
+| MLC SSD              | $1      | 5,000-10,000         |
+| SLC SSD              | $4-6    | ~100,000             |
+A few obvious conclusions are that SLC SSDs are priced roughly the same as memory. In a sense SLC SSDs are better than memory since they are persistent, but if keeping all your data in memory sounds expensive then so will SLCs. And in any case you can’t eliminate memory caching entirely as at least some part of the index likely needs to reside in memory even with the faster access times SSDs provide.
+
+So the question is, is there a way to live with the low write-endurance of the MLC devices and still get the great performance and cost? Here is where the complex dependency between the storage format and the SSD comes in. （SSD写入次数分析）
+- If your storage engine does large linear writes (say a full 512KB block or more) then calculating the number of writes you can do on one drive before it is all used up is easy. If the drive has 300GB and each block can be rewritten 5,000 times then each drive will allow writing 5000 x 300GB (about 1.4 petabytes). Let’s say you have 8 of these in a box with no RAID and that box takes 50MB/sec of writes 24 hours a day evenly balanced over the drives, then the drives will last around 7.8 years. This should be plenty of time, for most systems. But this lifetime is only realistic for large linear writes—the best possible case for SSD write-endurance.（顺序大块写入的话，那么可以写很久）
+- The other case is that you are doing small random writes immediately sync’d to disk. If you are doing 100 byte random writes and the SSD’s internal firmware can’t manage to somehow coalesce these into larger physical writes then each 100 byte write will turn into a full program-erase cycle of a full 512KB block. In this case you would expect to be able to do only 5000*100 bytes = 500KB of writes per block before it died; so a 300GB drive with 300GB/512KB = 614,400 blocks would only take around 286GB of writes total before crapping out. Assuming, again, 8 of these drives with no RAID and 50MB/sec, you get a lifetime of only about half a day. This is the worst case for SSDs and is obviously totally unworkable.（但是如果随机小块写入的话，那么写的时间就不会很长）
+- A particularly important factor in making this work is whether the storage engine requires an immediate fsync to disk with each write. Many systems do require this for data integrity. An immediate fsync will, of course, require a small write unless the record being written is itself large.（fsync操作会影响实际的写模式，因为如果不fsync的话那么底层实际上可以将随机小块写做合并的）
+
+An interesting question is whether cloud hosting providers will rent instances with SSDs any time soon. The write-endurance problem makes SSDs somewhat problematic for a shared hosting environment, so they may need to add a way to bill on a per block-erase basis. I have heard rumors that Amazon will offer them, but I have no idea in what form or how much they will cost (which is the critical detail). # 对于cloud来说，最好是提供service而不是直接暴露hardware，这样可以有效控制ssd write endurance

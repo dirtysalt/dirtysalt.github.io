@@ -1,0 +1,75 @@
+#+title: 字符编码
+- http://tech.idv2.com/2008/02/21/unicode-intro/
+- http://www.unicode.org/charts/unihan.html
+- http://www.joelonsoftware.com/articles/Unicode.html
+
+** 切换编码考虑
+- 数据容量
+- 网页压缩
+- 字符串操作
+- 编码转换性能
+- 程序逻辑
+
+** GB2312-80/GBK/GB18030
+编码方式都是2字节,对于GB18030也有4字节表示.
+- GB2312-80是每个字节第一位均为1.c(0)在0xB0-0xF7之间,c(1)在0xA0-0xFE之间.
+- GBK完全兼容GB2321-80.所有字节均可一对一映射到Unicode2.0.c(0)在0x81-0xFE之间,c(1)在0x40-0xFE之间,剔除XX7F这条线.引入这个编码的原因是因为GB2310-80里面存在很多繁体字在开始的时候并没有经常使用但是之后却是用频繁.GBK的补充是引入了单字节欧元字符0x80.本来GB18030-2000里面的欧元字符0x80和0xA2E3,对应UCS-2里面U+20AC和U+E76C,但是结果GB18030-2005里面废除了0x80只是0xA2E3对应U+20AC.所以欧元里面存在的问题就是0x80 or 0XA2E3对应U+20AC以及是否识别0x80.
+- GB18030存在两个版本GB18030-2000和GB18030-2005.2000是在GBK基础上面增加了CJK统一扩充A汉字,2005是在2000基础上面增加了CJK统一扩充B汉字.所有字节均可一对一映射到Unicode.
+
+下面是GB18030编码分布
+| 类型   | 第一字节  | 第二字节  | 第三字节  |  第四字节 | 码位数 | 字符数 | 类型             |
+|--------+-----------+-----------+-----------+-----------+--------+--------+------------------|
+| 双字节 | 0xB0-0xF7 | 0xA1-0xFE |           |           |   6768 |   6763 | 汉字             |
+| 双字节 | 0x81-0xA0 | 0x40-0xFE |           |           |   6080 |   6080 | 汉字             |
+| 双字节 | 0xAA-0xFE | 0x40-0xA0 |           |           |   8160 |   8160 | 汉字             |
+| 四字节 | 0x81-0x82 | 0x30-0x39 | 0x81-0xFE | 0x30-0x39 |   6530 |   6530 | CJK统一扩充汉字A |
+| 四字节 | 0x95-0x98 | 0x30-0x39 | 0x81-0xFE | 0x30-0x39 |  42711 |  42711 | CJK统一扩充汉字B |
+
+这里面有必要提及一下全角和半角之间的差别.GBK希望对于ASCII字符统一按照两个字节来进行处理,所以对于那些ASCII字符的话有全角和半角之分.全角的ASCII使用2个字节,而半角的ASCII还是使用1个字节.
+
+** Unicode
+Unicode是为了整合全世界所有的语言文字而诞生的.任何文字在Unicode中都对应一个值,这个值称为码点(code point).文字和码点之间对应关系如果是2个字节表示一个文字的话,那么就是UCS(Unicode Character Set)-2关系,如果是4个字节的话那么就是UCS-4关系.表达是U+XXXX.,U+XXXXXXXX这样来写.但是UCS-2,UCS-4只是规定和对应的关系但是却没有规定如何存储.关于存储方面应用较多的就是UTF(Unicode Transformation Format)
+
+下面是Unicode中的CJK范围
+#+BEGIN_EXAMPLE
+BEGIN Valid UniHan Ranges for this release (5.1.0):
+U+3400..U+4DB5   : CJK Unified Ideographs Extension A
+U+4E00..U+9FA5   : CJK Unified Ideographs
+U+9FA6..U+9FBB   : CJK Unified Ideographs (4.1)
+U+9FBC..U+9FC3   : CJK Unified Ideographs (5.1)
+U+F900..U+FA2D   : CJK Compatibility Ideographs (a)
+U+FA30..U+FA6A   : CJK Compatibility Ideographs (b)
+U+FA70..U+FAD9   : CJK Compatibility Ideographs (4.1)
+U+20000..U+2A6D6 : CJK Unified Ideographs Extension B
+U+2F800..U+2FA1D : CJK Compatibility Supplement
+END Valid UniHan Ranges for this release (5.1)
+
+Unicode中的全角数字0xFF10-0xFF19
+Unicode中的全角大小字母0xFF21-0xFF3A
+Unicode中的全角小写字母0xFF41-0xFF5A
+Unicode中的全角中文标点0xFF01-0xFF0F,0xFF1A-0xFF20,0xFF5B-0xFF65,0xFE30-0xFE4F,0xFE10-0xFE1F,0x3000-0x303F
+Unicode中的日文平假名片假名和假名扩展0x3040-0x309F,0x30A0-0x30FF,0x31F0-0x31FF,0xFF65-0xFF9F
+Unicode中的韩文拼音和字符0xAC00-0xD7AF,0x1100-0x11FF,0x3130-0x318F,0xFFA0-0xFFDC
+Unicode全角和半角转换 uch>=0xFF00 && uch<=0xFF5E => (uch & 0x007f)+0x20
+#+END_EXAMPLE
+
+** UTF16/UTF32
+UTF使用2个字节来表示一个码点.很明显UTF16对应UCS-2关系.但是UTF16是一种具体的编码所以需要考虑大小端问题[Little-Endian和Big-Endian的关系].所以UTF16实际上包含3种编码方式
+- UTF16BE[big endian]
+- UTF16LE[little endian]
+- UTF16 //这个通过BOM(byte order mark)来进行标记
+因为UCS-2没有定义FFFE,所以FFFE和FEFF就能够来判断是大端还是小端.UTF32对应UCS-4关系,使用4个字节表示一个码点.和UTF16一样也分little endian和big endian,也包含BOM这种方式.UCS-2引入了欧元字符为0x20ac.GBK->UCS2的转换一定是始终成功的.相反UCS-2向GBK的转换可能存在不对应字符.UTF16在U+0000-U+FFFF之间使用单一的16位编码单元[基本多语言级别],而在+U10000-U+10FFFF之间使用一对16位编码单元.FFFD在UCS-2里面是没有使用的,所以可以来做NO_MAPPING.
+
+** UTF8
+UTF8和UTF16/UTF32是两种不同的编码方法.16/32属于定长编码而utf8属于变长编码.使用字节长度从1~4不等.同时UTF8不需要考虑大端和小端问题.对应方式如下:
+#+BEGIN_EXAMPLE
+UCS-2/(UCS-4)
+U-00000000 - U-0000007F: 0xxxxxxx
+U-00000080 - U-000007FF: 110xxxxx 10xxxxxx
+U-00000800 - U-0000FFFF: 1110xxxx 10xxxxxx 10xxxxxx
+U-00010000 - U-001FFFFF: 11110xxx 10xxxxxx 10xxxxxx 10xxxxxx
+U-00200000 - U-03FFFFFF: 111110xx 10xxxxxx 10xxxxxx 10xxxxxx 10xxxxxx
+U-04000000 - U-7FFFFFFF: 1111110x 10xxxxxx 10xxxxxx 10xxxxxx 10xxxxxx 10xxxxxx
+#+END_EXAMPLE
+- 使用&0xC0=0x80可以来判断是否为HEADER字节...:)..这个特性很不错:).0xFE和0xFF在UTF8中从未使用.
+- 根据第一个字节就能够知道长度.可以看到最多31个x所以最多编入2^31个UCS代码.UCS-2(4)和UTF8转换的关系就是把所有的位收集起来然后散布出去.utf8表示未知字符串0xEF0xBB0xBF[BOM].那么直接略过这3个字.

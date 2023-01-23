@@ -1,0 +1,130 @@
+#+title: C语言switch表格跳转的汇编实现
+
+最近在看 https://github.com/skywind3000/FastMemcpy/ 这个超快的memcpy实现，里面有段代码让我想到了一个困惑很久的问题，就是据说switch如果分支很多的话，那么会实现表格跳转实现来生成代码，但是我始终不太清楚这个汇编实现是什么样子的。今天看了一下这段汇编代码，好像也不是特别复杂。
+
+先说一下这个memcpy逻辑：对于拷贝字节数小于等于128的话，会使用switch实现来做判断。相关代码在这个地方 https://github.com/skywind3000/FastMemcpy/blob/8fea5f666be174c6548d0ae4010e81b0a742c853/FastMemcpy.h#L87
+
+#+BEGIN_SRC c
+static INLINE void *memcpy_tiny(void *dst, const void *src, size_t size) {
+    unsigned char *dd = ((unsigned char*)dst) + size;
+    const unsigned char *ss = ((const unsigned char*)src) + size;
+
+    switch (size) {
+    case 64:
+        memcpy_sse2_64(dd - 64, ss - 64);
+    case 0:
+        break;
+    ...
+}
+
+static void* memcpy_fast(void *destination, const void *source, size_t size)
+{
+    unsigned char *dst = (unsigned char*)destination;
+    const unsigned char *src = (const unsigned char*)source;
+    static size_t cachesize = 0x200000; // L2-cache size
+    size_t padding;
+
+    // small memory copy
+    if (size <= 128) {
+        return memcpy_tiny(dst, src, size);
+    }
+    ...
+}
+#+END_SRC
+
+我分别在Linux和MacOSX(实际是clang)上使用 `gcc -O3 FastMemcpy.c -S` 查看生成的汇编代码。因为这个函数是inline的，并且放在了 memcpy_fast 函数最开头，所以很容易就可以找到对应的汇编代码部分。下面是Linux上的汇编代码以及相关注释，直接使用 `jmp *.L5(,%rdx,8)` 这样的跳转指令，其中rdx是拷贝字节数
+
+#+BEGIN_SRC asm
+memcpy_fast:
+.LFB549:
+    .file 1 "FastMemcpy.h"
+    .loc 1 581 0
+    .cfi_startproc
+.LVL0:
+    .loc 1 588 0
+    cmpq    $128, %rdx # rdx是拷贝长度，首先和128对比
+    .loc 1 581 0
+    movq    %rdi, %rax # rdi是目标地址，放到了rax里面
+    .loc 1 588 0
+    ja    .L2 # 进入>128情况下的代码
+.LVL1:
+.LBB5571:
+.LBB5572:
+    .loc 1 88 0
+    leaq    (%rdi,%rdx), %rcx # rcx = rdi + rdx，就是目标结束地址
+.LVL2:
+    .loc 1 89 0
+    addq    %rdx, %rsi # rsi = rsi + rdx，就是源结束地址
+.LVL3:
+    .loc 1 91 0
+    jmp    *.L5(,%rdx,8) # .L5就是跳转表格起始地址，根据字节数(rdx)跳转到对应的例程，每个地址占用8个字节
+    .section    .rodata
+    .align 8
+    .align 4
+.L5:
+    .quad    .L3 # rdx = 0的情况
+    .quad    .L4 # rdx = 1的情况
+...
+
+.L4: # 这里只贴出rdx=1的情况
+.LBE7296:
+.LBE7295:
+.LBE7280:
+.LBE7279:
+    .loc 1 100 0
+    movzbl    -1(%rsi), %edx # rsi是源结束地址，取最后一个字节扩展到edx上
+.LVL1567:
+    movb    %dl, -1(%rcx) # 取ebx最低1字节dl，拷贝到rcx-1上，rcx是结束地址
+    ret
+#+END_SRC
+
+MacOSX上的汇编代码稍微复杂一些，跳转的时候多了3条指令，但是占用表格空间减少了128 * 4 = 512字节。最终也是 `jmpq *%rax` 这样的跳转指令。
+
+#+BEGIN_SRC asm
+_memcpy_fast:                           ## @memcpy_fast
+Lfunc_begin3:
+    .loc    5 581 0                 ## ./FastMemcpy.h:581:0
+    .cfi_startproc
+    pushq    %rbp
+    .cfi_def_cfa_offset 16
+    .cfi_offset %rbp, -16
+    movq    %rsp, %rbp
+    .cfi_def_cfa_register %rbp
+Ltmp54:
+    cmpq    $128, %rdx # rdx是拷贝长度，和128进行标记
+Ltmp55:
+    ja    LBB3_129 # 如果>128的话，那么跳转到对应地址
+Ltmp56:
+    leaq    -1(%rdx), %rax # rax = rdx - 1
+    cmpq    $127, %rax
+    ja    LBB3_144 # 如果rax > 127的话，那么跳转到这里，但是我觉得好像不行，因为rdx <=128, rax最大值是127
+Ltmp57:
+    addq    %rdx, %rdi # rdi = rdi + rdx, 表示目标结束地址
+Ltmp58:
+    addq    %rdx, %rsi # rsi = rsi + rdx, 表示源结束地址
+Ltmp59:
+    leaq    LJTI3_1(%rip), %rcx # LJTI3_1是表格地址地址，rcx就是表示绝对地址
+    movslq    (%rcx,%rax,4), %rax # rax = rcx + 4 * rax. 注意这个rax不是绝对地址，而是相对rcx偏移上的值
+    addq    %rcx, %rax # rax = rax + rcx 此时rax才是绝对地址
+    jmpq    *%rax # 进行地址跳转
+
+   ...
+.set L3_1_set_4, LBB3_4-LJTI3_1 # 偏移量
+.set L3_1_set_6, LBB3_6-LJTI3_1
+.set L3_1_set_8, LBB3_8-LJTI3_1
+.set L3_1_set_10, LBB3_10-LJTI3_1
+.set L3_1_set_12, LBB3_12-LJTI3_1
+    ...
+
+LJTI3_1: # 表格起始地址
+    .long    L3_1_set_4 # 实际地址相对表格起始地址偏移，每个偏移量占用4个字节
+    .long    L3_1_set_6
+    .long    L3_1_set_8
+    ....
+
+LBB3_4: # 进行1字节copy的代码
+    movb    -1(%rsi), %al
+    movb    %al, -1(%rdi)
+    popq    %rbp
+    retq
+#+END_SRC

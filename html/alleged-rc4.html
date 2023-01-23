@@ -1,0 +1,134 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Alleged RC4</title>
+<meta name="author" content="dirtysalt" />
+<meta name="generator" content="Org Mode" />
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content" class="content">
+<h1 class="title">Alleged RC4</h1>
+<p>
+这个算法是在阅读 <a href="https://github.com/neurobin/shc">shc</a> 项目里面发现的，我为这个项目fork了一个注释 <a href="https://github.com/dirtysalt/shc">版本</a>。
+</p>
+
+<p>
+shc项目是可以将shell command编译成为C代码，最终编译成为可执行文件，用于漏洞攻击使用的。
+</p>
+
+<p>
+既然是攻击漏洞，那么可执行文件需要：1. 在用户没有防备的情况下面执行，如果发现当前执行环境
+是安全人员构造的沙盒的话，那么就自动退出；2. 提高安全人员反编译的难度，比如我们不会直接把
+shell command以明文的方式写在text里面。shc来提供了许多额外的选项来限制可执行程序只能运行在
+更加安全的环境中而不被反编译。
+</p>
+
+<p>
+ARC4这个算法就是在生成C代码阶段将shell command混淆并且加速随机数据，而在运行阶段将这些
+混淆的数据反解析回来用于执行。代码的要点在于，混淆和反混淆的操作必须是对称的。
+</p>
+
+<p>
+我仿照下面的C代码自己测试了一下Python的 <a href="https://github.com/dirtysalt/codes/tree/master/misc/random/arc4.py">实现</a>
+</p>
+
+
+<div class="org-src-container">
+<pre class="src src-c">
+<span class="org-doc">/**</span>
+<span class="org-doc"> * This software contains an ad hoc version of the 'Alleged RC4' algorithm,</span>
+<span class="org-doc"> * which was anonymously posted on sci.crypt news by cypherpunks on Sep 1994.</span>
+<span class="org-doc"> *</span>
+<span class="org-doc"> * My implementation is a complete rewrite of the one found in</span>
+<span class="org-doc"> * an unknown-copyright (283 characters) version picked up from:</span>
+<span class="org-doc"> *    From: allen</span><span class="org-doc"><span class="org-doc-markup">@gateway</span></span><span class="org-doc">.grumman.com (John L. Allen)</span>
+<span class="org-doc"> *    Newsgroups: comp.lang.c</span>
+<span class="org-doc"> *    Subject: Shrink this C code for fame and fun</span>
+<span class="org-doc"> *    Date: 21 May 1996 10:49:37 -0400</span>
+<span class="org-doc"> * And it is licensed also under GPL.</span>
+<span class="org-doc"> *</span>
+<span class="org-doc"> *That's where I got it, now I am going to do some work on it</span>
+<span class="org-doc"> *It will reside here: http://github.com/neurobin/shc</span>
+<span class="org-doc"> */</span>
+
+
+<span class="org-comment-delimiter">/* </span><span class="org-comment">'Alleged RC4'</span><span class="org-comment-delimiter"> */</span>
+<span class="org-comment-delimiter">// </span><span class="org-comment">TODO(yan): &#36825;&#20010;&#31639;&#27861;&#20540;&#24471;&#22909;&#22909;&#30740;&#31350;&#19968;&#19979;</span>
+<span class="org-keyword">static</span> <span class="org-type">unsigned</span> <span class="org-type">char</span> <span class="org-variable-name">stte</span>[256], <span class="org-variable-name">indx</span>, <span class="org-variable-name">jndx</span>, <span class="org-variable-name">kndx</span>;
+
+<span class="org-comment-delimiter">/*</span>
+<span class="org-comment"> * Reset arc4 stte.</span>
+<span class="org-comment-delimiter"> */</span>
+<span class="org-type">void</span> <span class="org-function-name">stte_0</span>(<span class="org-type">void</span>)
+{
+    indx = jndx = kndx = 0;
+    <span class="org-keyword">do</span> {
+        stte[indx] = indx;
+    } <span class="org-keyword">while</span> (++indx);
+}
+
+<span class="org-comment-delimiter">/*</span>
+<span class="org-comment"> * Set key. Can be used more than once.</span>
+<span class="org-comment-delimiter"> */</span>
+<span class="org-type">void</span> <span class="org-function-name">key</span>(<span class="org-type">void</span> * <span class="org-variable-name">str</span>, <span class="org-type">int</span> <span class="org-variable-name">len</span>)
+{
+    <span class="org-type">unsigned</span> <span class="org-type">char</span> <span class="org-variable-name">tmp</span>, * <span class="org-variable-name">ptr</span> = (<span class="org-type">unsigned</span> <span class="org-type">char</span> *)str;
+    <span class="org-keyword">while</span> (len &gt; 0) {
+        <span class="org-keyword">do</span> {
+            tmp = stte[indx];
+            kndx += tmp;
+            kndx += ptr[(<span class="org-type">int</span>)indx % len];
+            stte[indx] = stte[kndx];
+            stte[kndx] = tmp;
+        } <span class="org-keyword">while</span> (++indx);
+        ptr += 256;
+        len -= 256;
+    }
+}
+
+<span class="org-comment-delimiter">/*</span>
+<span class="org-comment"> * Crypt data.</span>
+<span class="org-comment-delimiter"> */</span>
+<span class="org-type">void</span> <span class="org-function-name">arc4</span>(<span class="org-type">void</span> * <span class="org-variable-name">str</span>, <span class="org-type">int</span> <span class="org-variable-name">len</span>)
+{
+    <span class="org-type">unsigned</span> <span class="org-type">char</span> <span class="org-variable-name">tmp</span>, * <span class="org-variable-name">ptr</span> = (<span class="org-type">unsigned</span> <span class="org-type">char</span> *)str;
+    <span class="org-keyword">while</span> (len &gt; 0) {
+        indx++;
+        tmp = stte[indx];
+        jndx += tmp;
+        stte[indx] = stte[jndx];
+        stte[jndx] = tmp;
+        tmp += stte[indx];
+        *ptr ^= stte[tmp];
+        ptr++;
+        len--;
+    }
+}
+
+<span class="org-comment-delimiter">/* </span><span class="org-comment">End of ARC4</span><span class="org-comment-delimiter"> */</span>
+
+</pre>
+</div>
+
+<hr />
+
+<p>
+update@20200210: 今天看到RC4的 <a href="https://zh.wikipedia.org/wiki/RC4">wiki</a>, 上面写着
+</p>
+
+<blockquote>
+<p>
+RC4开始时是商业机密，没有公开发表出来，但是在1994年9月份的时候，它被人匿名公开在了Cypherpunks 邮件列表上，很快它就被发到了sci.crypt 新闻组上，随后从这传播到了互联网的许多站点。随之贴出的代码后来被证明是真实的，因为它的输出跟取得了RC4版权的私有软件的输出是完全相同的。由于算法已经公开，RC4也就不再是商业秘密了，只是它的名字“RC4”仍然是一个注册商标。RC4经常被称作是“ARCFOUR”或者"ARC4"（意思是称为RC4），这样来避免商标使用的问题。RSA Security从来没有正式公布这个算法，罗纳德·李维斯特在2008年的自己的课程笔记中给出了一个指向RC4的英文维基百科文章的链接，并且在2014年的文件[3]中确认了RC4及其代码的历史。
+</p>
+</blockquote>
+
+<p>
+让我想到了这个算法搞不好就是RC4. 对比了一下wiki上面给出的伪代码，确认这就是RC4.
+</p>
+</div>
+<div id="content"><!-- DISQUS BEGIN --><div id="disqus_thread"></div><script>/***  RECOMMENDED CONFIGURATION VARIABLES: EDIT AND UNCOMMENT THE SECTION BELOW TO INSERT DYNAMIC VALUES FROM YOUR PLATFORM OR CMS.*  LEARN WHY DEFINING THESE VARIABLES IS IMPORTANT: https://disqus.com/admin/universalcode/#configuration-variables*/var disqus_config = function () {this.page.url = 'https://dirtysalt.github.io/html/alleged-rc4.html';this.page.identifier = 'alleged-rc4.html';};(function() {var d = document, s = d.createElement('script');s.src = 'https://dirlt.disqus.com/embed.js';s.setAttribute('data-timestamp', +new Date());(d.head || d.body).appendChild(s);})();</script><noscript>Please enable JavaScript to view the <a href="https://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript><!-- DISQUS END --></div></body>
+</html>

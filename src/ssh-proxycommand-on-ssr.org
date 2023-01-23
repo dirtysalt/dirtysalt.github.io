@@ -1,0 +1,121 @@
+#+title: ssh proxycommand on ssr
+
+如果你想ssh到某个国外机器上的话，因为一些众所周知的原因，链接会非常不稳定或者是被切断。ssh有个"proxycommand"选项，允许配置代理来完成连接。
+
+如果我们使用ssr做socks5代理服务器的话，假设绑定在62221端口上，那么有两种方式来使用代理进行连接。一种是在命令行里面指定
+#+BEGIN_EXAMPLE
+➜  private git:(master) ✗ ssh -o ProxyCommand="nc -x 127.0.0.1:62221 -X 5 %h %p" app0
+Warning: Permanently added 'app0' (ECDSA) to the list of known hosts.
+Last login: Tue Apr 17 02:42:58 2018 from dev0
+
+       __|  __|_  )
+       _|  (     /   Amazon Linux AMI
+      ___|\___|___|
+
+https://aws.amazon.com/amazon-linux-ami/2015.09-release-notes/
+123 package(s) needed for security, out of 246 available
+Run "sudo yum update" to apply all updates.
+Amazon Linux version 2017.09 is available.
+#+END_EXAMPLE
+
+这种方式不太好的地方是，每次都需要在命令行里面指定，并且不能和其他工具比如rsync/scp共享。如果写在配置文件里面的话就方便多了
+#+BEGIN_EXAMPLE
+➜  private git:(master) ✗ cat ~/.ssh/config
+# Good articles
+# http://blogs.perl.org/users/smylers/2011/08/ssh-productivity-tips.html
+
+TCPKeepAlive no
+ServerAliveInterval 10
+ServerAliveCountMax 6
+
+ForwardAgent yes
+UserKnownHostsFile /dev/null
+StrictHostKeyChecking no
+
+ControlMaster auto
+ControlPath ~/.ssh-%r@%h:%p
+ControlPersist 4h
+
+Host app0 dev0
+User ec2-user
+ProxyCommand nc -x 127.0.0.1:62221 -X 5 %h %p
+#+END_EXAMPLE
+
+-----
+
+不过我经常遇到这类问题，使用代理命令去连接的时候出现下面错误。一段时间还是偶尔出现，后来经常出现所以我干脆就放弃使用这种办法了。当时我的猜测是，可能ssr的socks5协议不太完整，ssh里面有些指令ssr没有办法支持。
+#+BEGIN_EXAMPLE
+➜  ~ ssh -o ProxyCommand="nc -x 127.0.0.1:62221 -X 5 %h %p" app0
+ssh_exchange_identification: Connection closed by remote host
+#+END_EXAMPLE
+
+直到前段时间，同事提醒我可能是因为host没有办法解析，我才觉得有可能是这个问题。如果真是的host没有办法解析的话，那么很好解决，只需要在ssr-server所在的机器上加入一些代码观察是否需要解析host（这里是app0），以及如果在/etc/hosts里面添加app0的ip应该就可以work. 因为ssr使用python编写的，之前我通读过ss的代码，ssr比较core的部分还是使用ss的代码，所以也非常好定位解析host的代码。下面我在ssr-server上面加入的patch代码
+#+BEGIN_SRC Patch
+diff --git a/shadowsocksr/shadowsocks/asyncdns.py b/shadowsocksr/shadowsocks/asyncdns.py
+index 797704e..40f9dc7 100644
+--- a/shadowsocksr/shadowsocks/asyncdns.py
++++ b/shadowsocksr/shadowsocks/asyncdns.py
+@@ -451,6 +451,10 @@ class DNSResolver(object):
+             self._sock.sendto(req, server)
+
+     def resolve(self, hostname, callback):
++        # NOTE(yan): 定位DNS解析问题
++        # import traceback
++        # traceback.print_stack()
++        # print(hostname)
+         if type(hostname) != bytes:
+             hostname = hostname.encode('utf8')
+         if not hostname:
+#+END_SRC
+然后的确在ssr-server的log里面发现了解析app0的请求。进一步只要在/etc/hosts里面添加app0的ip, 整个流程就可以work了。
+
+不过在server端添加代码始终不太灵活，如果ssr-client可以fanout导多个ssr-server的话，那么每个ssr-server都需要修改/etc/hosts文件，或者ssr-server是租用的没有办法修改。所以最好的办法还是在ssr-client解析，好在这个工作也不复杂，因为ss里面提供了很多基础组件和抽象。代码比较粗糙，也只考虑了ipv4这个情况，大致意思就是修改连接头数据。
+#+BEGIN_SRC Patch
+diff --git a/shadowsocksr/shadowsocks/common.py b/shadowsocksr/shadowsocks/common.py
+index c4484c0..3db202c 100644
+--- a/shadowsocksr/shadowsocks/common.py
++++ b/shadowsocksr/shadowsocks/common.py
+@@ -240,6 +240,12 @@ def parse_header(data):
+         return None
+     return connecttype, addrtype, to_bytes(dest_addr), dest_port, header_length
+
++def pack_ipv4_header(dest_addr, dest_port):
++    data = [0] * 7
++    data[0] = ADDRTYPE_IPV4
++    data[1:5] = socket.inet_aton(to_str(dest_addr))
++    data[5:7] = struct.pack('>H', dest_port)
++    return bytearray(data)
+
+ class IPNetwork(object):
+     ADDRLENGTH = {socket.AF_INET: 32, socket.AF_INET6: 128, False: 0}
+diff --git a/shadowsocksr/shadowsocks/tcprelay.py b/shadowsocksr/shadowsocks/tcprelay.py
+index 595e2be..7a7cd71 100644
+--- a/shadowsocksr/shadowsocks/tcprelay.py
++++ b/shadowsocksr/shadowsocks/tcprelay.py
+@@ -30,7 +30,7 @@ import platform
+ import threading
+
+ from shadowsocks import encrypt, obfs, eventloop, shell, common, lru_cache, version
+-from shadowsocks.common import pre_parse_header, parse_header
++from shadowsocks.common import pre_parse_header, parse_header, pack_ipv4_header
+
+ # we clear at most TIMEOUTS_CLEAN_SIZE timeouts each time
+ TIMEOUTS_CLEAN_SIZE = 512
+@@ -641,6 +641,16 @@ class TCPRelayHandler(object):
+             else:
+                 common.connect_log('TCP request %s:%d by user %d' %
+                         (common.to_str(remote_addr), remote_port, self._user_id))
++
++            # NOTE(yan): 如果不是IP并且域名在自己的hosts文件里面，那么直接在本地解析
++            # import traceback
++            # traceback.print_stack()
++            # print(remote_addr)
++            if not common.is_ip(remote_addr) and remote_addr in self._dns_resolver._hosts:
++                remote_addr = self._dns_resolver._hosts[remote_addr]
++                print('fix to {}:{}'.format(remote_addr, remote_port))
++                data = pack_ipv4_header(remote_addr, remote_port)
++
+             self._remote_address = (common.to_str(remote_addr), remote_port)
+             self._remote_udp = (connecttype != 0)
+             # pause reading
+#+END_SRC

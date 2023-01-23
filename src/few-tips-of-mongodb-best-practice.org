@@ -1,0 +1,120 @@
+#+title: 一些MongoDB的实践建议
+
+https://www.mongodb.com/basics/best-practices
+
+
+** 执行计划
+
+- https://docs.mongodb.com/manual/core/query-plans/
+- https://docs.mongodb.com/manual/core/query-optimization/
+- https://docs.mongodb.com/manual/tutorial/analyze-query-plan/
+https://dba.stackexchange.com/questions/226405/why-mongo-is-choosing-the-wrong-index-execution-plan
+
+mongodb是如何管理查询计划的？query planner会针对query shape（某种特定filter, project, sort)的组合指定某种query paln.
+- 如果存在多种查询计划的话，那么就会缓存起来（plan cache)
+- 下次在遇到类似这种query shape的话就会去查询缓存
+- 如果查询不到缓存或者是缓存的query plan效率不行的话，那么都会做replanning
+- mongodb提供了plan cache相关操作的API
+
+可以使用 `db.collection.explaion()` （还可以得到更新计划）或者是 `cursor.explain()` 得到查询计划
+
+#+BEGIN_QUOTE
+Test every query in your application with explain().MongoDB provides an explain plan capability that showsinformation about how a query will be, or was, resolved,including:
+- The number of documents returned
+- The number of documents read
+- Which indexes were used
+- Whether the query was covered, meaning no documentsneeded to be read to return results
+- Whether an in-memory sort was performed, whichindicates an index would be bene cial
+- The number of index entries scanned
+- How long the query took to resolve in milliseconds (when using the executionStats mode)
+- Which alternative query plans were rejected (when using the allPlansExecution mode)
+#+END_QUOTE
+
+** 网络传输
+
+network 传输之间的压缩，可以节省70%的开销
+
+#+BEGIN_QUOTE
+Intra-Cluster Network Compression. As a distributed database, MongoDB relies on ef cient network transport during query routing and inter-node replication. MongoDB 3.4 introduces a new option to compress the wire protocol used for intra-cluster communications. Based on the snappy compression algorithm, network traf c can be compressed by up to 70%, providing major performance bene ts in bandwidth-constrained environments, and reducing networking costs.
+Compression is off by default, but can be enabled by setting networkMessageCompressors to snappy
+#+END_QUOTE
+
+** 索引选择
+
+索引分布不均衡的情况下可能会导致扫描全表。
+- https://docs.mongodb.com/manual/reference/operator/aggregation/indexStats/
+- https://docs.mongodb.com/manual/tutorial/measure-index-use/
+- 查看索引的使用情况. `db.foo.aggregate( [ { $indexStats: { } } ] ).pretty()`
+
+#+BEGIN_QUOTE
+Avoid negation in queries. Like most database systems,MongoDB does not index the absence of values andnegation conditions may require scanning all documents. Ifnegation is the only condition and it is not selective (forexample, querying an orders table where 99% of theorders are complete to identify those that have not beenful lled), all records will need to be scanned.
+#+END_QUOTE
+
+如果compound index是single index的前缀的话，那么这个single index是不必要的
+#+BEGIN_QUOTE
+Remove indexes that are pre xes of other indexes.Compound indexes can be used for queries on leading elds within an index. For example, a compound index onlast name,  rst name can be also used to  lter queries that specify last name only. In this example an additional indexon last name only is unnecessary,
+#+END_QUOTE
+
+mongodb提供index filters机制，这个机制是对于某种query shape可以强制只使用index filters里面指定的index name. 使用这种机制会让query忽略hint()的内容，会影响到所有的query shape, 所以不要大面积使用。
+
+Covered Query是一种特殊查询，query和filters的字段完全相同，并且query里面所有的字段是符合某个Index. 对于这类查询mongodb只需要扫描索引表，而不用去检查document table. 这种查询效率会高很多。
+
+
+** 磁盘读写
+wt的index/data分开存储，减少磁盘压力和冲突。甚至index, journal, db 最好分开目录进行，这样每个目录可以很容易地映射到不同的volume 上面
+- https://docs.mongodb.com/manual/reference/program/mongod/index.html#cmdoption-directoryperdb
+- https://docs.mongodb.com/manual/reference/program/mongod/index.html#cmdoption-wiredtigerdirectoryforindexes
+- `--directoryperdb` , `--wiredTigerDirectoryForIndexes`
+
+#+BEGIN_QUOTE
+Use index optimizations available in the WiredTigerstorage engine. As discussed earlier, the WiredTigerengine compresses indexes by default. In addition,administrators have the  exibility to place indexes on theirown separate volume, allowing for faster disk paging andlower contention.
+
+By using separate storage devices for the journal and data les you can increase the overall throughput of the disksubsystem. Because the disk I/O of the journal  les tendsto be sequential, SSD may not provide a substantialimprovement and standard spinning disks may be morecost effective.
+
+Use multiple devices for different databases –WiredTiger. Set directoryForIndexes so that indexesare stored in separate directories from collections and directoryPerDB to use a different directory for eachdatabase. The various directories can then be mapped todifferent storage devices, thus increasing overallthroughput.
+#+END_QUOTE
+
+调整block readahread 参数
+#+BEGIN_QUOTE
+Readahead size should be set to 0 for WiredTiger. Usethe blockdev --setra <value> command to set thereadahead block size to 0 when using the WiredTigerstorage engine. A readahead value of 32 (16 kB) typicallyworks well when using MMAPv1.
+#+END_QUOTE
+
+** 杀掉慢查询
+
+如果出现慢查询的话，列举和杀掉长时间运行的操作
+
+#+BEGIN_SRC javascript
+killMyRunningOps = function (ns, max_ms = 500) {
+    var currOp = db.currentOp();
+    var max_microsecs = max_ms * 1000;
+    for (op in currOp.inprog) {
+        x = currOp.inprog[op];
+        if (x.ns == ns && x.microsecs_running > max_microsecs) {
+            print(x.opid);
+            db.killOp(x.opid)
+        }
+    }
+}
+
+listRunningOps = function (max_ms = 500) {
+    var currOp = db.currentOp()
+    var max_microsecs = max_ms * 1000
+    for (op in currOp.inprog) {
+        x = currOp.inprog[op]
+        if (x.microsecs_running > max_microsecs && !x.ns.startsWith('local')) {
+            print("======================")
+            print(x.ns, x.op, x.opid, x.microsecs_running * 0.001)
+            printjson(x.query)
+            // printjson(x)
+        }
+     }
+}
+#+END_SRC
+
+** 文档频繁更新
+
+查看collection更新情况
+
+#+BEGIN_SRC bash
+watch --diff "mongo --eval \"db.adminCommand('top').totals['your-collection'].queries.count\" | tail -n +4"
+#+END_SRC

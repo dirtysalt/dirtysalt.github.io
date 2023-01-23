@@ -1,0 +1,185 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>一段奇怪的汇编代码</title>
+<meta name="author" content="dirtysalt" />
+<meta name="generator" content="Org Mode" />
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content" class="content">
+<h1 class="title">一段奇怪的汇编代码</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>Table of Contents</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#org305131b">1. 问题出现</a></li>
+<li><a href="#orgfe7039a">2. 避免使用vector</a></li>
+<li><a href="#org4c2c703">3. 反汇编 0x16181e0 地址</a></li>
+<li><a href="#org21279e0">4. 手工使用memcpy</a></li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-org305131b" class="outline-2">
+<h2 id="org305131b"><span class="section-number-2">1.</span> 问题出现</h2>
+<div class="outline-text-2" id="text-1">
+<p>
+下面代码在profile的时候发现，每次循环的时候rax在和奇怪的地址进行比较 0x16181e0
+</p>
+
+<div class="org-src-container">
+<pre class="src src-c++"><span class="org-keyword">template</span> &lt;<span class="org-keyword">typename</span> <span class="org-type">T</span>&gt;
+<span class="org-keyword">inline</span> <span class="org-type">uint32_t</span> <span class="org-constant">FixedLengthColumnBase</span>&lt;<span class="org-type">T</span>&gt;::<span class="org-function-name">serialize</span>(<span class="org-type">size_t</span> <span class="org-variable-name">idx</span>, <span class="org-type">uint8_t</span>* <span class="org-variable-name">pos</span>) {
+    <span class="org-constant">strings</span>::memcpy_inlined(pos, &amp;_data[idx], <span class="org-keyword">sizeof</span>(T));
+    <span class="org-keyword">return</span> <span class="org-keyword">sizeof</span>(T);
+}
+
+<span class="org-keyword">template</span> &lt;<span class="org-keyword">typename</span> <span class="org-type">T</span>&gt;
+<span class="org-type">void</span> <span class="org-constant">FixedLengthColumnBase</span>&lt;<span class="org-type">T</span>&gt;::<span class="org-function-name">serialize_batch</span>(<span class="org-type">uint8_t</span>* <span class="org-variable-name">__restrict__</span> dst, <span class="org-type">Buffer</span>&lt;<span class="org-type">uint32_t</span>&gt;&amp; <span class="org-variable-name">slice_sizes</span>, <span class="org-type">size_t</span> <span class="org-variable-name">chunk_size</span>,
+                                               <span class="org-type">uint32_t</span> <span class="org-variable-name">max_one_row_size</span>) {
+    <span class="org-keyword">for</span> (<span class="org-type">size_t</span> <span class="org-variable-name">i</span> = 0; i &lt; chunk_size; ++i) {
+        slice_sizes[i] += serialize(i, dst + i * max_one_row_size + slice_sizes[i]);
+    }
+}
+</pre>
+</div>
+
+<p>
+其中rax这里在和某个奇怪的地址进行比较。一个 `奇怪` 的怀疑是判断地址空间是否越界，如果越界的话会去resize空间大小。编译器没有办法确定slice_sizes大小是可以保证不会产生越界情况。
+</p>
+
+
+<div id="orgcd6e485" class="figure">
+<p><img src="../images/mysterious-memcpy-asm-code-0.jpg" alt="mysterious-memcpy-asm-code-0.jpg" />
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgfe7039a" class="outline-2">
+<h2 id="orgfe7039a"><span class="section-number-2">2.</span> 避免使用vector</h2>
+<div class="outline-text-2" id="text-2">
+<p>
+改成下面这样的写法，似乎也不太行，那个奇怪的地址比较还在。不过代码好像清爽不少。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-c++"><span class="org-keyword">template</span> &lt;<span class="org-keyword">typename</span> <span class="org-type">T</span>&gt;
+<span class="org-keyword">inline</span> <span class="org-type">uint32_t</span> <span class="org-constant">FixedLengthColumnBase</span>&lt;<span class="org-type">T</span>&gt;::<span class="org-function-name">serialize</span>(<span class="org-type">size_t</span> <span class="org-variable-name">idx</span>, <span class="org-type">uint8_t</span>* <span class="org-variable-name">pos</span>) {
+    <span class="org-constant">strings</span>::memcpy_inlined(pos, &amp;_data[idx], <span class="org-keyword">sizeof</span>(T));
+    <span class="org-keyword">return</span> <span class="org-keyword">sizeof</span>(T);
+}
+
+<span class="org-keyword">template</span> &lt;<span class="org-keyword">typename</span> <span class="org-type">T</span>&gt;
+<span class="org-type">void</span> <span class="org-constant">FixedLengthColumnBase</span>&lt;<span class="org-type">T</span>&gt;::<span class="org-function-name">serialize_batch</span>(<span class="org-type">uint8_t</span>* <span class="org-variable-name">__restrict__</span> dst, <span class="org-type">Buffer</span>&lt;<span class="org-type">uint32_t</span>&gt;&amp; <span class="org-variable-name">slice_sizes</span>, <span class="org-type">size_t</span> <span class="org-variable-name">chunk_size</span>,
+                                               <span class="org-type">uint32_t</span> <span class="org-variable-name">max_one_row_size</span>) {
+    <span class="org-type">uint32_t</span>* <span class="org-variable-name">sizes</span> = slice_sizes.data();
+    <span class="org-keyword">for</span> (<span class="org-type">size_t</span> <span class="org-variable-name">i</span> = 0; i &lt; chunk_size; ++i) {
+        sizes[i] += serialize(i, dst + i * max_one_row_size + sizes[i]);
+    }
+}
+</pre>
+</div>
+
+
+<div id="orgaf75a16" class="figure">
+<p><img src="../images/mysterious-memcpy-asm-code-0.jpg" alt="mysterious-memcpy-asm-code-0.jpg" />
+</p>
+</div>
+</div>
+</div>
+
+
+<div id="outline-container-org4c2c703" class="outline-2">
+<h2 id="org4c2c703"><span class="section-number-2">3.</span> 反汇编 0x16181e0 地址</h2>
+<div class="outline-text-2" id="text-3">
+<p>
+使用命令 `objdump -S &#x2013;start-address=0x16181e0 &#x2013;stop-address=0x16281e0 output/be/lib/starrocks_be` 可以看到这个奇怪地址对应的汇编/代码，就是这个memcpy_inlined，并且是针对长度为1的特定代码。
+</p>
+
+
+<p>
+我觉得 `call *rax` 那个部分代码，是编译器认为如果长度不是1的话，那么就会跳转到原始的memcpy实现上。但是纯粹从C++代码来看，这个size是可以确定为 `sizeof(T)` 并且完全不会变的，不太清楚为什么编译器没有做这个优化，或者是完成这个推理。
+</p>
+
+
+<div class="org-src-container">
+<pre class="src src-asm"><span class="org-function-name">output</span>/be/lib/starrocks_be:     file format elf64-x86-64
+
+
+<span class="org-function-name">Disassembly</span> <span class="org-keyword">of</span> section .text:
+
+<span class="org-function-name">00000000016181e0</span> &lt;_ZN9starrocks10vectorized21FixedLengthColumnBaseIaE9serializeEmPh&gt;:
+    <span class="org-comment-delimiter">// </span><span class="org-comment">parameter of memcpy is a constant.</span>
+    <span class="org-keyword">switch</span> (size) {
+    <span class="org-keyword">case</span> 0:
+        <span class="org-keyword">break</span><span class="org-comment-delimiter">;</span>
+    <span class="org-keyword">case</span> 1:
+        <span class="org-keyword">memcpy</span>(dst, src, 1)<span class="org-comment-delimiter">;</span>
+ <span class="org-keyword">16181e0</span>:       48 8b 47 10             mov    0x10(<span class="org-variable-name">%rdi</span>),<span class="org-variable-name">%rax</span>
+ <span class="org-keyword">16181e4</span>:       0f b6 04 30             movzbl (<span class="org-variable-name">%rax</span>,<span class="org-variable-name">%rsi</span>,1),<span class="org-variable-name">%eax</span>
+ <span class="org-keyword">16181e8</span>:       88 02                   mov    <span class="org-variable-name">%al</span>,(<span class="org-variable-name">%rdx</span>)
+
+<span class="org-function-name">template</span> &lt;typename T&gt;
+<span class="org-function-name">inline</span> <span class="org-keyword">uint32</span>_t FixedLengthColumnBase&lt;T&gt;::serialize(size_t idx, uint8_t* pos) {
+    <span class="org-keyword">strings</span>::memcpy_inlined(pos, &amp;_data[idx], sizeof(T))<span class="org-comment-delimiter">;</span>
+    <span class="org-keyword">return</span> sizeof(T)<span class="org-comment-delimiter">;</span>
+}
+ <span class="org-keyword">16181ea</span>:       b8 01 00 00 00          mov    $0x1,<span class="org-variable-name">%eax</span>
+ <span class="org-keyword">16181ef</span>:       c3                      retq
+
+<span class="org-function-name">00000000016181f0</span> &lt;_ZN9starrocks10vectorized21FixedLengthColumnBaseIaE17serialize_defaultEPh&gt;:
+ <span class="org-keyword">16181f0</span>:       c6 06 00                movb   $0x0,(<span class="org-variable-name">%rsi</span>)
+<span class="org-function-name">template</span> &lt;typename T&gt;
+<span class="org-function-name">uint32_t</span> <span class="org-keyword">FixedLengthColumnBase</span>&lt;T&gt;::serialize_default(uint8_t* pos) {
+    <span class="org-keyword">ValueType</span> value{}<span class="org-comment-delimiter">;</span>
+    <span class="org-keyword">strings</span>::memcpy_inlined(pos, &amp;value, sizeof(T))<span class="org-comment-delimiter">;</span>
+    <span class="org-keyword">return</span> sizeof(T)<span class="org-comment-delimiter">;</span>
+}
+ <span class="org-keyword">16181f3</span>:       b8 01 00 00 00          mov    $0x1,<span class="org-variable-name">%eax</span>
+ <span class="org-keyword">16181f8</span>:       c3                      retq
+ <span class="org-keyword">16181f9</span>:       0f 1f 80 00 00 00 00    nopl   0x0(<span class="org-variable-name">%rax</span>)
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org21279e0" class="outline-2">
+<h2 id="org21279e0"><span class="section-number-2">4.</span> 手工使用memcpy</h2>
+<div class="outline-text-2" id="text-4">
+<div class="org-src-container">
+<pre class="src src-c++"><span class="org-keyword">template</span> &lt;<span class="org-keyword">typename</span> <span class="org-type">T</span>&gt;
+<span class="org-type">void</span> <span class="org-constant">FixedLengthColumnBase</span>&lt;<span class="org-type">T</span>&gt;::<span class="org-function-name">serialize_batch</span>(<span class="org-type">uint8_t</span>* <span class="org-variable-name">__restrict__</span> dst, <span class="org-type">Buffer</span>&lt;<span class="org-type">uint32_t</span>&gt;&amp; <span class="org-variable-name">slice_sizes</span>,
+                                               <span class="org-type">size_t</span> <span class="org-variable-name">chunk_size</span>, <span class="org-type">uint32_t</span> <span class="org-variable-name">max_one_row_size</span>) {
+    <span class="org-type">uint32_t</span>* <span class="org-variable-name">sizes</span> = slice_sizes.data();
+    <span class="org-type">T</span>* <span class="org-variable-name">__restrict__</span> src = _data.data();
+
+    <span class="org-keyword">for</span> (<span class="org-type">size_t</span> <span class="org-variable-name">i</span> = 0; i &lt; chunk_size; ++i) {
+        memcpy(dst + i * max_one_row_size + sizes[i], src + i, <span class="org-keyword">sizeof</span>(T));
+    }
+
+    <span class="org-keyword">for</span> (<span class="org-type">size_t</span> <span class="org-variable-name">i</span> = 0; i &lt; chunk_size; i++) {
+        sizes[i] += <span class="org-keyword">sizeof</span>(T);
+    }
+}
+</pre>
+</div>
+
+<p>
+可以看到最后生成的代码就没有这个奇怪的比较了。
+</p>
+
+
+<div id="org4e09b1c" class="figure">
+<p><img src="../images/mysterious-memcpy-asm-code-2.jpg" alt="mysterious-memcpy-asm-code-2.jpg" />
+</p>
+</div>
+</div>
+</div>
+</div>
+<div id="content"><!-- DISQUS BEGIN --><div id="disqus_thread"></div><script>/***  RECOMMENDED CONFIGURATION VARIABLES: EDIT AND UNCOMMENT THE SECTION BELOW TO INSERT DYNAMIC VALUES FROM YOUR PLATFORM OR CMS.*  LEARN WHY DEFINING THESE VARIABLES IS IMPORTANT: https://disqus.com/admin/universalcode/#configuration-variables*/var disqus_config = function () {this.page.url = 'https://dirtysalt.github.io/html/mysterious-memcpy-assembly-code.html';this.page.identifier = 'mysterious-memcpy-assembly-code.html';};(function() {var d = document, s = d.createElement('script');s.src = 'https://dirlt.disqus.com/embed.js';s.setAttribute('data-timestamp', +new Date());(d.head || d.body).appendChild(s);})();</script><noscript>Please enable JavaScript to view the <a href="https://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript><!-- DISQUS END --></div></body>
+</html>

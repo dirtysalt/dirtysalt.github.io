@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>虚函数的额外开销</title>
+<meta name="author" content="dirtysalt" />
+<meta name="generator" content="Org Mode" />
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content" class="content">
+<h1 class="title">虚函数的额外开销</h1>
+<p>
+CK代码里面使用了获取虚函数地址的方式来减少虚函数调用开销
+</p>
+
+<p>
+src/AggregateFunctions/IAggregateFunction.h
+</p>
+
+<div class="org-src-container">
+<pre class="src src-c++"><span class="org-keyword">class</span> <span class="org-type">IAggregateFunction</span> : <span class="org-keyword">public</span> <span class="org-constant">std</span>::<span class="org-type">enable_shared_from_this</span>&lt;<span class="org-type">IAggregateFunction</span>&gt;
+{
+    <span class="org-doc">/** The inner loop that uses the function pointer is better than using the virtual function.</span>
+<span class="org-doc">      * The reason is that in the case of virtual functions GCC 5.1.2 generates code,</span>
+<span class="org-doc">      *  which, at each iteration of the loop, reloads the function address (the offset value in the virtual function table) from memory to the register.</span>
+<span class="org-doc">      * This gives a performance drop on simple queries around 12%.</span>
+<span class="org-doc">      * After the appearance of better compilers, the code can be removed.</span>
+<span class="org-doc">      */</span>
+    <span class="org-keyword">using</span> <span class="org-type">AddFunc</span> = <span class="org-type">void</span> (*)(<span class="org-keyword">const</span> <span class="org-type">IAggregateFunction</span> *, AggregateDataPtr, <span class="org-keyword">const</span> <span class="org-type">IColumn</span> **, size_t, <span class="org-type">Arena</span> *);
+    <span class="org-keyword">virtual</span> <span class="org-type">AddFunc</span> <span class="org-function-name">getAddressOfAddFunction</span>() <span class="org-keyword">const</span> = 0;
+    <span class="org-comment-delimiter">// </span><span class="org-comment">codes ...</span>
+}
+
+<span class="org-keyword">template</span> &lt;<span class="org-keyword">typename</span> <span class="org-type">Derived</span>&gt;
+<span class="org-keyword">class</span> <span class="org-type">IAggregateFunctionHelper</span> : <span class="org-keyword">public</span> <span class="org-type">IAggregateFunction</span>
+{
+<span class="org-keyword">private</span>:
+    <span class="org-keyword">static</span> <span class="org-type">void</span> <span class="org-function-name">addFree</span>(<span class="org-keyword">const</span> <span class="org-type">IAggregateFunction</span> * <span class="org-variable-name">that</span>, <span class="org-type">AggregateDataPtr</span> <span class="org-variable-name">place</span>, <span class="org-keyword">const</span> <span class="org-type">IColumn</span> ** <span class="org-variable-name">columns</span>, <span class="org-type">size_t</span> <span class="org-variable-name">row_num</span>, <span class="org-type">Arena</span> * <span class="org-variable-name">arena</span>)
+    {
+        <span class="org-keyword">static_cast</span>&lt;<span class="org-keyword">const</span> <span class="org-type">Derived</span> &amp;&gt;(*that).add(place, columns, row_num, arena);
+    }
+
+<span class="org-keyword">public</span>:
+    <span class="org-type">AddFunc</span> <span class="org-function-name">getAddressOfAddFunction</span>() <span class="org-keyword">const</span> <span class="org-keyword">override</span> { <span class="org-keyword">return</span> &amp;addFree; }
+    <span class="org-comment-delimiter">// </span><span class="org-comment">codes ...</span>
+}
+</pre>
+</div>
+
+<p>
+从注释里面可以看到，低版本虚函数实现有些问题，到了高版本编译器应该就没有问题了。我理解是
+</p>
+<ul class="org-ul">
+<li>差的编译器用的方法是 lea (, rcx, rbx) rax; call *rax. 其中rcx是虚表的偏移量. 低版本编译器没有办法保证是常量</li>
+<li>好的编译器是 mov 0x32(rbx) rax; call *rax; 其中 0x32 是虚表的偏移量</li>
+<li>静态函数就是 call 0x16eff ，其中地址是常量</li>
+</ul>
+
+<p>
+普通函数（静态链接）相比虚函数的优势有下面这些：
+</p>
+<ol class="org-ol">
+<li>函数地址是常量，虚函数需要从内存中获取函数地址</li>
+<li>如何普通函数实现在头文件中可以被内联</li>
+<li>低版本编译器的虚函数偏移是不确定的，导致每次需要重新计算函数地址</li>
+</ol>
+</div>
+<div id="content"><!-- DISQUS BEGIN --><div id="disqus_thread"></div><script>/***  RECOMMENDED CONFIGURATION VARIABLES: EDIT AND UNCOMMENT THE SECTION BELOW TO INSERT DYNAMIC VALUES FROM YOUR PLATFORM OR CMS.*  LEARN WHY DEFINING THESE VARIABLES IS IMPORTANT: https://disqus.com/admin/universalcode/#configuration-variables*/var disqus_config = function () {this.page.url = 'https://dirtysalt.github.io/html/rethink-virtual-function-call-cost.html';this.page.identifier = 'rethink-virtual-function-call-cost.html';};(function() {var d = document, s = d.createElement('script');s.src = 'https://dirlt.disqus.com/embed.js';s.setAttribute('data-timestamp', +new Date());(d.head || d.body).appendChild(s);})();</script><noscript>Please enable JavaScript to view the <a href="https://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript><!-- DISQUS END --></div></body>
+</html>

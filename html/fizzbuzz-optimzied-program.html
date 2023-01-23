@@ -1,0 +1,526 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>FizzBuzz程序优化</title>
+<meta name="author" content="dirtysalt" />
+<meta name="generator" content="Org Mode" />
+<script type="text/x-mathjax-config">
+    MathJax.Hub.Config({
+        displayAlign: "center",
+        displayIndent: "0em",
+
+        "HTML-CSS": { scale: 100,
+                        linebreaks: { automatic: "false" },
+                        webFont: "TeX"
+                       },
+        SVG: {scale: 100,
+              linebreaks: { automatic: "false" },
+              font: "TeX"},
+        NativeMML: {scale: 100},
+        TeX: { equationNumbers: {autoNumber: "AMS"},
+               MultLineWidth: "85%",
+               TagSide: "right",
+               TagIndent: ".8em"
+             }
+});
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.0/MathJax.js?config=TeX-AMS_HTML"></script>
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content" class="content">
+<h1 class="title">FizzBuzz程序优化</h1>
+<p>
+这个程序比赛是从之前帖子看过来的，<a href="https://codegolf.stackexchange.com/questions/215216/high-throughput-fizz-buzz/236630">https://codegolf.stackexchange.com/questions/215216/high-throughput-fizz-buzz/236630</a>
+</p>
+
+<hr />
+<p>
+我测试了一下第一名ASM编写的程序在我们开发机器上的效果，大约只能跑到 6.6GiB/s. 代码在 <a href="https://github.com/dirtysalt/codes/tree/master/cc/xx-test/fizzbuzz-asm.S">这里</a>. 帖子里面给出的分数是 60GiB/s, 感觉这个差距有点大。
+</p>
+
+<p>
+帖子里面给的配置是 "Scores are from running on my desktop with an AMD 5950x CPU (16C / 32T). I have 32GB of 3600Mhz RAM."
+</p>
+<ul class="org-ul">
+<li>基准时钟频率是3.4Ghz, 最大可以达到 4.9Ghz</li>
+<li>二级缓存8MB, 三级缓存 64MB.</li>
+<li>内存DDR4, 3600Mhz</li>
+</ul>
+
+<p>
+我看了一下我们机器配置大约是
+</p>
+<ul class="org-ul">
+<li>8269CY CPU. 基准是3.2Ghz, 最大可以达到 3.8Ghz</li>
+<li>二级缓存1MB, 三级缓存 36MB.</li>
+<li>内存DDR4, 2666Mhz</li>
+</ul>
+
+<p>
+我也不确定这些配置是否会造成有这么大的差距??
+</p>
+
+<p>
+现在还有个问题是，我的程序大部分时候运行很好，但是有时候却下降到500MB/s. 而第一名程序则没有这个问题，运行的是非常的稳定。这个需要在分析分析，
+可能是当时有大量的内存写操作，但是好像从top上面看不到。或许后面需要使用perf看看系统在做什么事情。
+</p>
+
+<p>
+UPDATE: 我自己感觉好像是kernel pipe buffer不够的原因：我使用 vmsplice 模式的话似乎不受影响，但是使用 write 模式的话影响就很大。
+</p>
+
+<hr />
+<p>
+我的代码在 <a href="https://github.com/dirtysalt/codes/tree/master/cc/xx-test/fizzbuzz.cpp">这里</a>, 大约能跑到4.6GiB/s左右，也想不出怎么继续优化了。这里列举下优化点吧：
+</p>
+<ol class="org-ol">
+<li>不要每次使用去使用itoa去计算整数的表示，这个可以通过模拟累加来完成</li>
+<li>按照30步长进行循环展开：每15个是一轮FizzBuzz循环，而每10个一轮则是为了方便累加，所以取30.</li>
+<li>对于短串memcpy长度尽可能地round到8个字节，不然会出现许多 "取最后2字节" “取最后一个字节"的操作</li>
+<li>减少syscall调用次数，尽可能地写到buffer上面</li>
+<li>使用 vmsplice 调用来减少 user/kernel 之间的数据拷贝，前提是需要设置好pipe size. (大约从3.2GB/s -&gt; 4.2GB/s)</li>
+</ol>
+
+<p>
+每次进行+10的操作
+</p>
+
+<div class="org-src-container">
+<pre class="src src-cpp"><span class="org-keyword">inline</span> <span class="org-type">int</span> <span class="org-function-name">add10</span>(<span class="org-type">char</span>* <span class="org-variable-name">end</span>) {
+    <span class="org-type">char</span>* <span class="org-variable-name">p</span> = end - 1;
+    <span class="org-keyword">for</span> (;;) {
+        <span class="org-keyword">if</span> (*p == 0) {
+            *p = <span class="org-string">'1'</span>;
+            <span class="org-keyword">return</span> 1;
+        } <span class="org-keyword">else</span> <span class="org-keyword">if</span> (*p == <span class="org-string">'9'</span>) {
+            *p = <span class="org-string">'0'</span>;
+            p -= 1;
+        } <span class="org-keyword">else</span> {
+            *p = *p + 1;
+            <span class="org-keyword">break</span>;
+        }
+    }
+    <span class="org-keyword">return</span> 0;
+}
+</pre>
+</div>
+
+<p>
+按照30步长进行循环展开，有三种情况需要分别展开，下面这个是第一步展开的情况。其中end是 `xxxxx1\n` 这样字符串格式,
+比如我们处理到了10000, 那么end就是 `10001\n`. 我们每次拷贝模板，然后修改最后一个字符。
+</p>
+
+<p>
+但是这里也不只是每个都拷贝模板然后修改字符，有时候可以将最后一个字符和后面常量字符串一起写入，比如写入"2\nFizz\n"这个case.
+</p>
+
+<p>
+这里还有个优化，是假设已经copy了end2次的话，那么可以使用这个duplicated进行拷贝。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-cpp">
+<span class="org-preprocessor">#define</span> <span class="org-function-name">MC</span>(<span class="org-variable-name">x</span>, <span class="org-variable-name">c</span>) buf = op&lt;c, c&gt;(buf, x)
+<span class="org-comment-delimiter">// </span><span class="org-comment">&#20351;&#29992;dup&#27169;&#24335;</span>
+<span class="org-keyword">template</span> &lt;<span class="org-type">int</span> <span class="org-variable-name">digit</span>&gt;
+<span class="org-type">char</span>* <span class="org-function-name">output0</span>(<span class="org-type">char</span>* <span class="org-variable-name">RE</span> buf, <span class="org-keyword">const</span> <span class="org-type">char</span>* <span class="org-variable-name">RE</span> end) {
+    <span class="org-comment-delimiter">// </span><span class="org-comment">1   2    3    4     5     6    7   8   9     10</span>
+    <span class="org-comment-delimiter">// </span><span class="org-comment">1   2  fizz   4   buzz  fizz   7   8   fizz  buzz</span>
+    <span class="org-keyword">const</span> <span class="org-type">char</span>* <span class="org-variable-name">dup</span> = buf;
+    MC(end, digit + 1);
+    MC(end, digit - 1);
+    MC(<span class="org-string">"2\nFizz\n0"</span>, 7);
+
+    MC(end, digit - 1);
+    MC(<span class="org-string">"4\nBuzz\nFizz\n0000"</span>, 12);
+
+    MC(dup, 2 * digit);
+    *(buf - 1 - digit) = <span class="org-string">'7'</span>;
+    MC(<span class="org-string">"8\nFizz\nBuzz\n0000"</span>, 12);
+    <span class="org-keyword">return</span> buf;
+}
+
+<span class="org-comment-delimiter">// </span><span class="org-comment">&#19981;&#20351;&#29992;dup&#27169;&#24335;</span>
+
+<span class="org-keyword">template</span> &lt;<span class="org-type">int</span> <span class="org-variable-name">digit</span>&gt;
+<span class="org-type">char</span>* <span class="org-function-name">output0</span>(<span class="org-type">char</span>* <span class="org-variable-name">RE</span> buf, <span class="org-keyword">const</span> <span class="org-type">char</span>* <span class="org-variable-name">RE</span> end) {
+    <span class="org-comment-delimiter">// </span><span class="org-comment">1   2    3    4     5     6    7   8   9      10</span>
+    <span class="org-comment-delimiter">// </span><span class="org-comment">1   2  fizz   4   buzz  fizz   7   8   fizz   buzz</span>
+    MC(end, digit + 1);
+    MC(end, digit - 1);
+    MC(<span class="org-string">"2\nFizz\n\0"</span>, 7);
+
+    MC(end, digit - 1);
+    MC(<span class="org-string">"4\nBuzz\nFizz\n0000"</span>, 12);
+
+    MC(end, digit + 1);
+    *(buf - 2) = <span class="org-string">'7'</span>;
+    MC(end, digit - 1);
+    MC(<span class="org-string">"8\nFizz\nBuzz\n0000"</span>, 12);
+    <span class="org-keyword">return</span> buf;
+}
+</pre>
+</div>
+
+<p>
+对mempcy进行优化，我们在所有的原始串上增加padding到8bytes上，虽然会多拷贝几个字节，但是指令数却可以减少(省去类似 `movzbwl/mov ah` 这样的指令)
+</p>
+
+<div class="org-src-container">
+<pre class="src src-cpp"><span class="org-keyword">template</span> &lt;<span class="org-type">int</span> <span class="org-variable-name">c</span>, <span class="org-type">int</span> <span class="org-variable-name">c2</span>&gt;
+<span class="org-type">char</span>* <span class="org-function-name">op</span>(<span class="org-type">char</span>* <span class="org-variable-name">RE</span> buf, <span class="org-keyword">const</span> <span class="org-type">char</span>* <span class="org-variable-name">RE</span> p) {
+    <span class="org-comment-delimiter">// </span><span class="org-comment">8 bytes as a unit.</span>
+    <span class="org-keyword">if</span> <span class="org-keyword">constexpr</span> (c &lt;= 8) {
+        memcpy(buf, p, 8);
+    } <span class="org-keyword">else</span> <span class="org-keyword">if</span> <span class="org-keyword">constexpr</span> (c &lt;= 16) {
+        memcpy(buf, p, 16);
+    } <span class="org-keyword">else</span> <span class="org-keyword">if</span> <span class="org-keyword">constexpr</span> (c &lt;= 24) {
+        memcpy(buf, p, 24);
+    } <span class="org-keyword">else</span> <span class="org-keyword">if</span> <span class="org-keyword">constexpr</span> (c &lt;= 32) {
+        memcpy(buf, p, 32);
+    } <span class="org-keyword">else</span> <span class="org-keyword">if</span> <span class="org-keyword">constexpr</span> (c &lt;= 40) {
+        memcpy(buf, p, 40);
+    } <span class="org-keyword">else</span> <span class="org-keyword">if</span> <span class="org-keyword">constexpr</span> (c &lt;= 48) {
+        memcpy(buf, p, 48);
+    } <span class="org-keyword">else</span> <span class="org-keyword">if</span> <span class="org-keyword">constexpr</span> (c &lt;= 56) {
+        memcpy(buf, p, 56);
+    } <span class="org-keyword">else</span> <span class="org-keyword">if</span> <span class="org-keyword">constexpr</span> (c &lt;= 64) {
+        memcpy(buf, p, 64);
+    } <span class="org-keyword">else</span> {
+        static_assert(c &lt;= 64);
+    }
+    buf += c2;
+    <span class="org-keyword">return</span> buf;
+}
+</pre>
+</div>
+
+<p>
+使用buffer来减少系统调用：因为我们最多处理到20位，然后每轮只处理30个字符，所以一轮最多产生600个字符(RESERVE). 可选地使用vmsplice或者是write来进行写入。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-cpp"><span class="org-keyword">if</span> ((buf - head) &gt; (BUFFER_SIZE - RESERVE)) {
+    <span class="org-type">size_t</span> <span class="org-variable-name">size</span> = buf - head;
+    <span class="org-keyword">if</span> (use_vmsplice) {
+        <span class="org-comment-delimiter">// </span><span class="org-comment">ssize_t vmsplice(int fd, const struct iovec* iov, size_t nr_segs, unsigned int flags);</span>
+        <span class="org-type">iovec</span> <span class="org-variable-name">iov</span>[1] = {
+                {.iov_base = head, .iov_len = size},
+        };
+        vmsplice(1, iov, 1, 0);
+        head = (head == buffer[0]) ? buffer[1] : buffer[0];
+    } <span class="org-keyword">else</span> {
+        os_write(1, head, size);
+    }
+    buf = head;
+}
+</pre>
+</div>
+
+<p>
+使用vmsplice的话需要使用0/1 buffer, 并且设置pipe size，确保pipe size和单个buffer size相同。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-cpp">
+<span class="org-type">bool</span> <span class="org-function-name">fix_pipe_size</span>() {
+    <span class="org-type">int</span> <span class="org-variable-name">fd</span> = 1;
+    <span class="org-type">int</span> <span class="org-variable-name">pipe_size</span> = fcntl(fd, F_GETPIPE_SZ);
+    <span class="org-keyword">if</span> (pipe_size == -1) {
+        perror(<span class="org-string">"get pipe size failed."</span>);
+        <span class="org-keyword">return</span> <span class="org-constant">false</span>;
+    }
+    fprintf(stderr, <span class="org-string">"default pipe size: %d\n"</span>, pipe_size);
+
+    <span class="org-type">int</span> <span class="org-variable-name">ret</span> = fcntl(fd, F_SETPIPE_SZ, BUFFER_SIZE);
+    <span class="org-keyword">if</span> (ret &lt; 0) {
+        perror(<span class="org-string">"set pipe size failed."</span>);
+        <span class="org-keyword">return</span> <span class="org-constant">false</span>;
+    }
+    pipe_size = fcntl(fd, F_GETPIPE_SZ);
+    <span class="org-keyword">if</span> (pipe_size == -1) {
+        perror(<span class="org-string">"get pipe size failed."</span>);
+        <span class="org-keyword">return</span> <span class="org-constant">false</span>;
+    }
+    fprintf(stderr, <span class="org-string">"new pipe size: %ld\n"</span>, pipe_size);
+    <span class="org-keyword">return</span> <span class="org-constant">true</span>;
+}
+
+<span class="org-type">int</span> <span class="org-function-name">main</span>() {
+    <span class="org-comment-delimiter">// </span><span class="org-comment">...</span>
+    <span class="org-keyword">if</span> (use_vmsplice) {
+        <span class="org-type">bool</span> <span class="org-variable-name">ok</span> = fix_pipe_size();
+        <span class="org-keyword">if</span> (<span class="org-negation-char">!</span>ok) {
+            use_vmsplice = <span class="org-constant">false</span>;
+            fprintf(stderr, <span class="org-string">"use_vmsplice disabled!\n"</span>);
+        }
+    }
+}
+</pre>
+</div>
+
+<hr />
+
+<p>
+UPDATE(20220813): 后面做了部分修改，我在的机器上带宽差不多是5GB/s左右。这个和机器环境很相关，在我同事的机器上可以翻倍甚至更多。
+</p>
+
+<p>
+memcpy不是按照8字节对齐而是按照4字节对齐
+</p>
+<ul class="org-ul">
+<li>这样对于小数据量可以减少许多数据拷贝，</li>
+<li>对于12字节以内的话可以使用rax/eax进行digit保存，</li>
+<li>对于16字节以内的话则可以使用xmm对digit保存</li>
+</ul>
+
+<div class="org-src-container">
+<pre class="src src-cpp"><span class="org-keyword">template</span> &lt;<span class="org-type">int</span> <span class="org-variable-name">c</span>&gt;
+<span class="org-type">char</span>* <span class="org-function-name">op</span>(<span class="org-type">char</span>* <span class="org-variable-name">RE</span> buf, <span class="org-keyword">const</span> <span class="org-type">char</span>* <span class="org-variable-name">RE</span> p) {
+    <span class="org-keyword">constexpr</span> <span class="org-type">int</span> <span class="org-variable-name">x</span> = (c + 3) / 4 * 4;
+    memcpy(buf, p, x);
+    buf += c;
+    <span class="org-keyword">return</span> buf;
+}
+</pre>
+</div>
+
+<p>
+在memcpy模式上访问顺序最好能保持一致，可能这样对于prefetch会比较友好
+</p>
+
+<div class="org-src-container">
+<pre class="src src-cpp"><span class="org-keyword">template</span> &lt;<span class="org-type">int</span> <span class="org-variable-name">digit</span>&gt;
+<span class="org-type">char</span>* <span class="org-function-name">output0</span>(<span class="org-type">char</span>* <span class="org-variable-name">RE</span> buf, <span class="org-keyword">const</span> <span class="org-type">char</span>* <span class="org-variable-name">RE</span> pp) {
+    <span class="org-comment-delimiter">// </span><span class="org-comment">11   12   13    14    15        16   17   18   19  20    21</span>
+    <span class="org-comment-delimiter">// </span><span class="org-comment">1    fizz  3    4     fizzbuzz  6    7    fizz  9  Buzz Fizz</span>
+    MC(pp, digit);
+    MC(<span class="org-string">"1\nFizz\n000"</span>, 7);
+
+    MC(pp, digit);
+    MC(<span class="org-string">"3\n00"</span>, 2);
+    MC(pp, digit);
+    MC(<span class="org-string">"4\nFizzBuzz\n00000"</span>, 11);
+
+    MC(pp, digit);
+    MC(<span class="org-string">"6\n00"</span>, 2);
+    MC(pp, digit);
+    MC(<span class="org-string">"7\nFizz\n0"</span>, 7);
+
+    MC(pp, digit);
+    MC(<span class="org-string">"9\nBuzz\nFizz\n0000"</span>, 12);
+    <span class="org-keyword">return</span> buf;
+}
+</pre>
+</div>
+
+<p>
+对digit管理数据结构包装在一个64字节对象以内，这样可以确保每次拿到digit buffer的话相关对象都可以拿到，减少L1 cache miss.
+另外add10上可以略微做得更加紧凑一些，返回最新更新的指针，然后判断begin是否发生变化。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-cpp"><span class="org-keyword">inline</span> <span class="org-type">char</span>* <span class="org-function-name">add10</span>(<span class="org-type">char</span>* <span class="org-variable-name">end</span>) {
+    <span class="org-type">char</span>* <span class="org-variable-name">p</span> = end;
+    <span class="org-keyword">while</span> (*p == <span class="org-string">'9'</span>) {
+        *p = <span class="org-string">'0'</span>;
+        p--;
+    }
+    *p = *p + 1;
+    <span class="org-keyword">return</span> p;
+}
+
+<span class="org-keyword">struct</span> <span class="org-type">DigitContext</span> {
+    <span class="org-keyword">static</span> <span class="org-keyword">constexpr</span> <span class="org-type">int</span> <span class="org-variable-name">MAXDIGIT</span> = 20;
+    <span class="org-keyword">static</span> <span class="org-keyword">constexpr</span> <span class="org-type">int</span> <span class="org-variable-name">DIGITBUF</span> = MAXDIGIT + 2;
+
+    <span class="org-type">char</span> <span class="org-variable-name">digitbuf</span>[DIGITBUF + 8];
+    <span class="org-type">char</span>* <span class="org-variable-name">begin</span>;
+    <span class="org-type">char</span>* <span class="org-variable-name">end</span>;
+};
+static_assert(<span class="org-keyword">sizeof</span>(DigitContext) &lt;= 64);
+alignas(64) <span class="org-type">DigitContext</span> <span class="org-variable-name">digitctx</span>[1];
+</pre>
+</div>
+
+<p>
+其实帖子里面这个代码效率是非常高的，大致思想就是
+</p>
+<ul class="org-ul">
+<li>固定好digit size，这组内数据模板存在放buf里面</li>
+<li>按照30个一组进行输出，然后对里面每个数字增加30.</li>
+<li>这个代码因为没有实现vmsplice, 所以如果系统上pipebuff不够的话，那么效率很差</li>
+<li>但是如果系统上pipebuff足够的话，和我这个程序差不多甚至可能还更好。</li>
+</ul>
+
+<div class="org-src-container">
+<pre class="src src-cpp"><span class="org-preprocessor">#include</span> <span class="org-string">&lt;stdio.h&gt;</span>
+<span class="org-preprocessor">#include</span> <span class="org-string">&lt;string.h&gt;</span>
+<span class="org-preprocessor">#include</span> <span class="org-string">&lt;unistd.h&gt;</span>
+<span class="org-type">char</span> <span class="org-variable-name">buf</span>[416];
+<span class="org-type">char</span> <span class="org-variable-name">out</span>[65536 + 4096] = <span class="org-string">"1\n2\nFizz\n4\nBuzz\nFizz\n7\n8\nFizz\n"</span>;
+<span class="org-type">int</span> <span class="org-function-name">main</span>(<span class="org-type">int</span> <span class="org-variable-name">argc</span>, <span class="org-type">char</span> **<span class="org-variable-name">argv</span>) {
+  <span class="org-keyword">const</span> <span class="org-type">int</span> <span class="org-variable-name">o</span>[16] = { 4, 7, 2, 11, 2, 7, 12, 2, 12, 7, 2, 11, 2, 7, 12, 2 };
+  <span class="org-type">char</span> *<span class="org-variable-name">t</span> = out + 30;
+  <span class="org-type">unsigned</span> <span class="org-type">long</span> <span class="org-type">long</span> <span class="org-variable-name">i</span> = 1, <span class="org-variable-name">j</span> = 1;
+  <span class="org-keyword">for</span> (<span class="org-type">int</span> <span class="org-variable-name">l</span> = 1; l &lt; 20; l++) {
+    <span class="org-type">int</span> <span class="org-variable-name">n</span> = sprintf(buf, <span class="org-string">"Buzz\n%llu1\nFizz\n%llu3\n%llu4\nFizzBuzz\n%llu6\n%llu7\nFizz\n%llu9\nBuzz\nFizz\n%llu2\n%llu3\nFizz\nBuzz\n%llu6\nFizz\n%llu8\n%llu9\nFizzBuzz\n%llu1\n%llu2\nFizz\n%llu4\nBuzz\nFizz\n%llu7\n%llu8\nFizz\n"</span>, i, i, i, i, i, i, i + 1, i + 1, i + 1, i + 1, i + 1, i + 2, i + 2, i + 2, i + 2, i + 2);
+    i *= 10;
+    <span class="org-keyword">while</span> (j &lt; i) {
+      memcpy(t, buf, n);
+      t += n;
+      <span class="org-keyword">if</span> (t &gt;= &amp;out[65536]) {
+        <span class="org-type">char</span> *<span class="org-variable-name">u</span> = out;
+        <span class="org-keyword">do</span> {
+          <span class="org-type">int</span> <span class="org-variable-name">w</span> = write(1, u, &amp;out[65536] - u);
+          <span class="org-keyword">if</span> (w &gt; 0) u += w;
+        } <span class="org-keyword">while</span> (u &lt; &amp;out[65536]);
+        memcpy(out, out + 65536, t - &amp;out[65536]);
+        t -= 65536;
+      }
+      <span class="org-type">char</span> *<span class="org-variable-name">q</span> = buf;
+      <span class="org-keyword">for</span> (<span class="org-type">int</span> <span class="org-variable-name">k</span> = 0; k &lt; 16; k++) {
+        <span class="org-type">char</span> *<span class="org-variable-name">p</span> = q += o[k] + l;
+        <span class="org-keyword">if</span> (*p &lt; <span class="org-string">'7'</span>) *p += 3;
+        <span class="org-keyword">else</span> {
+          *p-- -= 7;
+          <span class="org-keyword">while</span> (*p == <span class="org-string">'9'</span>) *p-- = <span class="org-string">'0'</span>;
+          ++*p;
+        }
+      }
+      j += 3;
+    }
+  }
+}
+</pre>
+</div>
+
+<hr />
+
+<p>
+UPDATE(20220825): 又做了一些改进，现在在同事的机器上可以稳定在20GB/s上，而那个asm程序差不多是在40GB/s.
+</p>
+
+<p>
+这次的优化思路是使用 <a href="https://github.com/dirtysalt/codes/tree/master/cc/xx-test/fizzbuzz-gen.py">代码生成工具</a>，而不是使用模板。代码生成主要的目的是为了可以将要写的内容，通过计算的方式合并在一起，最后按照128bit/256bit写下去。
+</p>
+
+<p>
+因为计算开销代价很小，然后每次都可以按照16bytes/32bytes写下去：我估算了一下，如果digit prefix在8个字节的时候，差不多需要4-8条指令（假设6）就可以填满然后写入，所以带宽可以达到 16bytes/6insts. 如果按照3Ghz来计算的话，CPI是0.5, 那么可以达到16GB/s.
+</p>
+
+<p>
+代码生成方式和之前模板类似，模板是按照10个一组进行展开，而这个是按照100个一组展开。digit prefix最多可以有16位，所以对于数字有上限(&lt;=10^18).
+</p>
+
+<p>
+可以看看其中生成片段:
+</p>
+<ul class="org-ul">
+<li>gen_output_2_8 表示第二阶段，digit prefix长度是8，也就是len(pp) = 8</li>
+<li>先将pp载入到寄存器PP, X表示整合的内容，C则表示常数内容。</li>
+<li>常数字符串长度不会超过16(实际最大长度是13),  然后通过整数编码过来</li>
+<li>整个过程其实可以认为是个bit状态机，X塞满了就刷新出去，但是还会记录之前没有刷出去的bits.</li>
+</ul>
+
+<div class="org-src-container">
+<pre class="src src-cpp">
+<span class="org-type">char</span>* <span class="org-function-name">gen_output_2_8</span>(<span class="org-type">char</span>* <span class="org-variable-name">RE</span> buf, <span class="org-keyword">const</span> <span class="org-type">char</span>* <span class="org-variable-name">RE</span> pp) {
+<span class="org-type">uint64_t</span> <span class="org-variable-name">e0</span>=0,<span class="org-variable-name">e1</span>=0,<span class="org-variable-name">e2</span>=0,<span class="org-variable-name">e3</span>=0;
+memcpy(&amp;e0, pp + 0, 8);
+<span class="org-type">__m128i</span> <span class="org-variable-name">PP</span> = _mm_set_epi64x(e1, e0);
+<span class="org-type">__m128i</span> <span class="org-variable-name">X</span> = _mm_setzero_si128();
+<span class="org-type">__m128i</span> <span class="org-variable-name">P</span>, <span class="org-variable-name">C</span>;
+C = _mm_set_epi64x(2682LL, 8820658356000290114LL); <span class="org-comment-delimiter">// </span><span class="org-comment">Buzz\nFizz\n</span>
+X = C;
+X = _mm_or_si128(X, _mm_bslli_si128(PP, 10));
+_mm_storeu_si128((<span class="org-type">__m128i</span>*)buf, X); <span class="org-comment-delimiter">/* </span><span class="org-comment">X = _mm_setzero_si128();</span><span class="org-comment-delimiter"> */</span> buf += 16;
+X = _mm_bsrli_si128(PP, 6);
+C = _mm_set_epi64x(0LL, 668208LL); <span class="org-comment-delimiter">// </span><span class="org-comment">02\n</span>
+X = _mm_or_si128(X, _mm_bslli_si128(C, 2));
+X = _mm_or_si128(X, _mm_bslli_si128(PP, 5));
+C = _mm_set_epi64x(45004518722LL, 755050480103207728LL); <span class="org-comment-delimiter">// </span><span class="org-comment">03\nFizz\nBuzz\n</span>
+X = _mm_or_si128(X, _mm_bslli_si128(C, 13));
+_mm_storeu_si128((<span class="org-type">__m128i</span>*)buf, X); <span class="org-comment-delimiter">/* </span><span class="org-comment">X = _mm_setzero_si128();</span><span class="org-comment-delimiter"> */</span> buf += 16;
+C = _mm_bsrli_si128(C, 3);
+X = C;
+X = _mm_or_si128(X, _mm_bslli_si128(PP, 10));
+_mm_storeu_si128((<span class="org-type">__m128i</span>*)buf, X); <span class="org-comment-delimiter">/* </span><span class="org-comment">X = _mm_setzero_si128();</span><span class="org-comment-delimiter"> */</span> buf += 16;
+</pre>
+</div>
+
+<p>
+整个操作单位是128bit. 我也写了一个256bit的版本，其中最大的问题就是没有128bit上这样的bit shift操作。256bit上的bit shift操作是按照128bit lane来单独操作的，
+也不是不能写，但是写出来会比较难看，需要4条指令。
+</p>
+<ul class="org-ul">
+<li>将 y 左移 off 位，然后y的长度是size</li>
+<li>移动之之后 x = x | y</li>
+<li>这里需要计算y有多少位在另外一个128bit lane上，然后整体挪过去之后是要左移还是右移</li>
+</ul>
+
+<div class="org-src-container">
+<pre class="src src-py">    def mm256_merge(x, y, off, size):
+        assert size &lt;= 16
+        if off == 0:
+            return "%s = %s;" % (x, y)
+
+        if off + size &lt;= 16:
+            return "%s = _mm256_or_si256(%s, _mm256_bslli_epi128(%s, %s));" % (x, x, y, off)
+
+        # FIXME: not efficient.
+        rshift = 16 - off
+        if rshift &gt; 0:
+            inst = "__m256i t3 = _mm256_bsrli_epi128(t2, %d);" % (rshift);
+        elif rshift &lt; 0:
+            inst = "__m256i t3 = _mm256_bslli_epi128(t2, %d);" % (-rshift);
+        else:
+            inst = "__m256i t3 = t2;"
+
+        C = """{{ // mm256_merge({target}, {source}, {shift}, {size});
+__m256i t = _mm256_bslli_epi128({source}, {shift});
+__m256i t2 = _mm256_permute2f128_si256({source}, {source}, 0x08);
+{inst}
+{target} = _mm256_or_si256({target}, _mm256_or_si256(t, t3));
+}}
+""".format(target=x, source=y, shift=off, size=size, rshift=16 - off, inst=inst)
+        return C
+</pre>
+</div>
+
+<p>
+整个调试过程其实还挺麻烦的，但是好处是，上面代码只需要抽取片段就可以在单独的程序上调试，打印看看自己操作的结果是否正确。
+</p>
+
+<p>
+指令还可以继续简化一下，但是其实差别不是太多了，最后输出的代码比如是这样的，整个过程中是不需要中间变量P和C的。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-cpp"><span class="org-type">char</span>* <span class="org-function-name">gen_output_2_9</span>(<span class="org-type">char</span>* <span class="org-variable-name">RE</span> buf, <span class="org-keyword">const</span> <span class="org-type">char</span>* <span class="org-variable-name">RE</span> pp) {
+<span class="org-type">uint64_t</span> <span class="org-variable-name">e0</span>=0,<span class="org-variable-name">e1</span>=0;
+memcpy(&amp;e0, pp + 0, 8);
+memcpy(&amp;e1, pp + 8, 1);
+<span class="org-type">__m128i</span> <span class="org-variable-name">PP</span> = _mm_set_epi64x(e1, e0);
+<span class="org-type">__m128i</span> <span class="org-variable-name">X</span> = _mm_setzero_si128();
+<span class="org-type">__m128i</span> <span class="org-variable-name">P</span>, <span class="org-variable-name">C</span>;
+X = _mm_set_epi64x(2682LL, 8820658356000290114LL);<span class="org-comment-delimiter">// </span><span class="org-comment">(Buzz\nFizz\n &gt;&gt; 0) &lt;&lt; 0</span>
+X = _mm_or_si128(X, _mm_bslli_si128(PP, 10));
+_mm_storeu_si128((<span class="org-type">__m128i</span>*)buf, X); <span class="org-comment-delimiter">/* </span><span class="org-comment">X = _mm_setzero_si128();</span><span class="org-comment-delimiter"> */</span> buf += 16;
+X = _mm_bsrli_si128(PP, 6);
+X = _mm_or_si128(X, _mm_set_epi64x(0LL, 11210669948928LL));<span class="org-comment-delimiter">// </span><span class="org-comment">(02\n &gt;&gt; 0) &lt;&lt; 3</span>
+X = _mm_or_si128(X, _mm_bslli_si128(PP, 6));
+X = _mm_or_si128(X, _mm_set_epi64x(3458764513820540928LL, 0LL));<span class="org-comment-delimiter">// </span><span class="org-comment">(03\nFizz\nBuzz\n &gt;&gt; 0) &lt;&lt; 15</span>
+_mm_storeu_si128((<span class="org-type">__m128i</span>*)buf, X); <span class="org-comment-delimiter">/* </span><span class="org-comment">X = _mm_setzero_si128();</span><span class="org-comment-delimiter"> */</span> buf += 16;
+X = _mm_set_epi64x(175798901LL, 4758750622441146931LL);<span class="org-comment-delimiter">// </span><span class="org-comment">(03\nFizz\nBuzz\n &gt;&gt; 1) &lt;&lt; 0</span>
+X = _mm_or_si128(X, _mm_bslli_si128(PP, 12));
+_mm_storeu_si128((<span class="org-type">__m128i</span>*)buf, X); <span class="org-comment-delimiter">/* </span><span class="org-comment">X = _mm_setzero_si128();</span><span class="org-comment-delimiter"> */</span> buf += 16;
+</pre>
+</div>
+</div>
+<div id="content"><!-- DISQUS BEGIN --><div id="disqus_thread"></div><script>/***  RECOMMENDED CONFIGURATION VARIABLES: EDIT AND UNCOMMENT THE SECTION BELOW TO INSERT DYNAMIC VALUES FROM YOUR PLATFORM OR CMS.*  LEARN WHY DEFINING THESE VARIABLES IS IMPORTANT: https://disqus.com/admin/universalcode/#configuration-variables*/var disqus_config = function () {this.page.url = 'https://dirtysalt.github.io/html/fizzbuzz-optimzied-program.html';this.page.identifier = 'fizzbuzz-optimzied-program.html';};(function() {var d = document, s = d.createElement('script');s.src = 'https://dirlt.disqus.com/embed.js';s.setAttribute('data-timestamp', +new Date());(d.head || d.body).appendChild(s);})();</script><noscript>Please enable JavaScript to view the <a href="https://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript><!-- DISQUS END --></div></body>
+</html>

@@ -1,0 +1,57 @@
+#+title: 编译和安装bcc/bpftrace
+
+在centos上最简单的办法就是找找yum有没有源，没有源的话可以使用snap这个东西。这个东西我不知道是怎么搞的，感觉像是基于docker或者是容器化技术搞的。
+
+----------
+
+用snap安装bpftrace可以在这里找到安装办法 https://snapcraft.io/install/bpftrace/centos ，记住使用之前执行下面命令
+
+#+BEGIN_QUOTE
+sudo snap connect bpftrace:system-trace
+#+END_QUOTE
+
+如果要让sudo可以执行bpftrace，需要更新 `/etc/sudoers` (下面也将bcc-tools加入到了sudo路径下面）
+
+#+BEGIN_QUOTE
+Defaults    secure_path = /sbin:/bin:/usr/sbin:/usr/bin:/usr/share/bcc/tools:/var/lib/snapd/snap/bin
+#+END_QUOTE
+
+但是用这个binary执行 `ustack` 函数感觉特别慢。我google了一下这个问题，大部分都是来自brendan gregg的blog, 但是几乎没有人遇到过ustack执行慢的问题。
+
+我怀疑是不是因为这个版本没有做编译优化，因为我用的是snap安装的binary, 估计大部分人不是使用这个途径安装的，这也是我后面想试试自己编译的动机。
+
+不过事实证明我错了，最后我发现就是address到symbol解析比较慢，使用 `BPFTRACE_CACHE_USER_SYMBOLS=1` 变量就好了，并且这个设置必须写在sudo之后。
+
+----------
+
+编译过程是非常痛苦的，bcc/bpf大部分编译组件可以使用yum安装，但是llvm/clang通常还需要自定义的安装，编译llvm/clang这个慢啊。而且中间还猜过不少坑，
+
+因为bcc/bpf需要llvm使用某些编译参数才能进行联编，这么往返折腾了估计有3-4次吧，每次在我们104vCPU的机器上编译还需要花费差不多10-20分钟。
+
+这里记录一些编译参数，如果有人恰好需要自己编译bcc/bpftrace, 而且不知道怎么设置参数的话，希望对你有帮助。
+
+下面 `doris-cmake` 其实是这个缩写，没有什么特殊的东西：加符号的优化编译，以及指定安装位置
+
+#+BEGIN_QUOTE
+alias doris-cmake="cmake -DCMAKE_INSTALL_PREFIX=$HOME/installed -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_BUILD_TYPE=RelWithDebInfo $@"
+#+END_QUOTE
+
+*编译llvm project(llvm-project-13.0.0)*
+
+#+BEGIN_QUOTE
+cmake -S llvm -B build -G "Unix Makefiles" -DCMAKE_INSTALL_PREFIX=$HOME/installed -DCMAKE_BUILD_TYPE=RelWithDebInfo -DLLVM_ENABLE_PROJECTS="clang" -DLLVM_ENABLE_RUNTIMES="libcxx;libcxxabi"  -DCMAKE_INSTALL_LIBDIR=lib -DLLVM_ENABLE_RTTI=ON -DLLVM_INCLUDE_EXAMPLES=OFF -DCLANG_BUILD_EXAMPLES=OFF -DLLVM_BUILD_LLVM_DYLIB=ON -DLLVM_LINK_LLVM_DYLIB=ON -DLLVM_INCLUDE_TESTS=OFF
+#+END_QUOTE
+
+*编译bcc(github master)*
+
+#+BEGIN_QUOTE
+doris-cmake -DENABLE_EXAMPLES=OFF -DENABLE_LLVM_SHARED=ON -DENABLE_TESTS=OFF  ../
+#+END_QUOTE
+
+*编译bpftrace(0.14.1)*
+
+需要修改一些代码，我记得是在 `attach_uprobe.cpp` 某个地方，强制enable `LIBBCC_ATTACH_UPROBE_SEVEN_ARGS_SIGNATURE` 这个宏
+
+#+BEGIN_QUOTE
+doris-cmake -DBUILD_TESTING=OFF ../
+#+END_QUOTE

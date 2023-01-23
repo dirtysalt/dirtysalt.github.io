@@ -1,0 +1,53 @@
+#+title:  Narrow Python Build
+
+最近线上遇到了一个问题，是在访问 https://feed.awesound.com/pysva 这个URL时候出现的。重现过程非常简单
+
+#+BEGIN_EXAMPLE
+In [25]: url = 'https://feed.awesound.com/pysva'
+
+In [26]: r = requests.get(url)
+---------------------------------------------------------------------------
+ValueError                                Traceback (most recent call last)
+<ipython-input-26-0aec23ab0de0> in <module>()
+----> 1 r = requests.get(url)
+
+...
+
+/usr/local/Cellar/python/2.7.10_2/Frameworks/Python.framework/Versions/2.7/lib/python2.7/site-packages/requests/packages/urllib3/contrib/pyopenssl.pyc in get_subj_alt_name(peer_cert)
+    191     # faster than looping in Python)
+    192     try:
+--> 193         ext = cert.extensions.get_extension_for_class(
+    194             x509.SubjectAlternativeName
+    195         ).value
+
+/usr/local/Cellar/python/2.7.10_2/Frameworks/Python.framework/Versions/2.7/lib/python2.7/site-packages/cryptography/hazmat/backends/openssl/x509.pyc in extensions(self)
+    128     @property
+    129     def extensions(self):
+--> 130         return _CERTIFICATE_EXTENSION_PARSER.parse(self._backend, self._x509)
+    131
+    132     @property
+
+...
+
+/usr/local/Cellar/python/2.7.10_2/Frameworks/Python.framework/Versions/2.7/lib/python2.7/encodings/punycode.pyc in insertion_sort(base, extended, errors)
+    178             char = ord('?')
+    179         pos = pos % (len(base) + 1)
+--> 180         base = base[:pos] + unichr(char) + base[pos:]
+    181         bias = adapt(delta, (extpos == 0), len(base))
+    182         extpos = newpos
+
+ValueError: unichr() arg not in range(0x10000) (narrow Python build)
+#+END_EXAMPLE
+
+在很长一段时间内没有遇到过这个问题。什么叫做 "narrow python build" , 就是使用两个字节来存储一个unicode字符。从 stacktrace 上来看，这个问题是处在解析SSL证书的时候出现的。
+
+至于如何来解决这个 "narrow python build" 问题，可以看 [[https://ephrain.net/python-%E8%87%AA%E5%B7%B1%E7%B7%A8%E8%AD%AF-wide-python-%E8%A7%A3%E6%B1%BA-narrow-python-%E7%9A%84%E5%95%8F%E9%A1%8C/][这篇]] 文章（没有什么好的解决办法，两个办法的成本都非常高，一个是重新编译Python2, 一个是切换到Python3)
+
+为了更加确定是SSL证书的问题，我们可以访问http站点，实验证明的确是这样。
+
+#+BEGIN_EXAMPLE
+In [27]: r = requests.get(url.replace('https://', 'http://'))
+
+In [28]: r
+Out[28]: <Response [200]>
+#+END_EXAMPLE

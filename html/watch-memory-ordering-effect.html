@@ -1,0 +1,172 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>观察Memory Ordering效果</title>
+<meta name="author" content="dirtysalt" />
+<meta name="generator" content="Org Mode" />
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content" class="content">
+<h1 class="title">观察Memory Ordering效果</h1>
+<p>
+<a href="https://github.com/dirtysalt/codes/tree/master/cc/misc/WatchMemoryOrdering.cpp">代码</a> 参考了这篇文章 <a href="https://preshing.com/20120515/memory-reordering-caught-in-the-act/">https://preshing.com/20120515/memory-reordering-caught-in-the-act/</a>
+</p>
+
+<p>
+这件事情比较重要的原因是，我们需要有个实验平台才能验证自己的理论是否正确，尤其是做性能优化(memory barrier). 如果性能提升上去了，但是发现结果会出错，即便是以比较小的概率出错，那么我觉得这个性能提升也是不值得的。
+</p>
+
+<p>
+这个小程序是这样的，三个线程：
+</p>
+<ol class="org-ol">
+<li>t0. 对 x=1, r1=y 进行操作</li>
+<li>t1. 对 y=1, r1=x 进行操作</li>
+<li>control. 控制t0, t1同时执行上面的操作</li>
+</ol>
+
+<p>
+在原文里面是在Win32上使用信号量机制来做latch的，我这里改做了CAS. 使用随机数是希望等待一定时间，好让t0,t1可以同时开始进行操作，提高出现问题的几率。
+三个线程没有任何blocking的操作，所以可能会比较费CPU，使用率可能能到300%.
+</p>
+
+<pre class="example" id="org3fe48e9">
+doris-sandbox04 :: ~ » g++ WatchMemoryOrdering.cpp -O2 -lpthread
+doris-sandbox04 :: ~ » ./a.out
+1 reorders detected after 366 iterations
+2 reorders detected after 413 iterations
+3 reorders detected after 2495 iterations
+4 reorders detected after 4144 iterations
+5 reorders detected after 4362 iterations
+6 reorders detected after 5493 iterations
+7 reorders detected after 5902 iterations
+
+doris-sandbox04 :: ~ » g++ WatchMemoryOrdering.cpp -O2 -lpthread -DUSE_FENCE
+doris-sandbox04 :: ~ » time ./a.out
+^C
+./a.out  12.31s user 3.66s system 295% cpu 5.408 total
+</pre>
+
+<p>
+这是一个很不错的实验。过去我一直以为复现这个问题比较困难，现在发现也不需要太多代码就可以做到，关键还是在设计精巧的实验上。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-cpp"><span class="org-comment-delimiter">/* </span><span class="org-comment">coding:utf-8</span>
+<span class="org-comment"> * Copyright (C) dirlt</span>
+<span class="org-comment-delimiter"> */</span>
+
+<span class="org-preprocessor">#include</span> <span class="org-string">&lt;atomic&gt;</span>
+<span class="org-preprocessor">#include</span> <span class="org-string">&lt;condition_variable&gt;</span>
+<span class="org-preprocessor">#include</span> <span class="org-string">&lt;cstdio&gt;</span>
+<span class="org-preprocessor">#include</span> <span class="org-string">&lt;cstdlib&gt;</span>
+<span class="org-preprocessor">#include</span> <span class="org-string">&lt;cstring&gt;</span>
+<span class="org-preprocessor">#include</span> <span class="org-string">&lt;functional&gt;</span>
+<span class="org-preprocessor">#include</span> <span class="org-string">&lt;iostream&gt;</span>
+<span class="org-preprocessor">#include</span> <span class="org-string">&lt;map&gt;</span>
+<span class="org-preprocessor">#include</span> <span class="org-string">&lt;memory&gt;</span>
+<span class="org-preprocessor">#include</span> <span class="org-string">&lt;mutex&gt;</span>
+<span class="org-preprocessor">#include</span> <span class="org-string">&lt;string&gt;</span>
+<span class="org-preprocessor">#include</span> <span class="org-string">&lt;thread&gt;</span>
+<span class="org-preprocessor">#include</span> <span class="org-string">&lt;vector&gt;</span>
+
+<span class="org-comment-delimiter">// </span><span class="org-comment">https://preshing.com/20120515/memory-reordering-caught-in-the-act/</span>
+
+<span class="org-keyword">using</span> <span class="org-keyword">namespace</span> <span class="org-constant">std</span>;
+
+<span class="org-type">atomic</span>&lt;<span class="org-type">int</span>&gt; <span class="org-variable-name">t0</span>, <span class="org-variable-name">t1</span>, <span class="org-variable-name">ctl</span>;
+<span class="org-type">int</span> <span class="org-variable-name">r0</span>, <span class="org-variable-name">r1</span>;
+<span class="org-type">int</span> <span class="org-variable-name">X</span>, <span class="org-variable-name">Y</span>;
+<span class="org-keyword">const</span> <span class="org-type">int</span> <span class="org-variable-name">waiting</span> = 20;
+
+<span class="org-preprocessor">#define</span> <span class="org-function-name">WAIT_AND_SET</span>(<span class="org-variable-name">t</span>, <span class="org-variable-name">exp</span>, <span class="org-variable-name">act</span>)                     \
+    <span class="org-keyword">do</span> {                                              \
+        <span class="org-keyword">for</span> (;;) {                                    \
+            <span class="org-type">int</span> <span class="org-variable-name">_exp</span> = exp;                           \
+            <span class="org-keyword">if</span> (t.compare_exchange_strong(_exp, 0)) { \
+                <span class="org-keyword">break</span>;                                \
+            }                                         \
+        }                                             \
+    } <span class="org-keyword">while</span> (0)
+
+<span class="org-preprocessor">#ifdef</span> USE_FENCE
+<span class="org-preprocessor">#define</span> <span class="org-function-name">FENCE</span>() atomic_thread_fence(memory_order_seq_cst)
+<span class="org-preprocessor">#else</span>
+<span class="org-preprocessor">#define</span> <span class="org-function-name">FENCE</span>()
+<span class="org-preprocessor">#endif</span>
+
+<span class="org-type">void</span> <span class="org-function-name">thread0</span>() {
+    <span class="org-keyword">for</span> (;;) {
+        WAIT_AND_SET(t0, 1, 0);
+        <span class="org-keyword">while</span> ((rand() % waiting) != 0) {
+        }
+
+        X = 1;
+        FENCE();
+        r0 = Y;
+
+        ctl.fetch_add(1);
+    }
+}
+
+<span class="org-type">void</span> <span class="org-function-name">thread1</span>() {
+    <span class="org-keyword">for</span> (;;) {
+        WAIT_AND_SET(t1, 1, 0);
+        <span class="org-keyword">while</span> ((rand() % waiting) != 0) {
+        }
+
+        Y = 1;
+        FENCE();
+        r1 = X;
+
+        ctl.fetch_add(1);
+    }
+}
+
+<span class="org-type">void</span> <span class="org-function-name">control</span>() {
+    <span class="org-type">int</span> <span class="org-variable-name">detected</span> = 0;
+    <span class="org-type">int</span> <span class="org-variable-name">iterations</span> = 0;
+
+    <span class="org-keyword">for</span> (;;) {
+        X = 0;
+        Y = 0;
+        iterations++;
+        t0.store(1);
+        t1.store(1);
+
+        WAIT_AND_SET(ctl, 2, 0);
+        <span class="org-keyword">if</span> (r1 == 0 &amp;&amp; r0 == 0) {
+            detected++;
+            printf(<span class="org-string">"%d reorders detected after %d iterations\n"</span>, detected,
+                   iterations);
+        }
+    }
+}
+
+<span class="org-type">int</span> <span class="org-function-name">main</span>() {
+    <span class="org-comment-delimiter">// </span><span class="org-comment">initialization.</span>
+    r0 = 1;
+    r1 = 1;
+    t0 = 0;
+    t1 = 0;
+    ctl = 0;
+    X = 0;
+    Y = 0;
+    <span class="org-comment-delimiter">// </span><span class="org-comment">start thread.</span>
+    <span class="org-type">thread</span> <span class="org-variable-name">_t0</span>(thread0);
+    <span class="org-type">thread</span> <span class="org-variable-name">_t1</span>(thread1);
+    <span class="org-type">thread</span> <span class="org-variable-name">_ctl</span>(control);
+    _t0.join();
+    _t1.join();
+    _ctl.join();
+    <span class="org-keyword">return</span> 0;
+}
+</pre>
+</div>
+</div>
+<div id="content"><!-- DISQUS BEGIN --><div id="disqus_thread"></div><script>/***  RECOMMENDED CONFIGURATION VARIABLES: EDIT AND UNCOMMENT THE SECTION BELOW TO INSERT DYNAMIC VALUES FROM YOUR PLATFORM OR CMS.*  LEARN WHY DEFINING THESE VARIABLES IS IMPORTANT: https://disqus.com/admin/universalcode/#configuration-variables*/var disqus_config = function () {this.page.url = 'https://dirtysalt.github.io/html/watch-memory-ordering-effect.html';this.page.identifier = 'watch-memory-ordering-effect.html';};(function() {var d = document, s = d.createElement('script');s.src = 'https://dirlt.disqus.com/embed.js';s.setAttribute('data-timestamp', +new Date());(d.head || d.body).appendChild(s);})();</script><noscript>Please enable JavaScript to view the <a href="https://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript><!-- DISQUS END --></div></body>
+</html>

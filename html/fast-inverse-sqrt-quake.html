@@ -1,0 +1,175 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Fast Inverse Square Root 快速平方根倒数</title>
+<meta name="author" content="dirtysalt" />
+<meta name="generator" content="Org Mode" />
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content" class="content">
+<h1 class="title">Fast Inverse Square Root 快速平方根倒数</h1>
+<p>
+<a href="https://www.youtube.com/watch?v=p8u_k2LIZyo">https://www.youtube.com/watch?v=p8u_k2LIZyo</a>
+</p>
+
+<p>
+<a href="https://en.wikipedia.org/wiki/Fast_inverse_square_root">https://en.wikipedia.org/wiki/Fast_inverse_square_root</a>
+</p>
+
+<p>
+IEEE 754 的float表示包括三个部分：
+</p>
+<ol class="org-ol">
+<li>Sign(1bit) 在这里肯定都是0</li>
+<li>Exponent(8bit)，后面简写E</li>
+<li>Mantissa(23bit)，后面简写M</li>
+</ol>
+<p>
+那么浮点数表示是 (1 + M/(2^23)) * 2^(E-127).
+</p>
+
+<p>
+视频里面解释的非常清楚，大致思想包括下面几个：
+</p>
+<ol class="org-ol">
+<li>使用log2去将(E-127)部分分离出来</li>
+<li>log2(1+x) ~= (x + u), 其中u涉及到魔数的选择，那么log(1+M/(2^23)) ~= M/(2^23) + u</li>
+<li>转换成为整数表示 (E + M/(2^23) ) &lt;&lt; 23 = (E&lt;&lt;23) + M. 这就是float的整数表示</li>
+<li>牛顿迭代计算f(x) = 0的话，迭代方法是 x = x0 - f(x0) / f'(x0). 这里f(x) = 1/(x^2) - number = 0</li>
+</ol>
+
+<div class="org-src-container">
+<pre class="src src-c"><span class="org-type">float</span> <span class="org-function-name">Q_rsqrt</span>( <span class="org-type">float</span> <span class="org-variable-name">number</span> )
+{
+    <span class="org-type">long</span> <span class="org-variable-name">i</span>;
+    <span class="org-type">float</span> <span class="org-variable-name">x2</span>, <span class="org-variable-name">y</span>;
+    <span class="org-keyword">const</span> <span class="org-type">float</span> <span class="org-variable-name">threehalfs</span> = 1.5F;
+
+    x2 = number * 0.5F;
+    y  = number;
+    i  = * ( <span class="org-type">long</span> * ) &amp;y;                       <span class="org-comment-delimiter">// </span><span class="org-comment">evil floating point bit level hacking</span>
+    i  = 0x5f3759df - ( i &gt;&gt; 1 );               <span class="org-comment-delimiter">// </span><span class="org-comment">what the fuck?</span>
+    y  = * ( <span class="org-type">float</span> * ) &amp;i;
+    y  = y * ( threehalfs - ( x2 * y * y ) );   <span class="org-comment-delimiter">// </span><span class="org-comment">1st iteration</span>
+<span class="org-comment-delimiter">//    </span><span class="org-comment">y  = y * ( threehalfs - ( x2 * y * y ) );   // 2nd iteration, this can be removed</span>
+
+    <span class="org-keyword">return</span> y;
+}
+</pre>
+</div>
+
+<p>
+总之整来整去得到的就是下面这个式子（牛顿迭代法之前一步）
+</p>
+
+
+<div id="org619bbfd" class="figure">
+<p><img src="../images/fast-inverse-sqrt-equation.png" alt="fast-inverse-sqrt-equation.png" />
+</p>
+</div>
+
+<p>
+这里u是log(1+x) - x的估算。如果假设u=0的话，那么计算出来的浮点数如下，M部分误差在6%左右
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython">In [56]: a = (1&lt;&lt; 23) * 1.5  * (127)
+
+In [57]: b = 0x5f3759df
+
+In [60]: a, b, a-b, (a-b) / (1 &lt;&lt; 23)
+Out[60]: (1598029824.0, 1597463007, 566817.0, 0.06756985187530518)
+</pre>
+</div>
+
+<p>
+我们可以做个试验看看不同u下面，M部分的误差是否会有所改善，以及平均下来u大约在什么范围
+</p>
+
+<div class="org-src-container">
+<pre class="src src-ipython">In [11]: def test():
+    ...:     data = []
+    ...:     import math
+    ...:     for x2 in range(100):
+    ...:         x = x2 * 0.01
+    ...:         u = math.log2(1 + x) - x
+    ...:         a = (1 &lt;&lt; 23) * 1.5 * (127- u)
+    ...:         b = 0x5f3759df
+    ...:         r = abs(a - b) / (1 &lt;&lt; 23)
+    ...:         data.append((round(x, 4), round(u, 4), round(r, 4)))
+    ...:     data.sort(key = lambda x: x[2])
+    ...:     avgu = sum((x[1] for x in data)) / len(data)
+    ...:     print('====top10=====')
+    ...:     for x in data[:10]:
+    ...:         print(x)
+    ...:     value = 1.5 * (1 &lt;&lt; 23) * (127 - avgu)
+    ...:     number = hex(int(value))
+    ...:     print('avg u = %.4f, number = %s' % (avgu, number))
+</pre>
+</div>
+
+<p>
+结果如下，可以看到u大约取值是在0.0439 - 0.046区间内，平均u是0.0573, 对应的number就是 0x5f34ff97.
+至于 0x5f3759df 这个魔数，对应的u是 0.0450466.
+</p>
+
+<pre class="example" id="orgd82241a">
+====top10=====
+(0.81, 0.046, 0.0014)
+(0.82, 0.0439, 0.0017)
+(0.13, 0.0463, 0.0019)
+(0.12, 0.0435, 0.0023)
+(0.8, 0.048, 0.0044)
+(0.83, 0.0418, 0.0048)
+(0.14, 0.049, 0.006)
+(0.11, 0.0406, 0.0067)
+(0.79, 0.05, 0.0074)
+(0.84, 0.0397, 0.008)
+avg u = 0.0573, number = 0x5f34ff97
+</pre>
+
+
+<hr />
+
+<p>
+按照这个思路，我们也可以写个 sqrt(x) 的实现，只不过在牛顿迭代的时候，有除法计算，而且需要迭代个两次才能得到比较准确的结果，有点不太讲究。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-c"><span class="org-type">float</span> <span class="org-function-name">Q_sqrt</span>( <span class="org-type">float</span> <span class="org-variable-name">number</span> )
+{
+    <span class="org-type">long</span> <span class="org-variable-name">i</span>;
+    <span class="org-type">float</span> <span class="org-variable-name">y</span>;
+
+    <span class="org-comment-delimiter">// </span><span class="org-comment">X = int(127-u) * (1 &lt;&lt; 22)</span>
+    <span class="org-comment-delimiter">// </span><span class="org-comment">u = 0.0573</span>
+<span class="org-preprocessor">    #define</span> <span class="org-variable-name">X</span> 0x1fbc5532
+    <span class="org-comment-delimiter">// </span><span class="org-comment">u = 0.045</span>
+    <span class="org-comment-delimiter">// </span><span class="org-comment">#define X 0x1fbd1df4</span>
+    y  = number;
+    i  = * ( <span class="org-type">long</span> * ) &amp;y;
+    i = (i &gt;&gt; 1) + X;
+    <span class="org-comment-delimiter">// </span><span class="org-comment">to avoid negative value.</span>
+    <span class="org-comment-delimiter">// </span><span class="org-comment">i = i &amp; 0x7fffffff;</span>
+    y  = * ( <span class="org-type">float</span> * ) &amp;i;
+    y = 0.5f * (y + number / y);
+    y = 0.5f * (y + number / y);
+    <span class="org-keyword">return</span> y;
+}
+
+<span class="org-type">int</span> <span class="org-function-name">main</span>() {
+    <span class="org-keyword">for</span>(<span class="org-type">int</span> <span class="org-variable-name">i</span>=10;i&lt;=1200;i+=20) {
+        <span class="org-type">float</span> <span class="org-variable-name">x</span> = Q_sqrt(i);
+        cout &lt;&lt; <span class="org-string">"i = "</span> &lt;&lt; i &lt;&lt; <span class="org-string">", x=sqrt(i) = "</span> &lt;&lt; x &lt;&lt; <span class="org-string">", x*x= "</span> &lt;&lt; x * x &lt;&lt; endl;
+    }
+    <span class="org-keyword">return</span> 0;
+}
+</pre>
+</div>
+</div>
+<div id="content"><!-- DISQUS BEGIN --><div id="disqus_thread"></div><script>/***  RECOMMENDED CONFIGURATION VARIABLES: EDIT AND UNCOMMENT THE SECTION BELOW TO INSERT DYNAMIC VALUES FROM YOUR PLATFORM OR CMS.*  LEARN WHY DEFINING THESE VARIABLES IS IMPORTANT: https://disqus.com/admin/universalcode/#configuration-variables*/var disqus_config = function () {this.page.url = 'https://dirtysalt.github.io/html/fast-inverse-sqrt-quake.html';this.page.identifier = 'fast-inverse-sqrt-quake.html';};(function() {var d = document, s = d.createElement('script');s.src = 'https://dirlt.disqus.com/embed.js';s.setAttribute('data-timestamp', +new Date());(d.head || d.body).appendChild(s);})();</script><noscript>Please enable JavaScript to view the <a href="https://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript><!-- DISQUS END --></div></body>
+</html>

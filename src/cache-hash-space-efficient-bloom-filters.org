@@ -1,0 +1,34 @@
+#+title: Cache-, Hash- and Space-Efficient Bloom Filters
+
+主要思想就是将bloom filter进行分块(block). 每个块可以使用一个或者几个SIMD指令覆盖到比如32字节/64字节，这样每次set bits的话可以使用几条指令就完成。并且因为64字节是cache line大小，在申请的时候注意和cache line对齐，这样可以做到cache efficient.
+
+至于hash-efficient的话，我们首先使用一个hash function选定要在那个block上进行set bits, 然后利用另外一个函数去打散这个hash value，作为要去set的bits. 这样总的下来只需要使用2个hash function就行，比原始的BF里面使用k个hash functions也节省。在论文里面就叫做这个hash value的bit patterns.
+
+space-efficient是要对bitmap进行压缩，方法是只存储bitmap上设置的位置，然后使用golomb coding编码，可以得到最优编码方式。
+
+这篇论文没有公开代码，网上有份的参考实现  https://github.com/FastFilter/fastfilter_cpp/blob/master/src/bloom/simd-block.h 其中最关键的操作是
+
+#+BEGIN_SRC cpp
+template <typename HashFamily>
+
+[[gnu::always_inline]] inline __m256i
+SimdBlockFilter<HashFamily>::MakeMask(const uint32_t hash) noexcept {
+    const __m256i ones = _mm256_set1_epi32(1);
+    // Odd contants for hashing:
+    const __m256i rehash = _mm256_setr_epi32(0x47b6137bU, 0x44974d91U, 0x8824ad5bU,
+    0xa2b7289dU, 0x705495c7U, 0x2df1424bU, 0x9efc4947U, 0x5c6bfb31U);
+
+    // Load hash into a YMM register, repeated eight times
+    __m256i hash_data = _mm256_set1_epi32(hash);
+
+    // Multiply-shift hashing ala Dietzfelbinger et al.: multiply 'hash' by eight different
+    // odd constants, then keep the 5 most significant bits from each product.
+    hash_data = _mm256_mullo_epi32(rehash, hash_data);
+    hash_data = _mm256_srli_epi32(hash_data, 27);
+
+    // Use these 5 bits to shift a single bit to a location in each 32-bit lane
+    return _mm256_sllv_epi32(ones, hash_data);
+}
+#+END_SRC
+
+操作其实就是 hash * rehash, 然后取低32位的高5位，用于这个hash的set bits. 至于为什么选择这几个rehash作为bit patterns, 我没有太搞明白。要是能搞清楚这个，应该可以学到不少东西。

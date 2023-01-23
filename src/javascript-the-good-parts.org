@@ -1,0 +1,114 @@
+#+title: JavaScript语言精粹
+
+JavaScript只有一个单一的数字类型(Number)。它在内部被表示为64位的浮点数，和Java的double一样。不像大多数其他的编程语言，它没有分离出整数类型，所以1和1.0是相同的值。这提供了很大的方便，因为它完全避免了短整数的溢出问题，并且你需要知道的关于数字的一切就是它是一种数字。这样就避免了一大类因数字类型导致的错误。
+
+原型连接只有在检索值的时候才会被用到。如果我们尝试去获取对象的某个属性值，且该对象没有此属性名，那么JavaScript会试着从原型对象中获取属性值。如果那么原型对象也没有该属性，那么再从它的原型中寻找，以此类推，直到该过程最后到达终点Object.prototype. 如果属性完全不在原型链中的话，那么返回undefined值。这个过程称为委托（delegation）。但是 `hasOwnProperty` 不会查询原型链，只会在当前对象中查找属性。
+
+在JavaScript中函数就是对象。对象是Name/Value对的集合并拥有一个连接到原型对象的隐藏链接。对象字面量产生的对象连接到Object.prototype. 函数对象连接到Function.prototype（该原型对象本身连接到Object.prototype，另外还有Array.prototype, String.prototype). 每个函数在创建时附有两个附加的隐藏属性：函数的上下文和实现函数的行为代码。
+
+函数调用的4中模式：
+1. method invocation: `obj.call()` 然后obj绑定到this关键字上。
+2. function invocation: `add(1,2)` this绑定在全局对象window上。
+3. constructor invocation: `new ClassA` 这里ClassA是一个函数并且要求首字母大写，必须使用new运算符。
+    1. `var p = new ClassA()` 那么 `p.__proto__ === ClassA.prototype`
+    2. 然后ClassA.prototype里面有一个 `construtor` 属性 ` ClassA.prototype.constructor === ClassA`
+    3. 最后 `ClassA instanceof Function`
+4. apply invocaition: `funcObj.apply(ctx, parameters)` 其中ctx绑定函数体中的`this`，这个可以改变执行上下文。
+
+关于prototype和__proto__这个问题可以在 https://www.zhihu.com/question/34183746 里面找找
+
+#+BEGIN_SRC Python
+function ClassA() {
+}
+
+console.log(ClassA instanceof Function)
+console.log(ClassA.__proto__ == Function.prototype)
+console.log(ClassA.prototype.constructor === ClassA)
+
+a = new ClassA()
+console.log(a.__proto__ === ClassA.prototype)
+
+var b = [1,2,3,4]
+console.log(b.__proto__ === Array.prototype)
+
+var c = "hello, world"
+console.log(c.__proto__ === String.prototype)
+#+END_SRC
+
+
+模块模式(module pattern)的一般形式是：一个定义了私有变量的和函数的函数；利用闭包创建可以访问私有变量和函数的特权函数；最后返回这个特权函数，或者是把他们保存在可以访问到的地方。
+
+#+BEGIN_SRC Python
+function moduleA() {
+    var status = 10
+    var obj = {
+        get_status: function() { return status; },
+        set_status: function(v) { status = v; }
+    }
+    return obj
+}
+#+END_SRC
+
+使用constructor invocation这种函数调用模式来模拟类(书里面成为伪类，pseudoclassical)存在许多问题：
+1. 没有私有环境，所有属性是公开的；无法访问super父类（调动父类的构造函数也不方便）
+2. 调用构造器函数时如果忘记增加new前缀，那么this会绑定到全局对象上，污染全局变量，而且没有任何警告和错误
+3. 这是一个严重的语言设计错误，为了降低这个问题带来的风险，所有构造器函数名约定首字母大写。
+4. 在基于类的语言中，类的继承是代码重用的唯一方式，而JavaScript则有更好的选择。
+
+更好的方式应该是使用类似模块模式，下面是具体的模板可以参考，然后构造函数参数最好使用object而不是参数列表。另外可以参考文章
+https://wangdoc.com/javascript/oop/prototype.html
+
+#+BEGIN_SRC Python
+// 这两个函数增加父类函数查找方法
+Function.prototype.method = function(name, func) {
+    if (!this.prototype.hasOwnProperty(name)) {
+        this.prototype[name] = func
+    } else {
+        console.log("name already existed", name)
+    }
+}
+Object.method('superior', function(name) {
+    var that = this
+    var method = this[name]
+    return function() {
+        return method.apply(that, arguments)
+    }
+})
+
+// 构造函数直接返回对象，对象内部有各种方法
+// 这些方法通过闭包实现，来包装私有变量
+function createAnimal(spec) {
+    var age = spec.age
+    var that = {}
+    function get_age() {
+        return age
+    }
+    that.get_age = get_age
+    return that
+}
+
+animal = createAnimal({age: 10})
+console.log(animal.get_age())
+
+function createCat(spec) {
+    var name = spec.name
+    var that = createAnimal(spec)
+    function get_name() {
+        return name
+    }
+    that.get_name = get_name
+    super_get_age = that.superior('get_age') // 获得父类方法
+    function get_age() {
+        return "age = " + super_get_age() + ", name = " + get_name()
+    }
+    that.get_age = get_age
+    return that
+}
+cat = createCat({age:10, name:"kitty"})
+console.log(cat.get_age())
+#+END_SRC
+
+精简的JavaScript里面都是好东西，包括以下主要内容：
+1. 函数是头等对象：函数是有词法作用域的闭包。
+2. 基于原型继承的动态对象：对象是无类别的。我们可以通过普通的赋值给任何一个对象增加一个新成员元素，可以从另外一个对象继承成员元素。
+3. 对象字面量和数组字面量：对创建对象和数组非常方便，也是JSON的灵感来源。

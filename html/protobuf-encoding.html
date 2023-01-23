@@ -1,0 +1,231 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Protobuf Encoding</title>
+<meta name="author" content="dirtysalt" />
+<meta name="generator" content="Org Mode" />
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content" class="content">
+<h1 class="title">Protobuf Encoding</h1>
+<p>
+<a href="https://developers.google.com/protocol-buffers/docs/encoding">https://developers.google.com/protocol-buffers/docs/encoding</a>
+</p>
+
+<p>
+对于下面这样的结构，假设 a = 150 的话，那么编码是 08 96 01
+</p>
+
+<div class="org-src-container">
+<pre class="src src-Protobuf">message Test1 {
+  optional int32 a = 1;
+}
+</pre>
+</div>
+
+<p>
+protobuf是按照key-value pair来进行编码的，key包含 (field_number, wire_type).
+</p>
+
+<p>
+因为wire_type包含下面6种，所以key可以用 (field_number &lt;&lt; 3) | wire_type 进行编码。
+</p>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-right" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-right">Type</th>
+<th scope="col" class="org-left">Meaning</th>
+<th scope="col" class="org-left">Used For</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-right">0</td>
+<td class="org-left">Varint</td>
+<td class="org-left">int32, int64, uint32, uint64, sint32, sint64, bool, enum</td>
+</tr>
+
+<tr>
+<td class="org-right">1</td>
+<td class="org-left">64-bit</td>
+<td class="org-left">fixed64, sfixed64, double</td>
+</tr>
+
+<tr>
+<td class="org-right">2</td>
+<td class="org-left">Length-delimited</td>
+<td class="org-left">string, bytes, embedded messages, packed repeated fields</td>
+</tr>
+
+<tr>
+<td class="org-right">3</td>
+<td class="org-left">Start group</td>
+<td class="org-left">groups (deprecated)</td>
+</tr>
+
+<tr>
+<td class="org-right">4</td>
+<td class="org-left">End group</td>
+<td class="org-left">groups (deprecated)</td>
+</tr>
+
+<tr>
+<td class="org-right">5</td>
+<td class="org-left">32-bit</td>
+<td class="org-left">fixed32, sfixed32, float</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+解析过程是数据驱动的：先解析key, 判断wire_type和代码的type是否compatible, 然后解析value.
+</p>
+
+<p>
+对于length-delimited类型来说，先是length, 然后是length长度的字节流。因为string, bytes, embedded messages以及repeated fields都是同一种类型方式，所以实际上可以用string去解析embedded messages，得到的就会是raw bytes.
+</p>
+
+<p>
+repeated fields在proto2的编码方式还是key-value, key-value并不是相邻的，可能散落一个message字节流的各个位置。但是这样打包会带来key的重复开销，所以在proto3使用packed方式，要求key-value是相邻的，布局格式是 key, payload_size, value1, value2 &#x2026;
+</p>
+
+<p>
+考虑最开始的例子，a是int32, 那么type是0. field_number = 1, 所以key = (1 &lt;&lt; 3) | 0 = 8, 那么 96 01是怎么来的呢？
+</p>
+
+<hr />
+
+<p>
+为了节省空间，protobuf对于非fixed size的数字做的是变长编码
+</p>
+<ul class="org-ul">
+<li>一个字节来说，msb表示后续是否还有字节，1表示还是，0表示结束</li>
+<li>使用little-endian的编码方式</li>
+</ul>
+
+<p>
+比如300的编码表示是 1010 1100 0000 0010
+</p>
+<ul class="org-ul">
+<li>第一个字节因为msb是1，所以表示不是结尾。payload是 010 1100</li>
+<li>第二个字节因为msb是0，所以表示结尾。payload是 000 0010</li>
+<li>因为按照little-endian编码，所以有效payload其实是 000 0010 010 1100 = 300</li>
+</ul>
+
+<div class="org-src-container">
+<pre class="src src-Python">#!/usr/bin/env python
+# coding:utf-8
+# Copyright (C) dirlt
+
+def unpack_varint(bs, offset):
+    ans = 0
+    move = 0
+    while True:
+        b = bs[offset]
+        offset += 1
+        payload = b &amp; 0x7f
+        ans |= (payload &lt;&lt; move)
+        move += 7
+        if (b &gt;&gt; 7) == 0:
+            break
+    return ans, offset
+
+
+def pack_varint(bs, value):
+    while value &gt;= 128:
+        x = value &amp; 0x7f
+        bs.append((1 &lt;&lt; 7) | x)
+        value = value &gt;&gt; 7
+    bs.append(value)
+
+
+bs = bytearray()
+pack_varint(bs, 300)
+print(bs)
+ans, offset = unpack_varint(bs, 0)
+assert offset == len(bs)
+print(ans, offset)
+</pre>
+</div>
+
+<p>
+可以看到varint这种编码方式是没有符号的，所以对于负数来说需要先映射到正数。映射规律比较简单，但是实现有点巧妙
+</p>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-right" />
+
+<col  class="org-right" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-right">Signed Original</th>
+<th scope="col" class="org-right">Encoded As</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-right">0</td>
+<td class="org-right">0</td>
+</tr>
+
+<tr>
+<td class="org-right">1</td>
+<td class="org-right">2</td>
+</tr>
+
+<tr>
+<td class="org-right">-2</td>
+<td class="org-right">3</td>
+</tr>
+
+<tr>
+<td class="org-right">2147483647</td>
+<td class="org-right">4294967294</td>
+</tr>
+
+<tr>
+<td class="org-right">-2147483648</td>
+<td class="org-right">4294967295</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+对于32位的正数可以实现为 (x &lt;&lt; 1) ^ (x &gt;&gt; 31). 这里 x &gt;&gt; 31是算术偏移，结果是全1或者是全0.
+</p>
+
+<p>
+如果是正数那么保持，如果是负数就全部取反。对于正数来说这个处理很好理解，对于负数就要分析一下了。
+</p>
+
+<p>
+有两个点需要观察到，假设正数x
+</p>
+<ul class="org-ul">
+<li>那么-x的编码是 (~x + 1), 然后对 -x 继续 ~(~x+1) + 1的话就变回x.</li>
+<li>对-x &lt;&lt; 1 然后取反是什么结果呢？~((~x + 1) &lt;&lt; 1) = (~(~x + 1)) &lt;&lt; 1 + 1 = (x -1) &lt;&lt; 1 + 1 = 2x - 1</li>
+</ul>
+<p>
+所以对于-2来说 (-2 &lt;&lt; 1) 取反就是3，对于-3来说就是5。
+</p>
+</div>
+<div id="content"><!-- DISQUS BEGIN --><div id="disqus_thread"></div><script>/***  RECOMMENDED CONFIGURATION VARIABLES: EDIT AND UNCOMMENT THE SECTION BELOW TO INSERT DYNAMIC VALUES FROM YOUR PLATFORM OR CMS.*  LEARN WHY DEFINING THESE VARIABLES IS IMPORTANT: https://disqus.com/admin/universalcode/#configuration-variables*/var disqus_config = function () {this.page.url = 'https://dirtysalt.github.io/html/protobuf-encoding.html';this.page.identifier = 'protobuf-encoding.html';};(function() {var d = document, s = d.createElement('script');s.src = 'https://dirlt.disqus.com/embed.js';s.setAttribute('data-timestamp', +new Date());(d.head || d.body).appendChild(s);})();</script><noscript>Please enable JavaScript to view the <a href="https://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript><!-- DISQUS END --></div></body>
+</html>

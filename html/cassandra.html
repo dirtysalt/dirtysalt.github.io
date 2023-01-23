@@ -1,0 +1,226 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Cassandra - A Decentralized Structured Storage System</title>
+<meta name="author" content="dirtysalt" />
+<meta name="generator" content="Org Mode" />
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content" class="content">
+<h1 class="title">Cassandra - A Decentralized Structured Storage System</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>Table of Contents</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#org13dae9b">1. ABSTRACT</a></li>
+<li><a href="#org91d3c41">2. INTRODUCTION</a></li>
+<li><a href="#org7217da7">3. RELATED WORK</a></li>
+<li><a href="#org766804e">4. DATA MODEL</a></li>
+<li><a href="#org95213f8">5. API</a></li>
+<li><a href="#org52eb547">6. SYSTEM ARCHITECTURE</a>
+<ul>
+<li><a href="#org337a391">6.1. Partitioning</a></li>
+<li><a href="#org0e7152c">6.2. Replication</a></li>
+<li><a href="#org7f8ac60">6.3. Membership</a></li>
+<li><a href="#org330bdc4">6.4. Bootstrapping</a></li>
+<li><a href="#org9f4e64d">6.5. Scaling the Cluster</a></li>
+<li><a href="#orga4aae3e">6.6. Local Persistence</a></li>
+<li><a href="#org79c671f">6.7. Implementation Details</a></li>
+</ul>
+</li>
+<li><a href="#orga8e5952">7. PRACTICAL EXPERIENCES</a></li>
+<li><a href="#org7dc7f79">8. CONCLUSION</a></li>
+</ul>
+</div>
+</div>
+<ul class="org-ul">
+<li><a href="http://www.cs.cornell.edu/projects/ladis2009/papers/lakshman-ladis2009.pdf">http://www.cs.cornell.edu/projects/ladis2009/papers/lakshman-ladis2009.pdf</a></li>
+<li><a href="http://www.dbthink.com/archives/372">http://www.dbthink.com/archives/372</a></li>
+<li><a href="http://www.datastax.com/documentation/articles/cassandra/cassandrathenandnow.html">Facebook’s Cassandra paper, annotated and compared to Apache Cassandra 2.0</a></li>
+</ul>
+
+<div id="outline-container-org13dae9b" class="outline-2">
+<h2 id="org13dae9b"><span class="section-number-2">1.</span> ABSTRACT</h2>
+</div>
+<div id="outline-container-org91d3c41" class="outline-2">
+<h2 id="org91d3c41"><span class="section-number-2">2.</span> INTRODUCTION</h2>
+</div>
+<div id="outline-container-org7217da7" class="outline-2">
+<h2 id="org7217da7"><span class="section-number-2">3.</span> RELATED WORK</h2>
+</div>
+<div id="outline-container-org766804e" class="outline-2">
+<h2 id="org766804e"><span class="section-number-2">4.</span> DATA MODEL</h2>
+<div class="outline-text-2" id="text-4">
+<ul class="org-ul">
+<li>A table in Cassandra is a distributed multi dimensional map indexed by a key.
+<ul class="org-ul">
+<li>The value is an object which is highly structured. The row key in a table is a string with no size restrictions, although typically 16 to 36 bytes long.</li>
+<li>Every operation under a single row key is atomic per replica no matter how many columns are being read or written into.</li>
+</ul></li>
+<li>Columns are grouped together into sets called column fam-ilies very much similar to what happens in the Bigtable system.
+<ul class="org-ul">
+<li>Cassandra exposes two kinds of columns families, Simple and Super column families.</li>
+<li>Super column families can be visualized as a column family within a column family. （已经废弃了。现在data model应该是和big table完全一致了）</li>
+</ul></li>
+<li>Furthermore, applications can specify the sort order of columns within a Super Column or Simple Column family. The system allows columns to be sorted either by time or by name. Time sorting of columns is exploited by applica- tion like Inbox Search where the results are always displayed in time sorted order. （可以对column排序，按照时间或者是名称）</li>
+<li>Any column within a column family is accessed using the convention <b>column family : column</b> and any column within a column family that is of type super is accessed using the convention <b>column family : super column : column</b>.</li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-org95213f8" class="outline-2">
+<h2 id="org95213f8"><span class="section-number-2">5.</span> API</h2>
+<div class="outline-text-2" id="text-5">
+<p>
+The Cassandra API consists of the following three simple methods.
+</p>
+<ul class="org-ul">
+<li>insert(table, key, rowMutation)</li>
+<li>get(table, key, columnName)</li>
+<li>delete(table, key, columnName)</li>
+</ul>
+<p>
+columnName can refer to a specific column within a col-umn, a column family, a super column family, or a column within a super column.
+</p>
+</div>
+</div>
+
+<div id="outline-container-org52eb547" class="outline-2">
+<h2 id="org52eb547"><span class="section-number-2">6.</span> SYSTEM ARCHITECTURE</h2>
+<div class="outline-text-2" id="text-6">
+</div>
+<div id="outline-container-org337a391" class="outline-3">
+<h3 id="org337a391"><span class="section-number-3">6.1.</span> Partitioning</h3>
+<div class="outline-text-3" id="text-6-1">
+<p>
+Cassandra partitions data across the cluster using consistent hashing but uses an <b>order pre-serving hash function</b> to do so.
+</p>
+
+<p>
+The basic consistent hashing algorithm presents some challenges.
+</p>
+<ul class="org-ul">
+<li>First, the random position assignment of each node on the ring leads to non-uniform data and load distribution.</li>
+<li>Sec-ond, the basic algorithm is oblivious to the heterogeneity in the performance of nodes.</li>
+</ul>
+
+<p>
+Typically there exist two ways to address this issue:
+</p>
+<ul class="org-ul">
+<li>One is for nodes to get assigned to multi-ple positions in the circle (like in Dynamo),</li>
+<li>and the second is to analyze load information on the ring and have lightly loaded nodes move on the ring to alleviate heavily loaded nodes as described in.</li>
+<li>Cassandra opts for the latter as it makes the design and implementation very tractable and helps to make very deterministic choices about load balanc-ing.</li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-org0e7152c" class="outline-3">
+<h3 id="org0e7152c"><span class="section-number-3">6.2.</span> Replication</h3>
+<div class="outline-text-3" id="text-6-2">
+<p>
+Cassandra provides the client with various options for how data needs to be replicated. Cassandra provides various replication poli- cies such as “Rack Unaware”, “Rack Aware” (within a data- center) and “Datacenter Aware”. Replicas are chosen based on the replication policy chosen by the application. If cer-tain application chooses “Rack Unaware” replication strat-egy then the non-coordinator replicas are chosen by picking N-1 successors of the coordinator on the ring. For “Rack Aware” and “Datacenter Aware” strategies the algorithm is slightly more involved.（可以很好地为跨数据中心服务）
+</p>
+
+<p>
+Cassandra system elects a leader amongst its nodes using a system called Zookeeper. All nodes on joining the cluster contact the leader who tells them for what ranges they are replicas for and leader makes a concerted effort to maintain the invariant that no node is responsible for more than N-1 ranges in the ring. The metadata about the ranges a node is responsible is cached locally at each node and in a fault-tolerant manner inside Zookeeper - this way a node that crashes and comes back up knows what ranges it was responsible for.（通过zookeeper对membership持久化）
+</p>
+</div>
+</div>
+
+<div id="outline-container-org7f8ac60" class="outline-3">
+<h3 id="org7f8ac60"><span class="section-number-3">6.3.</span> Membership</h3>
+<div class="outline-text-3" id="text-6-3">
+<p>
+<b>Cluster membership in Cassandra is based on Scuttle-butt</b>, a very efficient anti-entropy Gossip based mech-anism. The salient feature of Scuttlebutt is that it has very efficient CPU utilization and very efficient utilization of the gossip channel. Within the Cassandra system Gossip is not only used for membership but also to disseminate other sys-tem related control state.
+</p>
+
+<p>
+Failure detection is a mechanism by which a node can locally determine if any other node in the system is up or down. In Cassandra failure detection is also used to avoid at-tempts to communicate with unreachable nodes during var-ious operations.
+</p>
+
+<p>
+Cassandra uses a modified version of the Φ Accrual Failure Detector. The idea of an Accrual Failure Detection is that the failure detection module doesn’t emit a Boolean value stating a node is up or down. Instead the failure detection module emits a value which represents a suspicion level for each of monitored nodes. This value is defined as Φ. The basic idea is to express the value of Φ on a scale that is dynamically adjusted to reflect network and load conditions at the monitored nodes.（使用置信区间的方式来判断节点是否出现故障）
+</p>
+
+<p>
+Φ has the following meaning: Given some threshold Φ, and assuming that we decide to suspect a node A when Φ = 1, then the likelihood that we will make a mistake (i.e., the decision will be contradicted in the future by the reception of a late heartbeat) is about 10%. The likelihood is about 1% with Φ = 2, 0.1% with Φ = 3, and so on. Every node in the system maintains a sliding window of inter-arrival times of gossip messages from other nodes in the cluster. The distribution of these inter-arrival times is determined and Φ is calculated.
+</p>
+
+<p>
+Although the original paper suggests that the distribution is approximated by the Gaussian distribu-tion we found the Exponential Distribution to be a better approximation, because of the nature of the gossip channel and its impact on latency. To our knowledge our implemen-tation of the Accrual Failure Detection in a Gossip based setting is the first of its kind. Accrual Failure Detectors are very good in both their accuracy and their speed and they also adjust well to network conditions and server load conditions.
+</p>
+</div>
+</div>
+
+<div id="outline-container-org330bdc4" class="outline-3">
+<h3 id="org330bdc4"><span class="section-number-3">6.4.</span> Bootstrapping</h3>
+<div class="outline-text-3" id="text-6-4">
+<p>
+When a node starts for the first time, it chooses a random token for its position in the ring. For fault tolerance, the mapping is persisted to disk locally and also in Zookeeper. The token information is then gossiped around the cluster. This is how we know about all nodes and their respective po-sitions in the ring. This enables any node to route a request for a key to the correct node in the cluster.
+</p>
+
+<p>
+In the bootstrap case, when a node needs to join a cluster, it reads its configu-ration file which contains a list of a few contact points within the cluster. We call these initial contact points, seeds of the cluster. Seeds can also come from a configuration service like Zookeeper.
+</p>
+</div>
+</div>
+
+<div id="outline-container-org9f4e64d" class="outline-3">
+<h3 id="org9f4e64d"><span class="section-number-3">6.5.</span> Scaling the Cluster</h3>
+<div class="outline-text-3" id="text-6-5">
+<p>
+The node giving up the data streams the data over to the new node using kernel-kernel copy techniques. Operational experience has shown that data can be transferred at the rate of 40 MB/sec from a single node. We are working on improving this by having multiple replicas take part in the bootstrap transfer thereby parallelizing the effort, similar to Bittorrent.（数据转移底层使用kernel-to-kernel的拷贝技术，后续考虑类似bt方式来加快这个过程）
+</p>
+</div>
+</div>
+
+<div id="outline-container-orga4aae3e" class="outline-3">
+<h3 id="orga4aae3e"><span class="section-number-3">6.6.</span> Local Persistence</h3>
+<div class="outline-text-3" id="text-6-6">
+<p>
+We have a dedicated disk on each machine for the commit log since all writes into the commit log are sequential and so we can maximize disk throughput.（有专门的硬盘来写入commit log）
+</p>
+
+<p>
+In order to prevent scanning of every column on disk we maintain column indices which allow us to jump to the right chunk on disk for column retrieval. As the columns for a given key are being serialized and written out to disk we generate indices at every 256K chunk boundary. This boundary is configurable, but we have found 256K to work well for us in our production workloads. （为column做索引）
+</p>
+</div>
+</div>
+
+<div id="outline-container-org79c671f" class="outline-3">
+<h3 id="org79c671f"><span class="section-number-3">6.7.</span> Implementation Details</h3>
+<div class="outline-text-3" id="text-6-7">
+<p>
+All sys-tem control messages rely on UDP based messaging while the application related messages for replication and request routing relies on TCP.（系统控制走UDP）
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orga8e5952" class="outline-2">
+<h2 id="orga8e5952"><span class="section-number-2">7.</span> PRACTICAL EXPERIENCES</h2>
+<div class="outline-text-2" id="text-7">
+<p>
+In the process of designing, implementing and maintaining Cassandra we gained a lot of useful experience and learned numerous lessons. <b>One very fundamental lesson learned was not to add any new feature without understanding the effects of its usage by applications. Most problematic scenarios do not stem from just node crashes and network partitions.</b> We share just a few interesting scenarios here.
+</p>
+<ul class="org-ul">
+<li>We exposed some background channels for the M/R process to aggregate the re-verse index per user and send over the serialized data over to the Cassandra instance, to avoid the serializa-tion/deserialization overhead. This way the Cassandra instance is only bottlenecked by network bandwidth.（BulkLoad方式）</li>
+<li>Most applications only require atomic operation per key per replica. However there have been some appli-cations that have asked for transactional mainly for the purpose of maintaining secondary indices.（需要事务功能主要是为二级索引）</li>
+<li>We experimented with various implementations of Fail-ure Detectors. Our experience had been that the time to detect fail-ures increased beyond an acceptable limit as the size of the cluster grew. In one particular experiment in a cluster of 100 nodes time to taken to detect a failed node was in the order of two minutes. This is prac-tically unworkable in our environments. With the ac-crual failure detector with a slightly conservative value of PHI, set to 5, the average time to detect failures in the above experiment was about 15 seconds.（降低故障检测的延迟）</li>
+<li>Monitoring is not to be taken for granted. The Cas-sandra system is well integrated with Ganglia, a distributed performance monitoring tool. We expose various system level metrics to Ganglia and this has helped us understand the behavior of the system when subject to our production workload. Disks fail for no apparent reasons. The bootstrap algorithm has some hooks to repair nodes when disk fail. This is however an administrative operation.（监控指标直接对接到Ganglia）</li>
+<li>Although Cassandra is a completely decentralized sys-tem we have learned that having some amount of co-ordination is essential to making the implementation of some distributed features tractable. For example Cassandra is integrated with Zookeeper, which can be used for various coordination tasks in large scale dis-tributed systems. We intend to use the Zookeeper ab-straction for some key features which actually do not come in the way of applications that use Cassandra as the storage engine.（Zookeeper来完成协调工作使得整个系统易于追踪）</li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-org7dc7f79" class="outline-2">
+<h2 id="org7dc7f79"><span class="section-number-2">8.</span> CONCLUSION</h2>
+</div>
+</div>
+<div id="content"><!-- DISQUS BEGIN --><div id="disqus_thread"></div><script>/***  RECOMMENDED CONFIGURATION VARIABLES: EDIT AND UNCOMMENT THE SECTION BELOW TO INSERT DYNAMIC VALUES FROM YOUR PLATFORM OR CMS.*  LEARN WHY DEFINING THESE VARIABLES IS IMPORTANT: https://disqus.com/admin/universalcode/#configuration-variables*/var disqus_config = function () {this.page.url = 'https://dirtysalt.github.io/html/cassandra.html';this.page.identifier = 'cassandra.html';};(function() {var d = document, s = d.createElement('script');s.src = 'https://dirlt.disqus.com/embed.js';s.setAttribute('data-timestamp', +new Date());(d.head || d.body).appendChild(s);})();</script><noscript>Please enable JavaScript to view the <a href="https://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript><!-- DISQUS END --></div></body>
+</html>

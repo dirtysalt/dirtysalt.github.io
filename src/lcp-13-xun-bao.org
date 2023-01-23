@@ -1,0 +1,136 @@
+#+title: LCP 13. 寻宝
+
+https://leetcode-cn.com/problems/xun-bao/
+
+在比赛期间这题我是有点思路的，就是要枚举M的所有状态(1<<n种状态)，但是在两个问题上没有想通：
+1. M1和M2之间如何选择O, 这个O是否需要枚举？是不是每次枚举M全排列时都要枚举所有的O？
+2. 简单地来说我们是要枚举所有M的全排列，这个全排列和枚举M的所有状态有什么关系？
+
+第一点好解决，我们只需要做一次预处理，枚举所有的MMO，得到所有(M1,M2)的最短距离就行。
+
+第二点我觉得就是关键了，这个我之前还没有清楚想过。如果全排列在某种程度上是有最优化子结构的话，
+那么枚举所有的状态得到的最优值，其实是和全排列的最优值是等同的。
+
+举个例子，假设有M1,M2,M3这些点，我们要计算经过这些点的最短距离，那么最短距离必然是：
+- M1,M2 + M3 (0b011 | 0b100)
+- M2,M1 + M3 (0b011 | 0b100)
+- M1,M3 + M2 (0b101 | 0b010)
+- M3,M1 + M2 (0b101 | 0b010)
+- M2,M3 + M1 (0b110 | 0b001)
+- M3,M2 + M1 (0b110 | 0b001)
+其中之一。而当我们不断地遍历状态的时候，就是在构建经过更多点时候的最短路径。
+
+假设棋盘大小是S, 有M个"M", 有O个"O", 那么时间复杂度有4个部分：
+1. 计算起点，终点，M和O到所有点的最短距离。O((M+O) * S). 空间O((M+O)*S)
+2. 预处理M->O->M的最短距离. O(MMO), 空间O(MM)
+3. 计算起点->O->M的最短距离，O(OM). 空间O(OM)
+4. 枚举M所有状态，然后枚举终点以及下一个点计算最短路径. O(2^M * MM). 空间O(2^M*M)
+
+#+BEGIN_SRC python
+class Solution:
+    def minimalSteps(self, maze: List[str]) -> int:
+        inf = 1 << 30
+        S, T = None, None
+        MS, OS = [], []
+        n, m = len(maze), len(maze[0])
+
+        def bfs(s):
+            from collections import deque
+            nm = n * m
+            depth = [inf] * nm
+            dq = deque()
+            depth[s] = 0
+            dq.append(s)
+            while dq:
+                s = dq.popleft()
+                d = depth[s]
+                x, y = s // m, s % m
+                for dx, dy in ((-1, 0), (1, 0), (0, 1), (0, -1)):
+                    x2, y2 = x + dx, y + dy
+                    s2 = x2 * m + y2
+                    if 0 <= x2 < n and 0 <= y2 < m and maze[x2][y2] != '#' and depth[s2] == inf:
+                        depth[s2] = d + 1
+                        dq.append(s2)
+            return depth
+
+        for i in range(n):
+            for j in range(m):
+                s = i * m + j
+                c = maze[i][j]
+                if c == 'S':
+                    S = s
+                elif c == 'T':
+                    T = s
+                elif c == 'M':
+                    MS.append(s)
+                elif c == 'O':
+                    OS.append(s)
+
+        # O((M+O) * S)
+        D = {}
+        D[S] = bfs(S)
+        if D[S][T] == inf:
+            return -1
+        for M in MS:
+            D[M] = bfs(M)
+        if not MS:
+            return D[S][T]
+        for O in OS:
+            D[O] = bfs(O)
+        if not OS:
+            return -1
+
+        # O(MMO)
+        DMM = {}
+        for i in range(len(MS)):
+            for j in range(i + 1, len(MS)):
+                a, b = MS[i], MS[j]
+                ans = inf
+                for k in range(len(OS)):
+                    c = OS[k]
+                    ans = min(ans, D[a][c] + D[c][b])
+                DMM[a, b] = ans
+                DMM[b, a] = ans
+
+        # O(MO)
+        DSM = {}
+        for i in range(len(MS)):
+            ans = inf
+            a = MS[i]
+            for j in range(len(OS)):
+                b = OS[j]
+                ans = min(ans, D[S][b] + D[b][a])
+            if ans == inf:
+                return -1
+            DSM[a] = ans
+
+        MSZ = len(MS)
+        MST = 1 << MSZ
+        dp = [[inf] * MSZ for _ in range(MST)]
+        for i in range(MSZ):
+            st = 1 << i
+            m = MS[i]
+            dp[st][i] = DSM[m]
+
+        # O(M*M*2^M)
+        for st in range(MST):
+            for i in range(MSZ):
+                a = MS[i]
+                if (st & (1 << i)) == 0:
+                    continue
+                for j in range(MSZ):
+                    if (st & (1 << j)) != 0:
+                        continue
+                    b = MS[j]
+                    st2 = st | (1 << j)
+                    dp[st2][j] = min(dp[st2][j], dp[st][i] + DMM[a, b])
+
+        ans = inf
+        for i in range(MSZ):
+            res = dp[MST - 1][i] + D[MS[i]][T]
+            ans = min(ans, res)
+        if ans == inf:
+            ans = -1
+        # O((M+O) * S) + O(MMO) + O(MM 2^M)
+        return ans
+#+END_SRC

@@ -1,0 +1,187 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>各种HashMap的性能对比</title>
+<meta name="author" content="dirtysalt" />
+<meta name="generator" content="Org Mode" />
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content" class="content">
+<h1 class="title">各种HashMap的性能对比</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>Table of Contents</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#org2cd86e0">1. 两种hashtable实现差异</a></li>
+<li><a href="#org43e1240">2. 插入/搜索/查询性能</a></li>
+</ul>
+</div>
+</div>
+<p>
+<a href="https://martin.ankerl.com/2019/04/01/hashmap-benchmarks-01-overview/">https://martin.ankerl.com/2019/04/01/hashmap-benchmarks-01-overview/</a>
+</p>
+
+<ul class="org-ul">
+<li>插入性能影响到高基数的计算</li>
+<li>查询性能影响到低基数的计算</li>
+<li>遍历性能影响到序列化速度</li>
+<li>内存开销（这方面phmap这种元信息分开存储的hashset有天然优势）</li>
+</ul>
+
+<p>
+这个评测非常彻底，对于hash table选型特别有帮助 <a href="https://martin.ankerl.com/2019/04/01/hashmap-benchmarks-05-conclusion/">https://martin.ankerl.com/2019/04/01/hashmap-benchmarks-05-conclusion/</a>
+</p>
+
+<p>
+最后作者的建议是，可以使用phmap来做为default hashmap, 然后使用robin_hood::unordered_flat_map 来处理插入和删除场景并且保持比较低的内存使用。
+</p>
+
+<p>
+不过我最后实测下来，觉得还是phmap在各方面是最平衡的，而且节省内存在高并发情况下面具有天然的优势，cache locality好并且也节省内存。
+</p>
+
+<div id="outline-container-org2cd86e0" class="outline-2">
+<h2 id="org2cd86e0"><span class="section-number-2">1.</span> 两种hashtable实现差异</h2>
+<div class="outline-text-2" id="text-1">
+<p>
+phmap::hashset实现
+</p>
+<ul class="org-ul">
+<li>有control array和slot array两个部分，control array相当于存储slot array一些元信息</li>
+<li>假设有N个slot, 那么control array会占用N个字节，slot array占用N*sizeof(T)字节</li>
+<li>control array和slot array连续存放</li>
+<li>find/insert之前先去control array里面根据元信息做预先匹配，只有元信息匹配了，再去对应的位置去slot array做检查是否完全匹配。</li>
+</ul>
+
+<p>
+每个group对应16个元素，每个元素使用1个字节保存元信息，这样可以使用一个128bit SIMD指令来处理元信息。
+</p>
+
+
+<div id="org903549a" class="figure">
+<p><img src="../images/phmap_hashset_impl.jpg" alt="phmap_hashset_impl.jpg" />
+</p>
+</div>
+
+<hr />
+
+<p>
+ska::hashset: <a href="https://github.com/skarupke/flat_hash_map/blob/master/flat_hash_map.hpp">https://github.com/skarupke/flat_hash_map/blob/master/flat_hash_map.hpp</a>
+</p>
+
+<p>
+<a href="https://probablydance.com/2017/02/26/i-wrote-the-fastest-hashtable/">https://probablydance.com/2017/02/26/i-wrote-the-fastest-hashtable/</a> 这篇文章里面讲到了这个hashmap实现的一些关键点：
+</p>
+<ol class="org-ol">
+<li>open addressing</li>
+<li>linear probing（phmap::hashset使用quandratic probing）</li>
+<li>robin hood hashing</li>
+<li>prime number slots</li>
+<li>an upper limit on probe count（上限设置在log2(n)上，max_load_factor是0.5)</li>
+</ol>
+<p>
+可以看到这种实现在内存使用上远远超过phmap::hashset.
+</p>
+
+<p>
+CK/ska hashset实现
+</p>
+<ul class="org-ul">
+<li>只有slot array一个部分</li>
+<li>为了区分这个slot为empty/tombstone, 不同的hashset使用不同的标记方法</li>
+<li>CK 使用0表示empty, 对于erase操作则会使用比较复杂的方法做挪动，不过因为OLAP里面erase比较少，所以不在关键路径上</li>
+<li>ska hashset 则使用额外的1字节来标记，除此之外还可以用来做robinhood linear hashing</li>
+</ul>
+
+<hr />
+
+<p>
+和phmap::hashset最大差别就在于，元信息是否和数据分开存储：
+</p>
+
+<p>
+合并存储的好处是，如果probe chain比较短的话，那么cache locality比较好，因为直接就和最终数据所在的内存上做操作。查找之后立刻就在附近做insert data, 这个cache locality非常好。唯一要确保的就是probe chain不要太长，这个ska hash map做了限制在log(n). 超过这个数值就会resize. 而CK hashset则是根据load factor做判断。分开存储这方面就不行，首先要touch control array, 然后是slot array. 尤其是如果N比较大，并且有很多个hashset在同时做find/insert, 这个cache locality就很差。
+</p>
+
+<p>
+分开存储的好处，我觉得可能是内存使用上。在寻找empty slot的时候，只需要在control array上寻找即可，而不用去看slot array. 尤其是如果probe chain很长的时候，这种方法特别具有优势，memory footprint很小。如何提高这种分开存储hashset的速度，则是一个问题。相反不断地做aggressive resize并不能加快速度，反而会减慢速度，因为这种分开存储的hashset就是比较适合这种紧凑insert速度相对慢的场景。
+</p>
+
+<p>
+此外分开存储还有个好处就是遍历比较快：因为其他hashset都是通过减少load factor的方式来加快搜索速度，因为整个hashset里面势必有很多的empty slot. 这样在遍历的时候可能会触碰到许多无效的元素。而分开存储的好处是，可以在较小的数组上就确定元素在哪些位置上。
+</p>
+
+<p>
+我们可以简单地做phmap::hashset做个修改，变成下面这样的结构
+</p>
+<ul class="org-ul">
+<li>我们还是有Group这样的概念，一个group对应16个元素。</li>
+<li>但是一个group里面同时包含meta和data</li>
+<li>头16字节是meta信息，剩下的字节是data信息</li>
+</ul>
+<p>
+我们还可以保留使用SIMD处理元信息的优势，同时也可以保证cache locality: 一旦touch到meta信息，那么data信息也会被载入cache, 接下来的操作就比较快。
+</p>
+
+
+<div id="org47aacbe" class="figure">
+<p><img src="../images/phmap_hashset_impl2.jpg" alt="phmap_hashset_impl2.jpg" />
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org43e1240" class="outline-2">
+<h2 id="org43e1240"><span class="section-number-2">2.</span> 插入/搜索/查询性能</h2>
+<div class="outline-text-2" id="text-2">
+<p>
+从插入性能来看 <a href="https://martin.ankerl.com/2019/04/01/hashmap-benchmarks-03-02-result-RandomDistinct2/">https://martin.ankerl.com/2019/04/01/hashmap-benchmarks-03-02-result-RandomDistinct2/</a>
+</p>
+
+<p>
+hash func影响不是特别大 可以看到phmap和前面几个差距很大，从14s-&gt;21s这个差距有点大。
+</p>
+
+
+<div id="org27e2ad0" class="figure">
+<p><img src="../images/hashmap-insert-perf.jpg" alt="hashmap-insert-perf.jpg" />
+</p>
+</div>
+
+
+<hr />
+
+<p>
+从搜索性能来看 <a href="https://martin.ankerl.com/2019/04/01/hashmap-benchmarks-04-03-result-RandomFind_500000/">https://martin.ankerl.com/2019/04/01/hashmap-benchmarks-04-03-result-RandomFind_500000/</a>
+</p>
+
+<p>
+phmap性能算法非常好的，后面几个差距也不是特别大
+</p>
+
+
+<div id="org1ef631e" class="figure">
+<p><img src="../images/hashmap-find-perf.jpg" alt="hashmap-find-perf.jpg" />
+</p>
+</div>
+
+<hr />
+
+<p>
+另外遍历性能也是非常关键的，对于靠减少load factor来加快速度的hashset实现，在slot array里面势必有很多empty slot. 这样在遍历的时候就会touch到比较大的内存，虽然连续性比较好，但是在高并发下的时候估计cache locality也帮不上忙。<a href="https://martin.ankerl.com/2019/04/01/hashmap-benchmarks-04-06-result-IterateIntegers/">https://martin.ankerl.com/2019/04/01/hashmap-benchmarks-04-06-result-IterateIntegers/</a>
+</p>
+
+
+<div id="org2af5d7b" class="figure">
+<p><img src="../images/hashmap-iter-perf.jpg" alt="hashmap-iter-perf.jpg" />
+</p>
+</div>
+</div>
+</div>
+</div>
+<div id="content"><!-- DISQUS BEGIN --><div id="disqus_thread"></div><script>/***  RECOMMENDED CONFIGURATION VARIABLES: EDIT AND UNCOMMENT THE SECTION BELOW TO INSERT DYNAMIC VALUES FROM YOUR PLATFORM OR CMS.*  LEARN WHY DEFINING THESE VARIABLES IS IMPORTANT: https://disqus.com/admin/universalcode/#configuration-variables*/var disqus_config = function () {this.page.url = 'https://dirtysalt.github.io/html/hashmap-perf-comparison.html';this.page.identifier = 'hashmap-perf-comparison.html';};(function() {var d = document, s = d.createElement('script');s.src = 'https://dirlt.disqus.com/embed.js';s.setAttribute('data-timestamp', +new Date());(d.head || d.body).appendChild(s);})();</script><noscript>Please enable JavaScript to view the <a href="https://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript><!-- DISQUS END --></div></body>
+</html>

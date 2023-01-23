@@ -1,0 +1,138 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>When the OS gets in the way - Mark Price</title>
+<meta name="author" content="dirtysalt" />
+<meta name="generator" content="Org Mode" />
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content" class="content">
+<h1 class="title">When the OS gets in the way - Mark Price</h1>
+<p>
+<a href="https://www.youtube.com/watch?v=1bUVbcvqBSA">https://www.youtube.com/watch?v=1bUVbcvqBSA</a>
+</p>
+
+<p>
+作者有个github来演示如何reduce latency jitter的 <a href="https://github.com/epickrram/perf-workshop">https://github.com/epickrram/perf-workshop</a>
+</p>
+
+<p>
+具体分析过程的话有几篇文章作者其实也记录下来了：
+</p>
+<ul class="org-ul">
+<li>Technical Itch: Reducing system jitter <a href="https://epickrram.blogspot.com/2015/09/reducing-system-jitter.html">https://epickrram.blogspot.com/2015/09/reducing-system-jitter.html</a></li>
+<li>Technical Itch: Reducing system jitter - part 2 <a href="https://epickrram.blogspot.com/2015/11/reducing-system-jitter-part-2.html">https://epickrram.blogspot.com/2015/11/reducing-system-jitter-part-2.html</a></li>
+<li>Technical Itch: JVM guaranteed safepoints <a href="https://epickrram.blogspot.com/2015/08/jvm-guaranteed-safepoints.html">https://epickrram.blogspot.com/2015/08/jvm-guaranteed-safepoints.html</a> (这篇文章主要是在跑JVM的时候，要将GC的影响减少到最小，除了GC本身之外，JVM里面的safepoints也可能有影响）</li>
+</ul>
+
+<p>
+值得记录的是整个过程中，作者使用了什么工具来定位问题，以及如何解决问题的：
+</p>
+
+<hr />
+<p>
+CPU主频的影响：
+</p>
+
+<p>
+CPU是否在performance模式 `cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_available_governors`
+</p>
+
+<p>
+观察每个CPU运行频率（ 可能是采样模式） `perf record -e "power:cpu_frequency" -a`
+</p>
+
+<pre class="example" id="org483034a">
+starrocks_be 129965 [030] 1991194.687221: power:cpu_frequency: state=3800000 cpu_id=30
+starrocks_be 129817 [033] 1991194.722676: power:cpu_frequency: state=3800000 cpu_id=33
+starrocks_be 166592 [019] 1991194.868604: power:cpu_frequency: state=3800000 cpu_id=19
+</pre>
+
+<hr />
+<p>
+进程在CPU上迁移
+</p>
+
+<p>
+观察线程执行时间以及在哪个core上运行，切换core会存在L1/L2/L3/numa访问的开销损失
+</p>
+<ul class="org-ul">
+<li>`perf record -e "sched:sched_stat_runtime" -t 11370 -t 11372` 观察线程</li>
+<li>`perf record -e "sched:sched_stat_runtime" -C 1`  观察core</li>
+</ul>
+
+<p>
+有几个工具可以使用：
+</p>
+<ol class="org-ol">
+<li>isolcpus 可以让OS scheduler不在某些cores上调度，但是需要重启机器。之后用户需要使用taskset绑定进程。</li>
+<li>不过上面这个方案作者也提到了问题，就是taskset下来没有任何load-balancer功能，所有的threads都会被放在一个core上，就是图中core 10的情况</li>
+<li>正确的方式是使用cpuset这个工具，将其余进程使用cset绑定在保留的cores上</li>
+<li>所以其实不要使用lsolcpus这个东西，只需要cpuset, taskset以及sched_affinity</li>
+</ol>
+
+
+<div id="orgdb66010" class="figure">
+<p><img src="../images/when-the-os-gets-in-the-way-0.png" alt="when-the-os-gets-in-the-way-0.png" />
+</p>
+</div>
+
+
+<div id="org72d000a" class="figure">
+<p><img src="../images/when-the-os-gets-in-the-way-1.png" alt="when-the-os-gets-in-the-way-1.png" />
+</p>
+</div>
+
+
+<div id="orged54ada" class="figure">
+<p><img src="../images/when-the-os-gets-in-the-way-2.png" alt="when-the-os-gets-in-the-way-2.png" />
+</p>
+</div>
+
+<hr />
+<p>
+CPU上的Context Switch
+</p>
+
+<p>
+<a href="https://epickrram.blogspot.com/2015/11/reducing-system-jitter-part-2.html">https://epickrram.blogspot.com/2015/11/reducing-system-jitter-part-2.html</a>
+</p>
+
+<p>
+虽然上面已经做了用户线程的绑定核，但是kernel process还是会被切换到这个上面来。可以使用下面这个命令来观察context switch情况 `perf record -e "sched:sched_switch" -C 1,3`
+</p>
+
+<p>
+然后可以使用ftrace来来观察每个函数的执行时间 `trace-cmd record -p function_graph -P &lt;PID&gt;`
+</p>
+
+<p>
+作者在文章里面做了下面几个调整
+</p>
+<ol class="org-ol">
+<li>调整kworker::vmstat_update刷新时间</li>
+<li>关闭watchdog</li>
+<li>调整interrupts的smp affinity.</li>
+</ol>
+
+<p>
+最后面interrupts过程是这样的
+</p>
+<ol class="org-ol">
+<li>通过 `cat /proc/interrupts` 观察中断次数分布</li>
+<li>看`cat /proc/irq/47/smp_affinity_list` 某个irq的绑定情况</li>
+<li>修改smp_affinity_list. 不过这个需要看根据irq情况看是否可以修改绑定</li>
+</ol>
+
+
+<div id="orgbca81f9" class="figure">
+<p><img src="../images/when-the-os-gets-in-the-way-3.png" alt="when-the-os-gets-in-the-way-3.png" />
+</p>
+</div>
+</div>
+<div id="content"><!-- DISQUS BEGIN --><div id="disqus_thread"></div><script>/***  RECOMMENDED CONFIGURATION VARIABLES: EDIT AND UNCOMMENT THE SECTION BELOW TO INSERT DYNAMIC VALUES FROM YOUR PLATFORM OR CMS.*  LEARN WHY DEFINING THESE VARIABLES IS IMPORTANT: https://disqus.com/admin/universalcode/#configuration-variables*/var disqus_config = function () {this.page.url = 'https://dirtysalt.github.io/html/when-the-os-gets-in-the-way.html';this.page.identifier = 'when-the-os-gets-in-the-way.html';};(function() {var d = document, s = d.createElement('script');s.src = 'https://dirlt.disqus.com/embed.js';s.setAttribute('data-timestamp', +new Date());(d.head || d.body).appendChild(s);})();</script><noscript>Please enable JavaScript to view the <a href="https://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript><!-- DISQUS END --></div></body>
+</html>

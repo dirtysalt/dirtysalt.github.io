@@ -1,0 +1,626 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>HashTable性能测试(CK/phmap/ska)</title>
+<meta name="author" content="dirtysalt" />
+<meta name="generator" content="Org Mode" />
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content" class="content">
+<h1 class="title">HashTable性能测试(CK/phmap/ska)</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>Table of Contents</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#org58efe6c">1. 测试准备</a></li>
+<li><a href="#org9591908">2. 低基数</a></li>
+<li><a href="#orgbcdc05e">3. 中基数</a></li>
+<li><a href="#orgff6d4ef">4. 高基数</a></li>
+<li><a href="#org29d8162">5. 超高基数</a></li>
+<li><a href="#org2874640">6. CK和phmap对比</a></li>
+<li><a href="#org87fc459">7. 测试代码</a></li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-org58efe6c" class="outline-2">
+<h2 id="org58efe6c"><span class="section-number-2">1.</span> 测试准备</h2>
+<div class="outline-text-2" id="text-1">
+<p>
+CK代码是从 <a href="https://github.com/ClickHouse/ClickHouse/commit/2805c28e6573fab09128b43150c4a7cb7ad21cc1">https://github.com/ClickHouse/ClickHouse/commit/2805c28e6573fab09128b43150c4a7cb7ad21cc1</a> 上面分离出来的，为了方便地单独编译做了下面这些处理：
+</p>
+<ol class="org-ol">
+<li>去掉了Key=Slice的情况，因为这个涉及到Arena和内存管理等东西</li>
+<li>去掉了许多可能出现Exception的情况，假设这些情况都不会出现</li>
+<li>保留了Allocator这段逻辑，CK在内存分配上有不少tricks可以学习</li>
+</ol>
+
+<p>
+ska::flat_hash_map 源代码地址是在这里 <a href="https://github.com/skarupke/flat_hash_map/blob/master/flat_hash_map.hpp">https://github.com/skarupke/flat_hash_map/blob/master/flat_hash_map.hpp</a>
+</p>
+
+<p>
+全部代码放在附件里面，测试代码放在文章最后，测试用例是这样的：
+</p>
+
+<p>
+单机单线程，插入 65536000 行，然后基数情况如下，都是插入随机数
+</p>
+<ul class="org-ul">
+<li>[A] 960，低基数</li>
+<li>[B] 96000，中基数</li>
+<li>[C] 9600000，高基数</li>
+<li>[D] 960000000，超高基数</li>
+</ul>
+
+<p>
+其中
+</p>
+<ul class="org-ul">
+<li>run_insert_random 表示phmap</li>
+<li>run_insert_random_ska 表示ska hashmap</li>
+<li>run_insert_precompute 表示phmap 预先计算hashvalue+prefetch</li>
+<li>run_insert_random_ck 表示CK</li>
+</ul>
+
+<pre class="example" id="org9b33e4f">
+-----------------------------------------------------------------------------------
+Benchmark                                         Time             CPU   Iterations
+-----------------------------------------------------------------------------------
+run_insert_random/65536000/960            219113702 ns    219081575 ns            3
+run_insert_random_ska/65536000/960        304808498 ns    304779963 ns            2
+run_insert_precompute/65536000/960        234825202 ns    234803423 ns            3
+run_insert_random_ck/65536000/960         350274672 ns    350239037 ns            2
+run_insert_random/65536000/96000          322532514 ns    322502376 ns            2
+run_insert_random_ska/65536000/96000      906551339 ns    906459594 ns            1
+run_insert_precompute/65536000/96000      270961498 ns    270920370 ns            3
+run_insert_random_ck/65536000/96000       544284025 ns    544221843 ns            1
+run_insert_random/65536000/9600000       2223202526 ns   2222753516 ns            1
+run_insert_random_ska/65536000/9600000   2044231505 ns   2044013964 ns            1
+run_insert_precompute/65536000/9600000   1086953992 ns   1086852808 ns            1
+run_insert_random_ck/65536000/9600000    2099581536 ns   2099340097 ns            1
+run_insert_random/65536000/960000000     6454115631 ns   6453461530 ns            1
+run_insert_random_ska/65536000/960000000 6683883384 ns   6682989324 ns            1
+run_insert_precompute/65536000/960000000 3963008998 ns   3962379163 ns            1
+run_insert_random_ck/65536000/960000000  3743974165 ns   3743242838 ns            1
+</pre>
+</div>
+</div>
+
+<div id="outline-container-org9591908" class="outline-2">
+<h2 id="org9591908"><span class="section-number-2">2.</span> 低基数</h2>
+<div class="outline-text-2" id="text-2">
+<p>
+时间上看：
+</p>
+<ol class="org-ol">
+<li>phmap性能是最好的</li>
+<li>预取会略微有点负作用</li>
+<li>CK效果并不好，可能CK针对低基数有优化</li>
+</ol>
+
+<p>
+空间上看，CK有点低
+</p>
+
+<pre class="example" id="orgeeca93b">
+run_insert_random/65536000/960            219113702 ns    219081575 ns            3
+run_insert_random_ska/65536000/960        304808498 ns    304779963 ns            2
+run_insert_precompute/65536000/960        234825202 ns    234803423 ns            3
+run_insert_random_ck/65536000/960         350274672 ns    350239037 ns            2
+
+run_insert_random: hash set size = 960, load factor = 0.468979
+run_insert_random_ska: hash set size = 960, load factor = 0.46875
+run_insert_precompute: hash set size = 960, load factor = 0.468979
+run_insert_random_ck: hash set size = 960, load factor = 0.234375
+</pre>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-right" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">Hash Table</th>
+<th scope="col" class="org-right">Time</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left">phmap</td>
+<td class="org-right">219113702</td>
+</tr>
+
+<tr>
+<td class="org-left">ska</td>
+<td class="org-right">304808498</td>
+</tr>
+
+<tr>
+<td class="org-left">prefetch</td>
+<td class="org-right">234825202</td>
+</tr>
+
+<tr>
+<td class="org-left">ck</td>
+<td class="org-right">350274672</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+
+<div id="outline-container-orgbcdc05e" class="outline-2">
+<h2 id="orgbcdc05e"><span class="section-number-2">3.</span> 中基数</h2>
+<div class="outline-text-2" id="text-3">
+<p>
+时间上看：
+</p>
+<ol class="org-ol">
+<li>phmap依然是最好的</li>
+<li>prefetch开始有效果</li>
+<li>ska比较差</li>
+</ol>
+
+<p>
+空间上看, ck/ska都比较低
+</p>
+
+<pre class="example" id="org16061ed">
+run_insert_random/65536000/96000          322532514 ns    322502376 ns            2
+run_insert_random_ska/65536000/96000      906551339 ns    906459594 ns            1
+run_insert_precompute/65536000/96000      270961498 ns    270920370 ns            3
+run_insert_random_ck/65536000/96000       544284025 ns    544221843 ns            1
+
+run_insert_random: hash set size = 96000, load factor = 0.732427
+run_insert_random_ska: hash set size = 96000, load factor = 0.366211
+run_insert_precompute: hash set size = 96000, load factor = 0.732427
+run_insert_random_ck: hash set size = 96000, load factor = 0.366211
+</pre>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-right" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">Hash Table</th>
+<th scope="col" class="org-right">Time</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left">phmap</td>
+<td class="org-right">322532514</td>
+</tr>
+
+<tr>
+<td class="org-left">ska</td>
+<td class="org-right">906551339</td>
+</tr>
+
+<tr>
+<td class="org-left">prefetch</td>
+<td class="org-right">270961498</td>
+</tr>
+
+<tr>
+<td class="org-left">ck</td>
+<td class="org-right">544284025</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+
+<div id="outline-container-orgff6d4ef" class="outline-2">
+<h2 id="orgff6d4ef"><span class="section-number-2">4.</span> 高基数</h2>
+<div class="outline-text-2" id="text-4">
+<p>
+时间上看：
+</p>
+<ul class="org-ul">
+<li>此时CK/ska超过了phmap</li>
+<li>但是prefetch效果非常明显</li>
+</ul>
+
+<p>
+空间上看, ck/ska依然比较低
+</p>
+
+<pre class="example" id="org2f0a2c0">
+run_insert_random/65536000/9600000       2223202526 ns   2222753516 ns            1
+run_insert_random_ska/65536000/9600000   2044231505 ns   2044013964 ns            1
+run_insert_precompute/65536000/9600000   1086953992 ns   1086852808 ns            1
+run_insert_random_ck/65536000/9600000    2099581536 ns   2099340097 ns            1
+
+run_insert_random: hash set size = 9589629, load factor = 0.571586
+run_insert_random_ska: hash set size = 9589629, load factor = 0.285793
+run_insert_precompute: hash set size = 9589629, load factor = 0.571586
+run_insert_random_ck: hash set size = 9589629, load factor = 0.285793
+</pre>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-right" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">Hash Table</th>
+<th scope="col" class="org-right">Time</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left">phmap</td>
+<td class="org-right">2223202526</td>
+</tr>
+
+<tr>
+<td class="org-left">ska</td>
+<td class="org-right">2044231505</td>
+</tr>
+
+<tr>
+<td class="org-left">prefetch</td>
+<td class="org-right">1086953992</td>
+</tr>
+
+<tr>
+<td class="org-left">ck</td>
+<td class="org-right">2099581536</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+
+<div id="outline-container-org29d8162" class="outline-2">
+<h2 id="org29d8162"><span class="section-number-2">5.</span> 超高基数</h2>
+<div class="outline-text-2" id="text-5">
+<p>
+时间上看：
+</p>
+<ul class="org-ul">
+<li>ck效果开始比较好</li>
+<li>ska/phmap差不多</li>
+<li>预取效果依然明显</li>
+</ul>
+
+<p>
+空间上看，此时内存分配比较多，大家在在内存分配上都比较保守
+</p>
+
+<pre class="example" id="org8b46411">
+run_insert_random/65536000/960000000     6454115631 ns   6453461530 ns            1
+run_insert_random_ska/65536000/960000000 6683883384 ns   6682989324 ns            1
+run_insert_precompute/65536000/960000000 3963008998 ns   3962379163 ns            1
+run_insert_random_ck/65536000/960000000  3743974165 ns   3743242838 ns            1
+
+run_insert_random: hash set size = 63273163, load factor = 0.471422
+run_insert_random_ska: hash set size = 63273163, load factor = 0.471422
+run_insert_precompute: hash set size = 63273163, load factor = 0.471422
+run_insert_random_ck: hash set size = 63273163, load factor = 0.471422
+</pre>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-right" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">Hash Table</th>
+<th scope="col" class="org-right">Time</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left">phmap</td>
+<td class="org-right">6454115631</td>
+</tr>
+
+<tr>
+<td class="org-left">ska</td>
+<td class="org-right">6683883384</td>
+</tr>
+
+<tr>
+<td class="org-left">prefetch</td>
+<td class="org-right">3963008998</td>
+</tr>
+
+<tr>
+<td class="org-left">ck</td>
+<td class="org-right">3743974165</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+
+<div id="outline-container-org2874640" class="outline-2">
+<h2 id="org2874640"><span class="section-number-2">6.</span> CK和phmap对比</h2>
+<div class="outline-text-2" id="text-6">
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-right" />
+
+<col  class="org-right" />
+
+<col  class="org-right" />
+
+<col  class="org-right" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">Card</th>
+<th scope="col" class="org-right">Phmap</th>
+<th scope="col" class="org-right">Phmap Prefetch</th>
+<th scope="col" class="org-right">CK</th>
+<th scope="col" class="org-right">Prefetch/CK</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left">Low</td>
+<td class="org-right">219081575</td>
+<td class="org-right">234803423</td>
+<td class="org-right">350239037</td>
+<td class="org-right">0.67</td>
+</tr>
+
+<tr>
+<td class="org-left">Medium</td>
+<td class="org-right">322502376</td>
+<td class="org-right">270920370</td>
+<td class="org-right">544221843</td>
+<td class="org-right">0.498</td>
+</tr>
+
+<tr>
+<td class="org-left">High</td>
+<td class="org-right">2222753516</td>
+<td class="org-right">1086852808</td>
+<td class="org-right">2099340097</td>
+<td class="org-right">0.518</td>
+</tr>
+
+<tr>
+<td class="org-left">Ultra High</td>
+<td class="org-right">6453461530</td>
+<td class="org-right">3962379163</td>
+<td class="org-right">3743242838</td>
+<td class="org-right">1.059</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+可以发现，通过预先计算hash value加上prefetching技术，phmap可以在空间上做到低开销，同时在性能上超过（高基数情况）或者是与CK持平（超高基数情况）。
+</p>
+
+
+<div id="orga50f1a2" class="figure">
+<p><img src="../images/hashtable-perf-comparison.jpg" alt="hashtable-perf-comparison.jpg" />
+</p>
+</div>
+
+<p>
+另外下面两幅图是关于prefetch的基本知识：
+</p>
+<ol class="org-ol">
+<li>自动prefetch是可行的（不管是CPU还是kernel），但是需要一定的数据量来训练。</li>
+<li>训练出来的模式可以满足前向或者是后向，并且可以满足一定的访问间隔。</li>
+</ol>
+
+
+<div id="org42d5977" class="figure">
+<p><img src="../images/prefetchers-101.jpg" alt="prefetchers-101.jpg" />
+</p>
+</div>
+
+
+<div id="org1a3b2b0" class="figure">
+<p><img src="../images/kernel-software-prefetching.jpg" alt="kernel-software-prefetching.jpg" />
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org87fc459" class="outline-2">
+<h2 id="org87fc459"><span class="section-number-2">7.</span> 测试代码</h2>
+<div class="outline-text-2" id="text-7">
+<div class="org-src-container">
+<pre class="src src-c++"><span class="org-preprocessor">#include</span> <span class="org-string">&lt;benchmark/benchmark.h&gt;</span>
+<span class="org-preprocessor">#include</span> <span class="org-string">&lt;emmintrin.h&gt;</span>
+<span class="org-preprocessor">#include</span> <span class="org-string">&lt;immintrin.h&gt;</span>
+
+<span class="org-preprocessor">#include</span> <span class="org-string">&lt;cmath&gt;</span>
+<span class="org-preprocessor">#include</span> <span class="org-string">&lt;cstdlib&gt;</span>
+<span class="org-preprocessor">#include</span> <span class="org-string">&lt;functional&gt;</span>
+<span class="org-preprocessor">#include</span> <span class="org-string">&lt;iostream&gt;</span>
+
+<span class="org-comment-delimiter">//</span><span class="org-comment">#define PHMAP_LINEAR_PROBE</span>
+<span class="org-preprocessor">#include</span> <span class="org-string">"Common/HashTable/HashSet.h"</span>
+<span class="org-preprocessor">#include</span> <span class="org-string">"column/column_hash.h"</span>
+<span class="org-preprocessor">#include</span> <span class="org-string">"column/hash_set.h"</span>
+<span class="org-preprocessor">#include</span> <span class="org-string">"ska_flat_hash_map.hpp"</span>
+<span class="org-preprocessor">#include</span> <span class="org-string">"util/phmap/phmap.h"</span>
+
+<span class="org-keyword">using</span> <span class="org-keyword">namespace</span> <span class="org-constant">std</span>;
+<span class="org-keyword">using</span> <span class="org-keyword">namespace</span> <span class="org-constant">starrocks</span>::<span class="org-constant">vectorized</span>;
+<span class="org-keyword">static</span> <span class="org-keyword">constexpr</span> <span class="org-type">size_t</span> <span class="org-variable-name">BLOCK</span> = 4096;
+
+<span class="org-type">void</span> <span class="org-function-name">ConstructRandomSet</span>(<span class="org-type">size_t</span> <span class="org-variable-name">size</span>, <span class="org-type">size_t</span> <span class="org-variable-name">range</span>, <span class="org-constant">std</span>::<span class="org-type">vector</span>&lt;<span class="org-type">int</span>&gt;&amp; <span class="org-variable-name">rs</span>) {
+    rs.resize(size);
+    <span class="org-constant">std</span>::srand(42);
+    <span class="org-keyword">for</span> (<span class="org-type">size_t</span> <span class="org-variable-name">i</span> = 0; i &lt; size; i++) {
+        rs[i] = <span class="org-constant">std</span>::rand() % range;
+    }
+}
+
+<span class="org-keyword">class</span> <span class="org-type">LogBuffer</span> {
+<span class="org-keyword">public</span>:
+    <span class="org-constant">std</span>::<span class="org-type">ostringstream</span>&amp; <span class="org-function-name">buf</span>() { <span class="org-keyword">return</span> oss; }
+    ~<span class="org-function-name">LogBuffer</span>() { <span class="org-constant">std</span>::cerr &lt;&lt; oss.str(); }
+<span class="org-keyword">private</span>:
+    <span class="org-constant">std</span>::<span class="org-type">ostringstream</span> <span class="org-variable-name">oss</span>;
+};
+
+<span class="org-type">LogBuffer</span> <span class="org-variable-name">_log_buffer</span>;
+
+<span class="org-preprocessor">#define</span> <span class="org-function-name">HSINFO</span>(<span class="org-variable-name">name</span>) \
+    _log_buffer.buf() &lt;&lt; name &lt;&lt; <span class="org-string">": hash set size = "</span> &lt;&lt; hs.size() &lt;&lt; <span class="org-string">", load factor = "</span> &lt;&lt; hs.load_factor() &lt;&lt; <span class="org-constant">std</span>::endl
+
+<span class="org-keyword">static</span> <span class="org-type">void</span> <span class="org-function-name">run_insert_random</span>(<span class="org-constant">benchmark</span>::<span class="org-type">State</span>&amp; <span class="org-variable-name">state</span>) {
+    <span class="org-comment-delimiter">// </span><span class="org-comment">Code inside this loop is measured repeatedly</span>
+    <span class="org-constant">std</span>::<span class="org-type">vector</span>&lt;<span class="org-type">int</span>&gt; <span class="org-variable-name">a</span>;
+    ConstructRandomSet(state.range(0), state.range(1), a);
+    <span class="org-keyword">for</span> (<span class="org-keyword">auto</span> <span class="org-variable-name">_</span> : state) {
+        <span class="org-type">HashSet</span>&lt;<span class="org-type">int</span>&gt; <span class="org-variable-name">hs</span>;
+        <span class="org-comment-delimiter">// </span><span class="org-comment">state.PauseTiming();</span>
+        <span class="org-comment-delimiter">// </span><span class="org-comment">state.ResumeTiming();</span>
+        <span class="org-keyword">for</span> (<span class="org-type">size_t</span> <span class="org-variable-name">i</span> = 0; i &lt; a.size(); i++) {
+            hs.insert(a[i]);
+        }
+        HSINFO(__func__);
+    }
+}
+
+<span class="org-keyword">static</span> <span class="org-type">void</span> <span class="org-function-name">run_insert_random_ska</span>(<span class="org-constant">benchmark</span>::<span class="org-type">State</span>&amp; <span class="org-variable-name">state</span>) {
+    <span class="org-comment-delimiter">// </span><span class="org-comment">Code inside this loop is measured repeatedly</span>
+    <span class="org-constant">std</span>::<span class="org-type">vector</span>&lt;<span class="org-type">int</span>&gt; <span class="org-variable-name">a</span>;
+    ConstructRandomSet(state.range(0), state.range(1), a);
+
+    <span class="org-keyword">for</span> (<span class="org-keyword">auto</span> <span class="org-variable-name">_</span> : state) {
+        <span class="org-constant">ska</span>::<span class="org-type">flat_hash_set</span>&lt;<span class="org-type">int</span>, <span class="org-type">StdHash</span>&lt;<span class="org-type">int</span>&gt;&gt; <span class="org-variable-name">hs</span>;
+        <span class="org-comment-delimiter">// </span><span class="org-comment">state.PauseTiming();</span>
+        <span class="org-comment-delimiter">// </span><span class="org-comment">state.ResumeTiming();</span>
+        <span class="org-keyword">for</span> (<span class="org-type">size_t</span> <span class="org-variable-name">i</span> = 0; i &lt; a.size(); i++) {
+            hs.insert(a[i]);
+        }
+        HSINFO(__func__);
+    }
+}
+
+<span class="org-keyword">static</span> <span class="org-type">void</span> <span class="org-function-name">run_insert_sorted</span>(<span class="org-constant">benchmark</span>::<span class="org-type">State</span>&amp; <span class="org-variable-name">state</span>) {
+    <span class="org-comment-delimiter">// </span><span class="org-comment">Code inside this loop is measured repeatedly</span>
+    <span class="org-constant">std</span>::<span class="org-type">vector</span>&lt;<span class="org-type">int</span>&gt; <span class="org-variable-name">a</span>;
+    ConstructRandomSet(state.range(0), state.range(1), a);
+    <span class="org-constant">std</span>::sort(a.begin(), a.end());
+
+    <span class="org-keyword">for</span> (<span class="org-keyword">auto</span> <span class="org-variable-name">_</span> : state) {
+        <span class="org-type">HashSet</span>&lt;<span class="org-type">int</span>&gt; <span class="org-variable-name">hs</span>;
+        <span class="org-keyword">for</span> (<span class="org-type">size_t</span> <span class="org-variable-name">i</span> = 0; i &lt; a.size(); i++) {
+            hs.insert(a[i]);
+        }
+        HSINFO(__func__);
+    }
+}
+
+<span class="org-keyword">static</span> <span class="org-type">void</span> <span class="org-function-name">run_insert_precompute</span>(<span class="org-constant">benchmark</span>::<span class="org-type">State</span>&amp; <span class="org-variable-name">state</span>) {
+    <span class="org-comment-delimiter">// </span><span class="org-comment">Code inside this loop is measured repeatedly</span>
+    <span class="org-constant">std</span>::<span class="org-type">vector</span>&lt;<span class="org-type">int</span>&gt; <span class="org-variable-name">a</span>;
+    ConstructRandomSet(state.range(0), state.range(1), a);
+
+    <span class="org-keyword">static</span> <span class="org-keyword">constexpr</span> <span class="org-type">size_t</span> <span class="org-variable-name">PREFETCH</span> = 16;
+    <span class="org-constant">std</span>::<span class="org-type">vector</span>&lt;<span class="org-type">size_t</span>&gt; <span class="org-variable-name">hash_values</span>(BLOCK);
+
+    <span class="org-keyword">for</span> (<span class="org-keyword">auto</span> <span class="org-variable-name">_</span> : state) {
+        <span class="org-type">HashSet</span>&lt;<span class="org-type">int</span>&gt; <span class="org-variable-name">hs</span>;
+        <span class="org-keyword">const</span> <span class="org-keyword">auto</span>* <span class="org-variable-name">data</span> = a.data();
+        <span class="org-keyword">const</span> <span class="org-type">size_t</span> <span class="org-variable-name">size</span> = a.size();
+
+        <span class="org-keyword">for</span> (<span class="org-type">size_t</span> <span class="org-variable-name">i</span> = 0; i &lt; size; i += BLOCK) {
+            <span class="org-keyword">for</span> (<span class="org-type">size_t</span> <span class="org-variable-name">j</span> = 0; j &lt; BLOCK; j++) {
+                <span class="org-type">size_t</span> <span class="org-variable-name">hashval</span> = hs.hash_function()(data[i + j]);
+                hash_values[j] = hashval;
+            }
+
+            <span class="org-keyword">for</span> (<span class="org-type">size_t</span> <span class="org-variable-name">j</span> = 0, <span class="org-variable-name">k</span> = PREFETCH; j &lt; BLOCK; j++, k++) {
+                <span class="org-keyword">if</span> (k &lt; BLOCK) {
+                    hs.prefetch_hash(hash_values[k]);
+                }
+                hs.emplace_with_hash(hash_values[j], data[i + j]);
+            }
+        }
+        HSINFO(__func__);
+    }
+}
+
+<span class="org-keyword">static</span> <span class="org-type">void</span> <span class="org-function-name">run_insert_random_ck</span>(<span class="org-constant">benchmark</span>::<span class="org-type">State</span>&amp; <span class="org-variable-name">state</span>) {
+    <span class="org-comment-delimiter">// </span><span class="org-comment">Code inside this loop is measured repeatedly</span>
+    <span class="org-constant">std</span>::<span class="org-type">vector</span>&lt;<span class="org-type">int</span>&gt; <span class="org-variable-name">a</span>;
+    ConstructRandomSet(state.range(0), state.range(1), a);
+    <span class="org-type">size_t</span> <span class="org-variable-name">set_size</span> = 0;
+
+    <span class="org-keyword">for</span> (<span class="org-keyword">auto</span> <span class="org-variable-name">_</span> : state) {
+        <span class="org-constant">CK</span>::<span class="org-type">HashSet</span>&lt;<span class="org-type">int</span>&gt; <span class="org-variable-name">hs</span>;
+        <span class="org-comment-delimiter">// </span><span class="org-comment">state.PauseTiming();</span>
+        <span class="org-comment-delimiter">// </span><span class="org-comment">state.ResumeTiming();</span>
+        <span class="org-keyword">for</span> (<span class="org-type">size_t</span> <span class="org-variable-name">i</span> = 0; i &lt; a.size(); i++) {
+            hs.insert(a[i]);
+        }
+        HSINFO(__func__);
+    }
+}
+
+<span class="org-keyword">static</span> <span class="org-keyword">const</span> <span class="org-type">int</span> <span class="org-variable-name">FACTOR</span> = 16;
+<span class="org-keyword">static</span> <span class="org-keyword">const</span> <span class="org-type">int</span> <span class="org-variable-name">N</span> = 4096000 * FACTOR;
+<span class="org-keyword">static</span> <span class="org-keyword">const</span> <span class="org-type">int</span> <span class="org-variable-name">M0</span> = 60 * FACTOR;
+<span class="org-keyword">static</span> <span class="org-keyword">const</span> <span class="org-type">int</span> <span class="org-variable-name">M1</span> = 6000 * FACTOR;
+<span class="org-keyword">static</span> <span class="org-keyword">const</span> <span class="org-type">int</span> <span class="org-variable-name">M2</span> = 600000 * FACTOR;
+<span class="org-keyword">static</span> <span class="org-keyword">const</span> <span class="org-type">int</span> <span class="org-variable-name">M3</span> = 60000000 * FACTOR;
+
+static_assert(N % BLOCK == 0);
+
+BENCHMARK(run_insert_random)-&gt;Args({N, M0});
+BENCHMARK(run_insert_random_ska)-&gt;Args({N, M0});
+BENCHMARK(run_insert_precompute)-&gt;Args({N, M0});
+BENCHMARK(run_insert_random_ck)-&gt;Args({N, M0});
+
+BENCHMARK(run_insert_random)-&gt;Args({N, M1});
+BENCHMARK(run_insert_random_ska)-&gt;Args({N, M1});
+BENCHMARK(run_insert_precompute)-&gt;Args({N, M1});
+BENCHMARK(run_insert_random_ck)-&gt;Args({N, M1});
+
+BENCHMARK(run_insert_random)-&gt;Args({N, M2});
+BENCHMARK(run_insert_random_ska)-&gt;Args({N, M2});
+BENCHMARK(run_insert_precompute)-&gt;Args({N, M2});
+BENCHMARK(run_insert_random_ck)-&gt;Args({N, M2});
+
+BENCHMARK(run_insert_random)-&gt;Args({N, M3});
+BENCHMARK(run_insert_random_ska)-&gt;Args({N, M3});
+BENCHMARK(run_insert_precompute)-&gt;Args({N, M3});
+BENCHMARK(run_insert_random_ck)-&gt;Args({N, M3});
+</pre>
+</div>
+</div>
+</div>
+</div>
+<div id="content"><!-- DISQUS BEGIN --><div id="disqus_thread"></div><script>/***  RECOMMENDED CONFIGURATION VARIABLES: EDIT AND UNCOMMENT THE SECTION BELOW TO INSERT DYNAMIC VALUES FROM YOUR PLATFORM OR CMS.*  LEARN WHY DEFINING THESE VARIABLES IS IMPORTANT: https://disqus.com/admin/universalcode/#configuration-variables*/var disqus_config = function () {this.page.url = 'https://dirtysalt.github.io/html/hashtable-perf-comparison.html';this.page.identifier = 'hashtable-perf-comparison.html';};(function() {var d = document, s = d.createElement('script');s.src = 'https://dirlt.disqus.com/embed.js';s.setAttribute('data-timestamp', +new Date());(d.head || d.body).appendChild(s);})();</script><noscript>Please enable JavaScript to view the <a href="https://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript><!-- DISQUS END --></div></body>
+</html>

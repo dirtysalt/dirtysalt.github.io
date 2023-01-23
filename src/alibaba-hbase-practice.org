@@ -1,0 +1,44 @@
+#+title: 阿里HBase业务设计实践
+
+----------
+产品线、客户端使用建议
+- 海量数据，rowkey范围和分布已知，建议进行预分配
+- Rowkey一定要尽量短 （如：时间用时间戳整数表示、编码压缩）
+- CF设计：尽量少，建议CF数量在1-2个
+- Rowkey设计：写入要分散；如历史交易订单：biz_order_id做reverse后做rowkey
+- Autoflush参数设置为true；否则极端情况下会丢失数据
+  - Hbase client的重试次数为3次以上。否则会由于split导致region not onle；从而导致写入失败(udc集群出现过)。
+  - hbase.rpc.timeout 一次rpc的timeout；默认60秒
+  - hbase.client.pause 客户端的一次操作失败，到下次重试之间的等待时间
+  - hbase.client.retries.number 客户端重试的次数
+  - hbase.regionserver.lease.period 客户端租期超时阀值；scan量大时可以考虑增大；否则”Lease Exception: lease -70000000000000001 does not exist”
+- ZK连接/HTable对象的使用注意
+  - Configure对象的使用. 必须是static or singleton模式
+  - 默认：每台机器与zk直接的连接数不超过30个
+  - HTable的使用
+    - 线程不安全
+    - 使用HTableV2
+    - HTablePool (推荐的方式)
+
+----------
+影响汇总
+1. 对于写速度而言，影响因素的效果主要为： 写hlog > split > compact；
+2. 对于写速度波动而言，想完全不波动是不可能，影响因素的效果主要为：split > 写hlog > compact；
+3. 对于写频率较高的应用而言，一台region server上不适合有太多的region； (hbase.hregion.max.filesize = 64G)
+4. Pre-Sharding可以不做，建议做；
+5. 对于日志应用可以考虑关闭compact/split
+  1. hbase.regionserver.regionSplitLimit 1关闭split
+  2. hbase.hstore.compactionThreshold Integer.MAX_VALUE关闭Compact
+  3. hbase.hstore.blockingStoreFiles Integer.MAX_VALUE不要因为store file数量而产生阻塞
+
+----------
+风险点：集群稳定/容灾
+- regionserver的单点问题
+  - 导致部分数据短暂不可用
+- 跨机房容灾
+  - 目前还只是部署在单个机房
+  - 跨机房性能衰减
+- 实现：
+  - 程序双写
+  - 复制的测试(push的replication已经上线、pull在研)
+  - 消息中间件实现(异步消息)

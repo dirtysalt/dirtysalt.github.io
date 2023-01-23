@@ -1,0 +1,156 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>C语言switch表格跳转的汇编实现</title>
+<meta name="author" content="dirtysalt" />
+<meta name="generator" content="Org Mode" />
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content" class="content">
+<h1 class="title">C语言switch表格跳转的汇编实现</h1>
+<p>
+最近在看 <a href="https://github.com/skywind3000/FastMemcpy/">https://github.com/skywind3000/FastMemcpy/</a> 这个超快的memcpy实现，里面有段代码让我想到了一个困惑很久的问题，就是据说switch如果分支很多的话，那么会实现表格跳转实现来生成代码，但是我始终不太清楚这个汇编实现是什么样子的。今天看了一下这段汇编代码，好像也不是特别复杂。
+</p>
+
+<p>
+先说一下这个memcpy逻辑：对于拷贝字节数小于等于128的话，会使用switch实现来做判断。相关代码在这个地方 <a href="https://github.com/skywind3000/FastMemcpy/blob/8fea5f666be174c6548d0ae4010e81b0a742c853/FastMemcpy.h#L87">https://github.com/skywind3000/FastMemcpy/blob/8fea5f666be174c6548d0ae4010e81b0a742c853/FastMemcpy.h#L87</a>
+</p>
+
+<div class="org-src-container">
+<pre class="src src-c"><span class="org-keyword">static</span> INLINE <span class="org-type">void</span> *<span class="org-function-name">memcpy_tiny</span>(<span class="org-type">void</span> *<span class="org-variable-name">dst</span>, <span class="org-keyword">const</span> <span class="org-type">void</span> *<span class="org-variable-name">src</span>, <span class="org-type">size_t</span> <span class="org-variable-name">size</span>) {
+    <span class="org-type">unsigned</span> <span class="org-type">char</span> *<span class="org-variable-name">dd</span> = ((<span class="org-type">unsigned</span> <span class="org-type">char</span>*)dst) + size;
+    <span class="org-keyword">const</span> <span class="org-type">unsigned</span> <span class="org-type">char</span> *<span class="org-variable-name">ss</span> = ((<span class="org-keyword">const</span> <span class="org-type">unsigned</span> <span class="org-type">char</span>*)src) + size;
+
+    <span class="org-keyword">switch</span> (size) {
+    <span class="org-keyword">case</span> 64:
+        memcpy_sse2_64(dd - 64, ss - 64);
+    <span class="org-keyword">case</span> 0:
+        <span class="org-keyword">break</span>;
+    ...
+}
+
+<span class="org-keyword">static</span> <span class="org-type">void</span>* <span class="org-function-name">memcpy_fast</span>(<span class="org-type">void</span> *<span class="org-variable-name">destination</span>, <span class="org-keyword">const</span> <span class="org-type">void</span> *<span class="org-variable-name">source</span>, <span class="org-type">size_t</span> <span class="org-variable-name">size</span>)
+{
+    <span class="org-type">unsigned</span> <span class="org-type">char</span> *<span class="org-variable-name">dst</span> = (<span class="org-type">unsigned</span> <span class="org-type">char</span>*)destination;
+    <span class="org-keyword">const</span> <span class="org-type">unsigned</span> <span class="org-type">char</span> *<span class="org-variable-name">src</span> = (<span class="org-keyword">const</span> <span class="org-type">unsigned</span> <span class="org-type">char</span>*)source;
+    <span class="org-keyword">static</span> <span class="org-type">size_t</span> <span class="org-variable-name">cachesize</span> = 0x200000; <span class="org-comment-delimiter">// </span><span class="org-comment">L2-cache size</span>
+    <span class="org-type">size_t</span> <span class="org-variable-name">padding</span>;
+
+    <span class="org-comment-delimiter">// </span><span class="org-comment">small memory copy</span>
+    <span class="org-keyword">if</span> (size &lt;= 128) {
+        <span class="org-keyword">return</span> memcpy_tiny(dst, src, size);
+    }
+    ...
+}
+</pre>
+</div>
+
+<p>
+我分别在Linux和MacOSX(实际是clang)上使用 `gcc -O3 FastMemcpy.c -S` 查看生成的汇编代码。因为这个函数是inline的，并且放在了 memcpy_fast 函数最开头，所以很容易就可以找到对应的汇编代码部分。下面是Linux上的汇编代码以及相关注释，直接使用 `jmp *.L5(,%rdx,8)` 这样的跳转指令，其中rdx是拷贝字节数
+</p>
+
+<div class="org-src-container">
+<pre class="src src-asm"><span class="org-function-name">memcpy_fast</span>:
+<span class="org-function-name">.LFB549</span>:
+    <span class="org-keyword">.file</span> 1 <span class="org-string">"FastMemcpy.h"</span>
+    <span class="org-keyword">.loc</span> 1 581 0
+    <span class="org-keyword">.cfi_startproc</span>
+<span class="org-function-name">.LVL0</span>:
+    <span class="org-keyword">.loc</span> 1 588 0
+    <span class="org-keyword">cmpq</span>    $128, <span class="org-variable-name">%rdx</span> # rdx&#26159;&#25335;&#36125;&#38271;&#24230;&#65292;&#39318;&#20808;&#21644;128&#23545;&#27604;
+    <span class="org-keyword">.loc</span> 1 581 0
+    <span class="org-keyword">movq</span>    <span class="org-variable-name">%rdi</span>, <span class="org-variable-name">%rax</span> # rdi&#26159;&#30446;&#26631;&#22320;&#22336;&#65292;&#25918;&#21040;&#20102;rax&#37324;&#38754;
+    <span class="org-keyword">.loc</span> 1 588 0
+    <span class="org-keyword">ja</span>    .L2 # &#36827;&#20837;&gt;128&#24773;&#20917;&#19979;&#30340;&#20195;&#30721;
+<span class="org-function-name">.LVL1</span>:
+<span class="org-function-name">.LBB5571</span>:
+<span class="org-function-name">.LBB5572</span>:
+    <span class="org-keyword">.loc</span> 1 88 0
+    <span class="org-keyword">leaq</span>    (<span class="org-variable-name">%rdi</span>,<span class="org-variable-name">%rdx</span>), <span class="org-variable-name">%rcx</span> # rcx = rdi + rdx&#65292;&#23601;&#26159;&#30446;&#26631;&#32467;&#26463;&#22320;&#22336;
+<span class="org-function-name">.LVL2</span>:
+    <span class="org-keyword">.loc</span> 1 89 0
+    <span class="org-keyword">addq</span>    <span class="org-variable-name">%rdx</span>, <span class="org-variable-name">%rsi</span> # rsi = rsi + rdx&#65292;&#23601;&#26159;&#28304;&#32467;&#26463;&#22320;&#22336;
+<span class="org-function-name">.LVL3</span>:
+    <span class="org-keyword">.loc</span> 1 91 0
+    <span class="org-keyword">jmp</span>    *.L5(,<span class="org-variable-name">%rdx</span>,8) # .L5&#23601;&#26159;&#36339;&#36716;&#34920;&#26684;&#36215;&#22987;&#22320;&#22336;&#65292;&#26681;&#25454;&#23383;&#33410;&#25968;(rdx)&#36339;&#36716;&#21040;&#23545;&#24212;&#30340;&#20363;&#31243;&#65292;&#27599;&#20010;&#22320;&#22336;&#21344;&#29992;8&#20010;&#23383;&#33410;
+    <span class="org-keyword">.section</span>    .rodata
+    <span class="org-keyword">.align</span> 8
+    <span class="org-keyword">.align</span> 4
+<span class="org-function-name">.L5</span>:
+    <span class="org-keyword">.quad</span>    .L3 # rdx = 0&#30340;&#24773;&#20917;
+    <span class="org-keyword">.quad</span>    .L4 # rdx = 1&#30340;&#24773;&#20917;
+...
+
+<span class="org-function-name">.L4</span>: # &#36825;&#37324;&#21482;&#36148;&#20986;rdx=1&#30340;&#24773;&#20917;
+<span class="org-function-name">.LBE7296</span>:
+<span class="org-function-name">.LBE7295</span>:
+<span class="org-function-name">.LBE7280</span>:
+<span class="org-function-name">.LBE7279</span>:
+    <span class="org-keyword">.loc</span> 1 100 0
+    <span class="org-keyword">movzbl</span>    -1(<span class="org-variable-name">%rsi</span>), <span class="org-variable-name">%edx</span> # rsi&#26159;&#28304;&#32467;&#26463;&#22320;&#22336;&#65292;&#21462;&#26368;&#21518;&#19968;&#20010;&#23383;&#33410;&#25193;&#23637;&#21040;edx&#19978;
+<span class="org-function-name">.LVL1567</span>:
+    <span class="org-keyword">movb</span>    <span class="org-variable-name">%dl</span>, -1(<span class="org-variable-name">%rcx</span>) # &#21462;ebx&#26368;&#20302;1&#23383;&#33410;dl&#65292;&#25335;&#36125;&#21040;rcx-1&#19978;&#65292;rcx&#26159;&#32467;&#26463;&#22320;&#22336;
+    <span class="org-keyword">ret</span>
+</pre>
+</div>
+
+<p>
+MacOSX上的汇编代码稍微复杂一些，跳转的时候多了3条指令，但是占用表格空间减少了128 * 4 = 512字节。最终也是 `jmpq *%rax` 这样的跳转指令。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-asm"><span class="org-function-name">_memcpy_fast</span>:                           ## @memcpy_fast
+<span class="org-function-name">Lfunc_begin3</span>:
+    <span class="org-keyword">.loc</span>    5 581 0                 ## ./FastMemcpy.h:581:0
+    <span class="org-keyword">.cfi_startproc</span>
+    <span class="org-keyword">pushq</span>    <span class="org-variable-name">%rbp</span>
+    <span class="org-keyword">.cfi_def_cfa_offset</span> 16
+    <span class="org-keyword">.cfi_offset</span> <span class="org-variable-name">%rbp</span>, -16
+    <span class="org-keyword">movq</span>    <span class="org-variable-name">%rsp</span>, <span class="org-variable-name">%rbp</span>
+    <span class="org-keyword">.cfi_def_cfa_register</span> <span class="org-variable-name">%rbp</span>
+<span class="org-function-name">Ltmp54</span>:
+    <span class="org-keyword">cmpq</span>    $128, <span class="org-variable-name">%rdx</span> # rdx&#26159;&#25335;&#36125;&#38271;&#24230;&#65292;&#21644;128&#36827;&#34892;&#26631;&#35760;
+<span class="org-function-name">Ltmp55</span>:
+    <span class="org-keyword">ja</span>    LBB3_129 # &#22914;&#26524;&gt;128&#30340;&#35805;&#65292;&#37027;&#20040;&#36339;&#36716;&#21040;&#23545;&#24212;&#22320;&#22336;
+<span class="org-function-name">Ltmp56</span>:
+    <span class="org-keyword">leaq</span>    -1(<span class="org-variable-name">%rdx</span>), <span class="org-variable-name">%rax</span> # rax = rdx - 1
+    <span class="org-keyword">cmpq</span>    $127, <span class="org-variable-name">%rax</span>
+    <span class="org-keyword">ja</span>    LBB3_144 # &#22914;&#26524;rax &gt; 127&#30340;&#35805;&#65292;&#37027;&#20040;&#36339;&#36716;&#21040;&#36825;&#37324;&#65292;&#20294;&#26159;&#25105;&#35273;&#24471;&#22909;&#20687;&#19981;&#34892;&#65292;&#22240;&#20026;rdx &lt;=128, rax&#26368;&#22823;&#20540;&#26159;127
+<span class="org-function-name">Ltmp57</span>:
+    <span class="org-keyword">addq</span>    <span class="org-variable-name">%rdx</span>, <span class="org-variable-name">%rdi</span> # rdi = rdi + rdx, &#34920;&#31034;&#30446;&#26631;&#32467;&#26463;&#22320;&#22336;
+<span class="org-function-name">Ltmp58</span>:
+    <span class="org-keyword">addq</span>    <span class="org-variable-name">%rdx</span>, <span class="org-variable-name">%rsi</span> # rsi = rsi + rdx, &#34920;&#31034;&#28304;&#32467;&#26463;&#22320;&#22336;
+<span class="org-function-name">Ltmp59</span>:
+    <span class="org-keyword">leaq</span>    LJTI3_1(<span class="org-variable-name">%rip</span>), <span class="org-variable-name">%rcx</span> # LJTI3_1&#26159;&#34920;&#26684;&#22320;&#22336;&#22320;&#22336;&#65292;rcx&#23601;&#26159;&#34920;&#31034;&#32477;&#23545;&#22320;&#22336;
+    <span class="org-keyword">movslq</span>    (<span class="org-variable-name">%rcx</span>,<span class="org-variable-name">%rax</span>,4), <span class="org-variable-name">%rax</span> # rax = rcx + 4 * rax. &#27880;&#24847;&#36825;&#20010;rax&#19981;&#26159;&#32477;&#23545;&#22320;&#22336;&#65292;&#32780;&#26159;&#30456;&#23545;rcx&#20559;&#31227;&#19978;&#30340;&#20540;
+    <span class="org-keyword">addq</span>    <span class="org-variable-name">%rcx</span>, <span class="org-variable-name">%rax</span> # rax = rax + rcx &#27492;&#26102;rax&#25165;&#26159;&#32477;&#23545;&#22320;&#22336;
+    <span class="org-keyword">jmpq</span>    *<span class="org-variable-name">%rax</span> # &#36827;&#34892;&#22320;&#22336;&#36339;&#36716;
+
+   ...
+<span class="org-keyword">.set</span> L3_1_set_4, LBB3_4-LJTI3_1 # &#20559;&#31227;&#37327;
+<span class="org-keyword">.set</span> L3_1_set_6, LBB3_6-LJTI3_1
+<span class="org-keyword">.set</span> L3_1_set_8, LBB3_8-LJTI3_1
+<span class="org-keyword">.set</span> L3_1_set_10, LBB3_10-LJTI3_1
+<span class="org-keyword">.set</span> L3_1_set_12, LBB3_12-LJTI3_1
+    ...
+
+<span class="org-function-name">LJTI3_1</span>: # &#34920;&#26684;&#36215;&#22987;&#22320;&#22336;
+    <span class="org-keyword">.long</span>    L3_1_set_4 # &#23454;&#38469;&#22320;&#22336;&#30456;&#23545;&#34920;&#26684;&#36215;&#22987;&#22320;&#22336;&#20559;&#31227;&#65292;&#27599;&#20010;&#20559;&#31227;&#37327;&#21344;&#29992;4&#20010;&#23383;&#33410;
+    <span class="org-keyword">.long</span>    L3_1_set_6
+    <span class="org-keyword">.long</span>    L3_1_set_8
+    ....
+
+<span class="org-function-name">LBB3_4</span>: # &#36827;&#34892;1&#23383;&#33410;copy&#30340;&#20195;&#30721;
+    <span class="org-keyword">movb</span>    -1(<span class="org-variable-name">%rsi</span>), <span class="org-variable-name">%al</span>
+    <span class="org-keyword">movb</span>    <span class="org-variable-name">%al</span>, -1(<span class="org-variable-name">%rdi</span>)
+    <span class="org-keyword">popq</span>    <span class="org-variable-name">%rbp</span>
+    <span class="org-keyword">retq</span>
+</pre>
+</div>
+</div>
+<div id="content"><!-- DISQUS BEGIN --><div id="disqus_thread"></div><script>/***  RECOMMENDED CONFIGURATION VARIABLES: EDIT AND UNCOMMENT THE SECTION BELOW TO INSERT DYNAMIC VALUES FROM YOUR PLATFORM OR CMS.*  LEARN WHY DEFINING THESE VARIABLES IS IMPORTANT: https://disqus.com/admin/universalcode/#configuration-variables*/var disqus_config = function () {this.page.url = 'https://dirtysalt.github.io/html/c-switch-table-in-asm.html';this.page.identifier = 'c-switch-table-in-asm.html';};(function() {var d = document, s = d.createElement('script');s.src = 'https://dirlt.disqus.com/embed.js';s.setAttribute('data-timestamp', +new Date());(d.head || d.body).appendChild(s);})();</script><noscript>Please enable JavaScript to view the <a href="https://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript><!-- DISQUS END --></div></body>
+</html>

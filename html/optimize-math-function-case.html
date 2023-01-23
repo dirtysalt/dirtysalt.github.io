@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>优化数学函数案例 - Speeding up atan2f by 50x</title>
+<meta name="author" content="dirtysalt" />
+<meta name="generator" content="Org Mode" />
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content" class="content">
+<h1 class="title">优化数学函数案例 - Speeding up atan2f by 50x</h1>
+<p>
+<a href="https://mazzo.li/posts/vectorized-atan2.html">https://mazzo.li/posts/vectorized-atan2.html</a>
+</p>
+
+<p>
+我觉得外围benchmark代码写的很好 <a href="https://gist.github.com/bitonic/d0f5a0a44e37d4f0be03d34d47acb6cf">https://gist.github.com/bitonic/d0f5a0a44e37d4f0be03d34d47acb6cf</a> 里面直接调用perf_event_open来获取CPU的执行状态，这样就可以比较方便地统计出比如cycles/branches/branch misses per element这些指标。
+</p>
+
+<p>
+优化上大致几个思路：
+</p>
+<ol class="org-ol">
+<li>有限项的级数展开. 里面说用到了 Cecil Hastings Jr. 给出的级数展开系数，展开到第六项就可以确保误差在1/10000度内.</li>
+<li>使用的级数展开必须确保简单，易于实现，比如类似使用fma这样的操作 <a href="https://en.cppreference.com/w/c/numeric/math/fma">https://en.cppreference.com/w/c/numeric/math/fma</a> 这类简单重复的操作可以很容易地被SIMD化</li>
+<li>上面级数展开有个要求是x在[-1,1]之间，然后利用arctan(y/x) + arctan(x/y) = pi/2 来处理其他情况。优化数学函数一定要懂数学。</li>
+<li>然后就是实现细节：减少分支判断，用float不用double, 使用fmad函数，手工展开到SIMD指令上。</li>
+</ol>
+
+<p>
+作者在最后面给了个网站 uiCA <a href="https://uica.uops.info/">https://uica.uops.info/</a> 可以模拟每条指令在执行时候的cycles. 好像这个对于micro-benchmark/optimization很有用，llvm里面也有个类似工具 llvm-mca <a href="https://llvm.org/docs/CommandGuide/llvm-mca.html">https://llvm.org/docs/CommandGuide/llvm-mca.html</a>
+</p>
+</div>
+<div id="content"><!-- DISQUS BEGIN --><div id="disqus_thread"></div><script>/***  RECOMMENDED CONFIGURATION VARIABLES: EDIT AND UNCOMMENT THE SECTION BELOW TO INSERT DYNAMIC VALUES FROM YOUR PLATFORM OR CMS.*  LEARN WHY DEFINING THESE VARIABLES IS IMPORTANT: https://disqus.com/admin/universalcode/#configuration-variables*/var disqus_config = function () {this.page.url = 'https://dirtysalt.github.io/html/optimize-math-function-case.html';this.page.identifier = 'optimize-math-function-case.html';};(function() {var d = document, s = d.createElement('script');s.src = 'https://dirlt.disqus.com/embed.js';s.setAttribute('data-timestamp', +new Date());(d.head || d.body).appendChild(s);})();</script><noscript>Please enable JavaScript to view the <a href="https://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript><!-- DISQUS END --></div></body>
+</html>

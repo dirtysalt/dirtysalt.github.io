@@ -1,0 +1,44 @@
+#+title: 查找TCP端口被哪个进程占用
+
+没有办法在0.0.0.0:15004这个地址上面启动
+
+#+BEGIN_EXAMPLE
+Traceback (most recent call last):
+  File "./app.py", line 43, in <module>
+    app.run('0.0.0.0', 10004, debug=True)
+  File "/home/ec2-user/nova/venv/local/lib/python2.7/site-packages/flask/app.py", line 841, in run
+    run_simple(host, port, self, **options)
+  File "/home/ec2-user/nova/venv/local/lib/python2.7/site-packages/werkzeug/serving.py", line 795, in run_simple
+    s.bind(get_sockaddr(hostname, port, address_family))
+  File "<string>", line 1, in bind
+socket.error: [Errno 98] Address already in use
+#+END_EXAMPLE
+
+使用 netstat -nltp 的话没有看到任何绑定这个端口的进程
+
+#+BEGIN_EXAMPLE
+Active Internet connections (only servers)
+Proto Recv-Q Send-Q Local Address               Foreign Address             State       PID/Program name
+tcp        0      0 idx1:smtp                   *:*                         LISTEN      3646/sendmail
+tcp        0      0 *:63140                     *:*                         LISTEN      3455/rpc.statd
+tcp        0      0 idx1:27017                  *:*                         LISTEN      3778/mongod
+tcp        0      0 idx1:27017                  *:*                         LISTEN      3778/mongod
+tcp        0      0 *:sunrpc                    *:*                         LISTEN      3434/rpcbind
+tcp        0      0 *:emcrmirccd                *:*                         LISTEN      9594/python2.7
+tcp        0      0 *:ssh                       *:*                         LISTEN      3616/sshd
+tcp        0      0 *:sunrpc                    *:*                         LISTEN      3434/rpcbind
+tcp        0      0 *:npep-messaging            *:*                         LISTEN      3455/rpc.statd
+tcp        0      0 *:ssh                       *:*                         LISTEN      3616/sshd
+#+END_EXAMPLE
+
+但是如果使用 lsof 查找这个端口的话，可以看到这个端口被某个进程当做client使用
+#+BEGIN_EXAMPLE
+(venv) [ec2-user@idx1 podcast]$ lsof -i | grep 15004
+python    5035 ec2-user   26u  IPv4  23021      0t0  TCP idx1:15004->app2:27017 (ESTABLISHED)
+
+(venv) [ec2-user@idx1 podcast]$ ps aux | grep 5035
+ec2-user   5035  0.5  0.4 1850388 137352 ?      Sl   06:12   0:08 python ./worker.py --track-cover --priority --count 128 --max-rss-gb 0.6
+ec2-user  10292  0.0  0.0 110464  2184 pts/0    S+   06:40   0:00 grep --color=auto 5035
+#+END_EXAMPLE
+
+这个原因估计还是因为我自己修改了内核参数 `net.ipv4.ip_local_port_range= 1024 65535` 这样临时端口会从1024开始分配，这样会和部分服务的端口出现冲突。https://en.wikipedia.org/wiki/Ephemeral_port 默认的临时端口是从32768开始进行分配的。

@@ -1,0 +1,306 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>BPF Performance Tools</title>
+<meta name="author" content="dirtysalt" />
+<meta name="generator" content="Org Mode" />
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content" class="content">
+<h1 class="title">BPF Performance Tools</h1>
+<p>
+Linux System and Application Observability
+</p>
+
+<hr />
+
+<p>
+bcc/bpftrace/bpf之间的关系
+</p>
+<ol class="org-ol">
+<li>BCC是BPF编译器集合，允许用户使用C语言来编写BPF(编译成为BPF). 外部脚本来控制BPF的运行，收集数据，加工数据，展示结果等等。</li>
+<li>bpftrace有自己的语言比较类似于C但是有诸多限制，最后也编译成为BPF. 通常比较适合编写单行程序，不太方便做复杂的分析。</li>
+<li>BPF是一个被编译进入内核，在内核态执行，具有JIT功能的虚拟机。</li>
+</ol>
+
+
+<div id="org8588586" class="figure">
+<p><img src="../images/bcc-bpftrace-and-bpf.png" alt="bcc-bpftrace-and-bpf.png" />
+</p>
+</div>
+
+<blockquote>
+<p>
+BCC (BPF Compiler Collection) was the first higher-level tracing framework developed for BPF. It provides a C programming environment for writing kernel BPF code and other languages for the user-level interface: Python, Lua, and C++. It is also the origin of the libbcc and current libbpf libraries,3 which provide functions for instrumenting events with BPF programs. The BCC reposi- tory also contains more than 70 BPF tools for performance analysis and troubleshooting. You can install BCC on your system and then run the tools provided, without needing to write any BCC code yourself. This book will give you a tour of many of these tools.
+</p>
+
+<p>
+bpftrace is a newer front end that provides a special-purpose, high-level language for develop- ing BPF tools. bpftrace code is so concise that tool source code is usually included in this book, to show what the tool is instrumenting and how it is processed. bpftrace is built upon the libbcc and libbpf libraries.
+</p>
+
+<p>
+BCC and bpftrace are pictured in Figure 1-1. They are complementary: Whereas bpftrace is ideal for powerful one-liners and custom short scripts, BCC is better suited for complex scripts and daemons, and can make use of other libraries. For example, many of the Python BCC tools use the Python argparse library to provide complex and fine control of tool command line arguments.
+</p>
+</blockquote>
+
+<p>
+使用bpf可以观测的点非常多  <a href="https://www.brendangregg.com/Perf/bpf_book_tools.png">link</a>
+</p>
+
+
+<div id="orgc8d6d7d" class="figure">
+<p><img src="../images/bpf_book_tools.png" alt="bpf_book_tools.png" />
+</p>
+</div>
+
+<hr />
+
+<p>
+使用bpf观测时候需要进行打点，在不同点上执行某些代码，然后汇总起来形成全貌。这些点可以分为下面几类：
+</p>
+<ol class="org-ol">
+<li>kprobes/uprobes: dynamic instrumentation. 可以认为这些都是二进制中的函数符号，在函数入口和出口可以进行打点。好处是比较动态，坏处就是这些函数符号并不会被维护，不同二进制之间符号会变化甚至语义都不同。</li>
+<li>tracepoints/USDT(user-level defined tracingpoint): static instrumentation. 同样是二进制中的符号（不必限于是函数符号），这些都是静态点，代码作者通常会长期维护它。</li>
+<li>software/hardware: 软件(major-faults)和硬件事件(branch-miss), 可以参考perf events</li>
+<li>profile/interval: 这两个都是时间间隔采样，profile针对所有的CPU进行定时采样，而interval则是在单个CPU上触发主要用来做定时任务用。</li>
+</ol>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">Probe</th>
+<th scope="col" class="org-left">Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left">kprobe:vfs_read</td>
+<td class="org-left">Instrument the beginning of the kernel vfs_read() function</td>
+</tr>
+
+<tr>
+<td class="org-left">kretprobe:vfs_read</td>
+<td class="org-left">Instrument the returns6 of the kernel vfs_read() function</td>
+</tr>
+
+<tr>
+<td class="org-left">uprobe:/bin/bash:readline</td>
+<td class="org-left">Instrument the beginning of the readline() function in /bin/bash</td>
+</tr>
+
+<tr>
+<td class="org-left">uretprobe:/bin/bash:readline</td>
+<td class="org-left">Instrument the returns of the readline() function in /bin/bash</td>
+</tr>
+
+<tr>
+<td class="org-left">tracepoint:syscalls:sys_enter_open</td>
+<td class="org-left">Instrument the open(2) syscall</td>
+</tr>
+
+<tr>
+<td class="org-left">usdt:/usr/sbin/mysqld:mysql: query__start</td>
+<td class="org-left">Instrument the query__start probe from /usr/sbin/mysqld</td>
+</tr>
+</tbody>
+</table>
+
+<blockquote>
+<p>
+tracepoint:
+</p>
+<ul class="org-ul">
+<li>tracepoint:syscalls:sys_enter_read</li>
+<li>tracepoint:syscalls:sys_exit_read</li>
+</ul>
+
+<p>
+usdt:
+</p>
+<ul class="org-ul">
+<li>usdt:binary_path:probe_name</li>
+<li>usdt:library_path:probe_name</li>
+<li>usdt:binary_path:probe_namespace:probe_name</li>
+<li>usdt:library_path:probe_namespace:probe_name</li>
+</ul>
+
+<p>
+kprobe/uprobe:
+</p>
+<ul class="org-ul">
+<li>kprobe:function_name</li>
+<li>kretprobe:function_name</li>
+<li>uprobe:binary_path:function_name</li>
+<li>uprobe:library_path:function_name</li>
+<li>uretprobe:binary_path:function_name</li>
+<li>uretprobe:library_path:function_name</li>
+</ul>
+
+<p>
+software/hardware // count 表示触发采样次数
+</p>
+<ul class="org-ul">
+<li>software:event_name:count</li>
+<li>software:event_name:</li>
+<li>hardware:event_name:count</li>
+<li>hardware:event_name:</li>
+</ul>
+
+<p>
+profile/interval // rate 表示数值
+</p>
+<ul class="org-ul">
+<li>profile:hz:rate</li>
+<li>profile:s:rate</li>
+<li>profile:ms:rate</li>
+<li>profile:us:rate</li>
+<li>interval:s:rate</li>
+<li>interval:ms:rate</li>
+</ul>
+</blockquote>
+
+<p>
+<a href="https://www.brendangregg.com/perf_events/perf_events_map.png">link</a>
+</p>
+
+
+<div id="orgf2803f7" class="figure">
+<p><img src="../images/perf_events_map.png" alt="perf_events_map.png" />
+</p>
+</div>
+
+<hr />
+
+<p>
+kprobe/uprobe实现原理上都是动态更换指令（不过我没有明白如果多个用户同时打点的话会不会有问题）。对于kprobe的话，将入口指令更换成为int3或者是jmp, 跳转handler, 而handler里面保存好原来函数的下一条指令。对于kretprobe, 则是在进入函数的时候记录返回地址，修改返回地址跳转到handler上。uprobe相比kprobe，还可以针对二进制文件进行记录，所以执行这个二进制的实例都可以进行采样。
+</p>
+
+<blockquote>
+<p>
+Modifying kernel instruction text live may sound incredibly risky, but it has been designed to be safe. This design includes a blacklist of functions that kprobe will not instrument, which include kprobes itself, to avoid a recursive trap condition. kprobes also make use of safe techniques for inserting breakpoints: the x86 native int3 instruction, or stop_machine() when the jmp instruction is used to ensure that other cores do not execute instructions as they are being modified. The biggest risk in practice is instrumenting a kernel function that is extremely frequent: if that happens, the small overhead added to each invocation can add up, slowing down the system while the function is instrumented.
+</p>
+
+<p>
+uprobes are similar to kprobes, but for user-space processes. uprobes can instrument user-level function entries as well as instruction offsets, and uretprobes can instrument the return of functions.
+</p>
+
+<p>
+uprobes are also file based: When a function in an executable file is traced, all processes using that file are instrumented, including those that start in the future. This allows library calls to be traced system-wide.
+</p>
+</blockquote>
+
+<p>
+tracepoints/USDT实现原理和kprobe/uprobes也比较类似，也相当于是动态修改指令。但是不用像kprobe/uprobe那样做trampoline, 编译的时候在打点上加入足够大的nop指令，当进行测量的时候将nop更换成为jmp到一个handler上，handler的结尾就是nop之后的指令。
+</p>
+
+<hr />
+
+<p>
+BPF工作方式如下图：
+</p>
+<ol class="org-ol">
+<li>BPF是一个带有JIT功能虚拟机</li>
+<li>BPF在kernel层面上执行并且尽可能地聚合数据</li>
+<li>Verifier可以检查BPF Inst判断执行是否会影响内核</li>
+<li>BTF(BPF Type Format) 类似二进制中的debuginfo信息</li>
+</ol>
+
+
+<div id="org579772b" class="figure">
+<p><img src="../images/bpf_tracing_tech.png" alt="bpf_tracing_tech.png" />
+</p>
+</div>
+
+
+<div id="org9f01fd2" class="figure">
+<p><img src="../images/bpf_runtime_internals.png" alt="bpf_runtime_internals.png" />
+</p>
+</div>
+
+<p>
+既然BPF是一个虚拟机那么就有vmcode, 现在可以使用LLVM来将C编译成为这种vmcode. 想要查看系统内部bpf的话可以使用 `bpftool`, 比如那些bpf在跑，bpf的vmcode如何等等。
+</p>
+
+<blockquote>
+<p>
+BPF can be programmed via one of the many front ends available. The main ones for tracing are, from lowest- to highest-level language:
+</p>
+<ul class="org-ul">
+<li>LLVM</li>
+<li>BCC</li>
+<li>bpftrace</li>
+</ul>
+
+<p>
+The LLVM compiler supports BPF as a compilation target. BPF programs can be written using
+a higher-level language that LLVM supports, such as C (via Clang) or LLVM Intermediate Representation (IR), and then compiled into BPF. LLVM includes an optimizer, which improves the efficiency and size of the BPF instructions it emits.
+</p>
+
+<p>
+While developing BPF in LLVM IR is an improvement, switching to BCC or bpftrace is even better. BCC allows BPF programs to be written in C, and bpftrace provides its own higher-level language. Internally, they are using LLVM IR and an LLVM library to compile to BPF.
+</p>
+</blockquote>
+
+<hr />
+
+<p>
+BCC internals
+</p>
+
+
+<div id="org48f34cb" class="figure">
+<p><img src="../images/bcc_internals.png" alt="bcc_internals.png" />
+</p>
+</div>
+
+<p>
+bpftrace internals
+</p>
+
+<p>
+<a href="https://www.brendangregg.com/blog/images/2018/bpftrace_internals_2018.png">link</a>
+</p>
+
+
+<div id="orge32da09" class="figure">
+<p><img src="../images/bpftrace_internals_2018.png" alt="bpftrace_internals_2018.png" />
+</p>
+</div>
+
+<hr />
+
+<p>
+Linux 60-Second Analysis
+</p>
+
+<blockquote>
+<p>
+This checklist can be used for any performance issue and reflects what I typically execute in the first 60 seconds after logging into a poorly performing Linux system. This was published by myself and the Netflix performance engineering team [56]: The tools to run are:
+</p>
+<ol class="org-ol">
+<li>uptime</li>
+<li>dmesg | tail</li>
+<li>vmstat 1</li>
+<li>mpstat -P ALL 1</li>
+<li>pidstat 1</li>
+<li>iostat -xz 1</li>
+<li>free -m</li>
+<li>sar -n DEV 1</li>
+<li>sar -n TCP,ETCP 1</li>
+<li>top</li>
+</ol>
+</blockquote>
+</div>
+<div id="content"><!-- DISQUS BEGIN --><div id="disqus_thread"></div><script>/***  RECOMMENDED CONFIGURATION VARIABLES: EDIT AND UNCOMMENT THE SECTION BELOW TO INSERT DYNAMIC VALUES FROM YOUR PLATFORM OR CMS.*  LEARN WHY DEFINING THESE VARIABLES IS IMPORTANT: https://disqus.com/admin/universalcode/#configuration-variables*/var disqus_config = function () {this.page.url = 'https://dirtysalt.github.io/html/bpf-performance-tools.html';this.page.identifier = 'bpf-performance-tools.html';};(function() {var d = document, s = d.createElement('script');s.src = 'https://dirlt.disqus.com/embed.js';s.setAttribute('data-timestamp', +new Date());(d.head || d.body).appendChild(s);})();</script><noscript>Please enable JavaScript to view the <a href="https://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript><!-- DISQUS END --></div></body>
+</html>

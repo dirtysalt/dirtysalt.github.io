@@ -1,0 +1,221 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>一些MongoDB的实践建议</title>
+<meta name="author" content="dirtysalt" />
+<meta name="generator" content="Org Mode" />
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content" class="content">
+<h1 class="title">一些MongoDB的实践建议</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>Table of Contents</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#orgb08903a">1. 执行计划</a></li>
+<li><a href="#orgbdc1fd6">2. 网络传输</a></li>
+<li><a href="#orgdb75bb2">3. 索引选择</a></li>
+<li><a href="#org9db81d6">4. 磁盘读写</a></li>
+<li><a href="#orgd66d7f6">5. 杀掉慢查询</a></li>
+<li><a href="#org8ed4473">6. 文档频繁更新</a></li>
+</ul>
+</div>
+</div>
+<p>
+<a href="https://www.mongodb.com/basics/best-practices">https://www.mongodb.com/basics/best-practices</a>
+</p>
+
+
+<div id="outline-container-orgb08903a" class="outline-2">
+<h2 id="orgb08903a"><span class="section-number-2">1.</span> 执行计划</h2>
+<div class="outline-text-2" id="text-1">
+<ul class="org-ul">
+<li><a href="https://docs.mongodb.com/manual/core/query-plans/">https://docs.mongodb.com/manual/core/query-plans/</a></li>
+<li><a href="https://docs.mongodb.com/manual/core/query-optimization/">https://docs.mongodb.com/manual/core/query-optimization/</a></li>
+<li><a href="https://docs.mongodb.com/manual/tutorial/analyze-query-plan/">https://docs.mongodb.com/manual/tutorial/analyze-query-plan/</a></li>
+</ul>
+<p>
+<a href="https://dba.stackexchange.com/questions/226405/why-mongo-is-choosing-the-wrong-index-execution-plan">https://dba.stackexchange.com/questions/226405/why-mongo-is-choosing-the-wrong-index-execution-plan</a>
+</p>
+
+<p>
+mongodb是如何管理查询计划的？query planner会针对query shape（某种特定filter, project, sort)的组合指定某种query paln.
+</p>
+<ul class="org-ul">
+<li>如果存在多种查询计划的话，那么就会缓存起来（plan cache)</li>
+<li>下次在遇到类似这种query shape的话就会去查询缓存</li>
+<li>如果查询不到缓存或者是缓存的query plan效率不行的话，那么都会做replanning</li>
+<li>mongodb提供了plan cache相关操作的API</li>
+</ul>
+
+<p>
+可以使用 `db.collection.explaion()` （还可以得到更新计划）或者是 `cursor.explain()` 得到查询计划
+</p>
+
+<blockquote>
+<p>
+Test every query in your application with explain().MongoDB provides an explain plan capability that showsinformation about how a query will be, or was, resolved,including:
+</p>
+<ul class="org-ul">
+<li>The number of documents returned</li>
+<li>The number of documents read</li>
+<li>Which indexes were used</li>
+<li>Whether the query was covered, meaning no documentsneeded to be read to return results</li>
+<li>Whether an in-memory sort was performed, whichindicates an index would be bene cial</li>
+<li>The number of index entries scanned</li>
+<li>How long the query took to resolve in milliseconds (when using the executionStats mode)</li>
+<li>Which alternative query plans were rejected (when using the allPlansExecution mode)</li>
+</ul>
+</blockquote>
+</div>
+</div>
+
+<div id="outline-container-orgbdc1fd6" class="outline-2">
+<h2 id="orgbdc1fd6"><span class="section-number-2">2.</span> 网络传输</h2>
+<div class="outline-text-2" id="text-2">
+<p>
+network 传输之间的压缩，可以节省70%的开销
+</p>
+
+<blockquote>
+<p>
+Intra-Cluster Network Compression. As a distributed database, MongoDB relies on ef cient network transport during query routing and inter-node replication. MongoDB 3.4 introduces a new option to compress the wire protocol used for intra-cluster communications. Based on the snappy compression algorithm, network traf c can be compressed by up to 70%, providing major performance bene ts in bandwidth-constrained environments, and reducing networking costs.
+Compression is off by default, but can be enabled by setting networkMessageCompressors to snappy
+</p>
+</blockquote>
+</div>
+</div>
+
+<div id="outline-container-orgdb75bb2" class="outline-2">
+<h2 id="orgdb75bb2"><span class="section-number-2">3.</span> 索引选择</h2>
+<div class="outline-text-2" id="text-3">
+<p>
+索引分布不均衡的情况下可能会导致扫描全表。
+</p>
+<ul class="org-ul">
+<li><a href="https://docs.mongodb.com/manual/reference/operator/aggregation/indexStats/">https://docs.mongodb.com/manual/reference/operator/aggregation/indexStats/</a></li>
+<li><a href="https://docs.mongodb.com/manual/tutorial/measure-index-use/">https://docs.mongodb.com/manual/tutorial/measure-index-use/</a></li>
+<li>查看索引的使用情况. `db.foo.aggregate( [ { $indexStats: { } } ] ).pretty()`</li>
+</ul>
+
+<blockquote>
+<p>
+Avoid negation in queries. Like most database systems,MongoDB does not index the absence of values andnegation conditions may require scanning all documents. Ifnegation is the only condition and it is not selective (forexample, querying an orders table where 99% of theorders are complete to identify those that have not beenful lled), all records will need to be scanned.
+</p>
+</blockquote>
+
+<p>
+如果compound index是single index的前缀的话，那么这个single index是不必要的
+</p>
+<blockquote>
+<p>
+Remove indexes that are pre xes of other indexes.Compound indexes can be used for queries on leading elds within an index. For example, a compound index onlast name,  rst name can be also used to  lter queries that specify last name only. In this example an additional indexon last name only is unnecessary,
+</p>
+</blockquote>
+
+<p>
+mongodb提供index filters机制，这个机制是对于某种query shape可以强制只使用index filters里面指定的index name. 使用这种机制会让query忽略hint()的内容，会影响到所有的query shape, 所以不要大面积使用。
+</p>
+
+<p>
+Covered Query是一种特殊查询，query和filters的字段完全相同，并且query里面所有的字段是符合某个Index. 对于这类查询mongodb只需要扫描索引表，而不用去检查document table. 这种查询效率会高很多。
+</p>
+</div>
+</div>
+
+
+<div id="outline-container-org9db81d6" class="outline-2">
+<h2 id="org9db81d6"><span class="section-number-2">4.</span> 磁盘读写</h2>
+<div class="outline-text-2" id="text-4">
+<p>
+wt的index/data分开存储，减少磁盘压力和冲突。甚至index, journal, db 最好分开目录进行，这样每个目录可以很容易地映射到不同的volume 上面
+</p>
+<ul class="org-ul">
+<li><a href="https://docs.mongodb.com/manual/reference/program/mongod/index.html#cmdoption-directoryperdb">https://docs.mongodb.com/manual/reference/program/mongod/index.html#cmdoption-directoryperdb</a></li>
+<li><a href="https://docs.mongodb.com/manual/reference/program/mongod/index.html#cmdoption-wiredtigerdirectoryforindexes">https://docs.mongodb.com/manual/reference/program/mongod/index.html#cmdoption-wiredtigerdirectoryforindexes</a></li>
+<li>`&#x2013;directoryperdb` , `&#x2013;wiredTigerDirectoryForIndexes`</li>
+</ul>
+
+<blockquote>
+<p>
+Use index optimizations available in the WiredTigerstorage engine. As discussed earlier, the WiredTigerengine compresses indexes by default. In addition,administrators have the  exibility to place indexes on theirown separate volume, allowing for faster disk paging andlower contention.
+</p>
+
+<p>
+By using separate storage devices for the journal and data les you can increase the overall throughput of the disksubsystem. Because the disk I/O of the journal  les tendsto be sequential, SSD may not provide a substantialimprovement and standard spinning disks may be morecost effective.
+</p>
+
+<p>
+Use multiple devices for different databases –WiredTiger. Set directoryForIndexes so that indexesare stored in separate directories from collections and directoryPerDB to use a different directory for eachdatabase. The various directories can then be mapped todifferent storage devices, thus increasing overallthroughput.
+</p>
+</blockquote>
+
+<p>
+调整block readahread 参数
+</p>
+<blockquote>
+<p>
+Readahead size should be set to 0 for WiredTiger. Usethe blockdev &#x2013;setra &lt;value&gt; command to set thereadahead block size to 0 when using the WiredTigerstorage engine. A readahead value of 32 (16 kB) typicallyworks well when using MMAPv1.
+</p>
+</blockquote>
+</div>
+</div>
+
+<div id="outline-container-orgd66d7f6" class="outline-2">
+<h2 id="orgd66d7f6"><span class="section-number-2">5.</span> 杀掉慢查询</h2>
+<div class="outline-text-2" id="text-5">
+<p>
+如果出现慢查询的话，列举和杀掉长时间运行的操作
+</p>
+
+<div class="org-src-container">
+<pre class="src src-javascript">killMyRunningOps = <span class="org-keyword">function</span> (<span class="org-variable-name">ns</span>, <span class="org-variable-name">max_ms</span> = 500) {
+    <span class="org-keyword">var</span> <span class="org-variable-name">currOp</span> = db.currentOp();
+    <span class="org-keyword">var</span> <span class="org-variable-name">max_microsecs</span> = max_ms * 1000;
+    <span class="org-keyword">for</span> (op <span class="org-keyword">in</span> currOp.inprog) {
+        x = currOp.inprog[op];
+        <span class="org-keyword">if</span> (x.ns == ns &amp;&amp; x.microsecs_running &gt; max_microsecs) {
+            print(x.opid);
+            db.killOp(x.opid)
+        }
+    }
+}
+
+listRunningOps = <span class="org-keyword">function</span> (<span class="org-variable-name">max_ms</span> = 500) {
+    <span class="org-keyword">var</span> <span class="org-variable-name">currOp</span> = db.currentOp()
+    <span class="org-keyword">var</span> <span class="org-variable-name">max_microsecs</span> = max_ms * 1000
+    <span class="org-keyword">for</span> (op <span class="org-keyword">in</span> currOp.inprog) {
+        x = currOp.inprog[op]
+        <span class="org-keyword">if</span> (x.microsecs_running &gt; max_microsecs &amp;&amp; !x.ns.startsWith(<span class="org-string">'local'</span>)) {
+            print(<span class="org-string">"======================"</span>)
+            print(x.ns, x.op, x.opid, x.microsecs_running * 0.001)
+            printjson(x.query)
+            <span class="org-comment-delimiter">// </span><span class="org-comment">printjson(x)</span>
+        }
+     }
+}
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org8ed4473" class="outline-2">
+<h2 id="org8ed4473"><span class="section-number-2">6.</span> 文档频繁更新</h2>
+<div class="outline-text-2" id="text-6">
+<p>
+查看collection更新情况
+</p>
+
+<div class="org-src-container">
+<pre class="src src-bash">watch --diff <span class="org-string">"mongo --eval \"db.adminCommand('top').totals['your-collection'].queries.count\" | tail -n +4"</span>
+</pre>
+</div>
+</div>
+</div>
+</div>
+<div id="content"><!-- DISQUS BEGIN --><div id="disqus_thread"></div><script>/***  RECOMMENDED CONFIGURATION VARIABLES: EDIT AND UNCOMMENT THE SECTION BELOW TO INSERT DYNAMIC VALUES FROM YOUR PLATFORM OR CMS.*  LEARN WHY DEFINING THESE VARIABLES IS IMPORTANT: https://disqus.com/admin/universalcode/#configuration-variables*/var disqus_config = function () {this.page.url = 'https://dirtysalt.github.io/html/few-tips-of-mongodb-best-practice.html';this.page.identifier = 'few-tips-of-mongodb-best-practice.html';};(function() {var d = document, s = d.createElement('script');s.src = 'https://dirlt.disqus.com/embed.js';s.setAttribute('data-timestamp', +new Date());(d.head || d.body).appendChild(s);})();</script><noscript>Please enable JavaScript to view the <a href="https://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript><!-- DISQUS END --></div></body>
+</html>

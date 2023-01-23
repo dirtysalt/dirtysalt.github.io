@@ -1,0 +1,250 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Redis跳表实现</title>
+<meta name="author" content="dirtysalt" />
+<meta name="generator" content="Org Mode" />
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content" class="content">
+<h1 class="title">Redis跳表实现</h1>
+<p>
+Redis用跳表来实现什么数据结构：支持点查询和范围查询额有序集合。<a href="https://redisbook.readthedocs.io/en/latest/internal-datastruct/skiplist.html">https://redisbook.readthedocs.io/en/latest/internal-datastruct/skiplist.html</a>
+</p>
+
+<p>
+理论上也可以使用平衡二叉树来实现，而且内存上应该是和跳表差不多，没有太明白跳表相比平衡二叉树的优势在哪里。
+</p>
+
+<p>
+跳表原理还可以看这篇文章 <a href="https://juejin.im/post/57fa935b0e3dd90057c50fbc">https://juejin.im/post/57fa935b0e3dd90057c50fbc</a>
+</p>
+
+<p>
+下面跳表实现代码是我从redis-4.0.10里面分离出来的 <a href="https://github.com/dirtysalt/codes/tree/master/cc/misc/redis_skip_list.c">code on github</a>.
+我只是在数据结构上增加了一下简单的注释。它的实现非常清晰，在头部也有很详细的注释。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-c"><span class="org-preprocessor">#include</span> <span class="org-string">&lt;stdio.h&gt;</span>
+<span class="org-preprocessor">#include</span> <span class="org-string">&lt;math.h&gt;</span>
+<span class="org-preprocessor">#include</span> <span class="org-string">&lt;stdlib.h&gt;</span>
+<span class="org-preprocessor">#include</span> <span class="org-string">&lt;string.h&gt;</span>
+
+<span class="org-comment-delimiter">// </span><span class="org-comment">==================== server.h ====================</span>
+<span class="org-keyword">typedef</span> <span class="org-type">char</span>* <span class="org-type">sds</span>; <span class="org-comment-delimiter">// </span><span class="org-comment">&#21069;&#32512;&#34920;&#31034;&#38271;&#24230;&#30340;&#23383;&#31526;&#20018;</span>
+<span class="org-preprocessor">#define</span> <span class="org-variable-name">sdsfree</span> free
+<span class="org-preprocessor">#define</span> <span class="org-variable-name">sdscmp</span> strcmp
+<span class="org-preprocessor">#define</span> <span class="org-variable-name">zmalloc</span> malloc <span class="org-comment-delimiter">// </span><span class="org-comment">jemalloc&#23454;&#29616;</span>
+<span class="org-preprocessor">#define</span> <span class="org-variable-name">zfree</span> free
+
+<span class="org-preprocessor">#define</span> <span class="org-variable-name">ZSKIPLIST_MAXLEVEL</span> 32 <span class="org-comment-delimiter">/* </span><span class="org-comment">Should be enough for 2^32 elements</span><span class="org-comment-delimiter"> */</span>
+<span class="org-comment-delimiter">// </span><span class="org-comment">&#25511;&#21046;&#36339;&#34920;&#30340;&#39640;&#24230;</span>
+<span class="org-preprocessor">#define</span> <span class="org-variable-name">ZSKIPLIST_P</span> 0.25      <span class="org-comment-delimiter">/* </span><span class="org-comment">Skiplist P = 1/4</span><span class="org-comment-delimiter"> */</span>
+
+<span class="org-comment-delimiter">/* </span><span class="org-comment">ZSETs use a specialized version of Skiplists</span><span class="org-comment-delimiter"> */</span>
+<span class="org-keyword">typedef</span> <span class="org-keyword">struct</span> <span class="org-type">zskiplistNode</span> {
+    <span class="org-type">sds</span> <span class="org-variable-name">ele</span>; <span class="org-comment-delimiter">// </span><span class="org-comment">&#20803;&#32032;&#20540;</span>
+    <span class="org-type">double</span> <span class="org-variable-name">score</span>; <span class="org-comment-delimiter">// </span><span class="org-comment">&#20803;&#32032;&#26435;&#37325;</span>
+    <span class="org-keyword">struct</span> <span class="org-type">zskiplistNode</span> *<span class="org-variable-name">backward</span>; <span class="org-comment-delimiter">// </span><span class="org-comment">&#23384;&#20648;&#21453;&#21521;&#38142;&#34920;</span>
+    <span class="org-keyword">struct</span> <span class="org-type">zskiplistLevel</span> { <span class="org-comment-delimiter">// </span><span class="org-comment">level&#19978;&#30340;&#25968;&#25454;</span>
+        <span class="org-keyword">struct</span> <span class="org-type">zskiplistNode</span> *<span class="org-variable-name">forward</span>; <span class="org-comment-delimiter">// </span><span class="org-comment">&#21069;&#21521;&#21015;&#34920;</span>
+        <span class="org-type">unsigned</span> <span class="org-type">int</span> <span class="org-variable-name">span</span>; <span class="org-comment-delimiter">// </span><span class="org-comment">&#20174;&#36825;&#20010;&#33410;&#28857;&#21040;forward&#35206;&#30422;&#22810;&#23569;&#20803;&#32032;</span>
+    } <span class="org-variable-name">level</span>[];
+} <span class="org-type">zskiplistNode</span>;
+
+<span class="org-keyword">typedef</span> <span class="org-keyword">struct</span> <span class="org-type">zskiplist</span> {
+    <span class="org-keyword">struct</span> <span class="org-type">zskiplistNode</span> *<span class="org-variable-name">header</span>, *<span class="org-variable-name">tail</span>; <span class="org-comment-delimiter">// </span><span class="org-comment">&#20026;&#20102;&#23454;&#29616;&#26041;&#38754;&#22686;&#21152;&#20102;header&#21644;tail.</span>
+    <span class="org-type">unsigned</span> <span class="org-type">long</span> <span class="org-variable-name">length</span>; <span class="org-comment-delimiter">// </span><span class="org-comment">&#20849;&#26377;&#22810;&#23569;&#20010;&#33410;&#28857;</span>
+    <span class="org-type">int</span> <span class="org-variable-name">level</span>; <span class="org-comment-delimiter">// </span><span class="org-comment">&#20849;&#26377;&#22810;&#23569;&#23618;</span>
+} <span class="org-type">zskiplist</span>;
+
+
+<span class="org-comment-delimiter">// </span><span class="org-comment">==================== t_zset.c ====================</span>
+<span class="org-comment-delimiter">/* </span><span class="org-comment">Create a skiplist node with the specified number of levels.</span>
+<span class="org-comment"> * The SDS string 'ele' is referenced by the node after the call.</span><span class="org-comment-delimiter"> */</span>
+<span class="org-type">zskiplistNode</span> *<span class="org-function-name">zslCreateNode</span>(<span class="org-type">int</span> <span class="org-variable-name">level</span>, <span class="org-type">double</span> <span class="org-variable-name">score</span>, <span class="org-type">sds</span> <span class="org-variable-name">ele</span>) {
+    <span class="org-type">zskiplistNode</span> *<span class="org-variable-name">zn</span> =
+        zmalloc(<span class="org-keyword">sizeof</span>(*zn)+level*<span class="org-keyword">sizeof</span>(<span class="org-keyword">struct</span> <span class="org-type">zskiplistLevel</span>));
+    zn-&gt;score = score;
+    zn-&gt;ele = ele;
+    <span class="org-keyword">return</span> zn;
+}
+
+<span class="org-comment-delimiter">/* </span><span class="org-comment">Create a new skiplist.</span><span class="org-comment-delimiter"> */</span>
+<span class="org-type">zskiplist</span> *<span class="org-function-name">zslCreate</span>(<span class="org-type">void</span>) {
+    <span class="org-type">int</span> <span class="org-variable-name">j</span>;
+    <span class="org-type">zskiplist</span> *<span class="org-variable-name">zsl</span>;
+
+    zsl = zmalloc(<span class="org-keyword">sizeof</span>(*zsl));
+    zsl-&gt;level = 1;
+    zsl-&gt;length = 0;
+    zsl-&gt;header = zslCreateNode(ZSKIPLIST_MAXLEVEL,0,<span class="org-constant">NULL</span>);
+    <span class="org-keyword">for</span> (j = 0; j &lt; ZSKIPLIST_MAXLEVEL; j++) {
+        zsl-&gt;header-&gt;level[j].forward = <span class="org-constant">NULL</span>;
+        zsl-&gt;header-&gt;level[j].span = 0;
+    }
+    zsl-&gt;header-&gt;backward = <span class="org-constant">NULL</span>;
+    zsl-&gt;tail = <span class="org-constant">NULL</span>;
+    <span class="org-keyword">return</span> zsl;
+}
+
+<span class="org-comment-delimiter">/* </span><span class="org-comment">Free the specified skiplist node. The referenced SDS string representation</span>
+<span class="org-comment"> * of the element is freed too, unless node-&gt;ele is set to NULL before calling</span>
+<span class="org-comment"> * this function.</span><span class="org-comment-delimiter"> */</span>
+<span class="org-type">void</span> <span class="org-function-name">zslFreeNode</span>(<span class="org-type">zskiplistNode</span> *<span class="org-variable-name">node</span>) {
+    sdsfree(node-&gt;ele);
+    zfree(node);
+}
+
+<span class="org-comment-delimiter">/* </span><span class="org-comment">Free a whole skiplist.</span><span class="org-comment-delimiter"> */</span>
+<span class="org-type">void</span> <span class="org-function-name">zslFree</span>(<span class="org-type">zskiplist</span> *<span class="org-variable-name">zsl</span>) {
+    <span class="org-type">zskiplistNode</span> *<span class="org-variable-name">node</span> = zsl-&gt;header-&gt;level[0].forward, *<span class="org-variable-name">next</span>;
+
+    zfree(zsl-&gt;header);
+    <span class="org-keyword">while</span>(node) {
+        next = node-&gt;level[0].forward;
+        zslFreeNode(node);
+        node = next;
+    }
+    zfree(zsl);
+}
+
+<span class="org-comment-delimiter">/* </span><span class="org-comment">Returns a random level for the new skiplist node we are going to create.</span>
+<span class="org-comment"> * The return value of this function is between 1 and ZSKIPLIST_MAXLEVEL</span>
+<span class="org-comment"> * (both inclusive), with a powerlaw-alike distribution where higher</span>
+<span class="org-comment"> * levels are less likely to be returned.</span><span class="org-comment-delimiter"> */</span>
+<span class="org-type">int</span> <span class="org-function-name">zslRandomLevel</span>(<span class="org-type">void</span>) {
+    <span class="org-type">int</span> <span class="org-variable-name">level</span> = 1;
+    <span class="org-keyword">while</span> ((random()&amp;0xFFFF) &lt; (ZSKIPLIST_P * 0xFFFF))
+        level += 1;
+    <span class="org-keyword">return</span> (level&lt;ZSKIPLIST_MAXLEVEL) ? level : ZSKIPLIST_MAXLEVEL;
+}
+
+<span class="org-comment-delimiter">/* </span><span class="org-comment">Insert a new node in the skiplist. Assumes the element does not already</span>
+<span class="org-comment"> * exist (up to the caller to enforce that). The skiplist takes ownership</span>
+<span class="org-comment"> * of the passed SDS string 'ele'.</span><span class="org-comment-delimiter"> */</span>
+<span class="org-type">zskiplistNode</span> *<span class="org-function-name">zslInsert</span>(<span class="org-type">zskiplist</span> *<span class="org-variable-name">zsl</span>, <span class="org-type">double</span> <span class="org-variable-name">score</span>, <span class="org-type">sds</span> <span class="org-variable-name">ele</span>) {
+    <span class="org-type">zskiplistNode</span> *<span class="org-variable-name">update</span>[ZSKIPLIST_MAXLEVEL], *<span class="org-variable-name">x</span>;
+    <span class="org-type">unsigned</span> <span class="org-type">int</span> <span class="org-variable-name">rank</span>[ZSKIPLIST_MAXLEVEL];
+    <span class="org-type">int</span> <span class="org-variable-name">i</span>, <span class="org-variable-name">level</span>;
+
+    <span class="org-comment-delimiter">// </span><span class="org-comment">serverAssert(!isnan(score));</span>
+    x = zsl-&gt;header;
+    <span class="org-keyword">for</span> (i = zsl-&gt;level-1; i &gt;= 0; i--) {
+        <span class="org-comment-delimiter">/* </span><span class="org-comment">store rank that is crossed to reach the insert position</span><span class="org-comment-delimiter"> */</span>
+        rank[i] = i == (zsl-&gt;level-1) ? 0 : rank[i+1];
+        <span class="org-keyword">while</span> (x-&gt;level[i].forward &amp;&amp;
+                (x-&gt;level[i].forward-&gt;score &lt; score ||
+                    (x-&gt;level[i].forward-&gt;score == score &amp;&amp;
+                    sdscmp(x-&gt;level[i].forward-&gt;ele,ele) &lt; 0)))
+        {
+            rank[i] += x-&gt;level[i].span;
+            x = x-&gt;level[i].forward;
+        }
+        update[i] = x;
+    }
+    <span class="org-comment-delimiter">/* </span><span class="org-comment">we assume the element is not already inside, since we allow duplicated</span>
+<span class="org-comment">     * scores, reinserting the same element should never happen since the</span>
+<span class="org-comment">     * caller of zslInsert() should test in the hash table if the element is</span>
+<span class="org-comment">     * already inside or not.</span><span class="org-comment-delimiter"> */</span>
+    level = zslRandomLevel();
+    <span class="org-keyword">if</span> (level &gt; zsl-&gt;level) {
+        <span class="org-keyword">for</span> (i = zsl-&gt;level; i &lt; level; i++) {
+            rank[i] = 0;
+            update[i] = zsl-&gt;header;
+            update[i]-&gt;level[i].span = zsl-&gt;length;
+        }
+        zsl-&gt;level = level;
+    }
+    x = zslCreateNode(level,score,ele);
+    <span class="org-keyword">for</span> (i = 0; i &lt; level; i++) {
+        x-&gt;level[i].forward = update[i]-&gt;level[i].forward;
+        update[i]-&gt;level[i].forward = x;
+
+        <span class="org-comment-delimiter">/* </span><span class="org-comment">update span covered by update[i] as x is inserted here</span><span class="org-comment-delimiter"> */</span>
+        x-&gt;level[i].span = update[i]-&gt;level[i].span - (rank[0] - rank[i]);
+        update[i]-&gt;level[i].span = (rank[0] - rank[i]) + 1;
+    }
+
+    <span class="org-comment-delimiter">/* </span><span class="org-comment">increment span for untouched levels</span><span class="org-comment-delimiter"> */</span>
+    <span class="org-keyword">for</span> (i = level; i &lt; zsl-&gt;level; i++) {
+        update[i]-&gt;level[i].span++;
+    }
+
+    x-&gt;backward = (update[0] == zsl-&gt;header) ? <span class="org-constant">NULL</span> : update[0];
+    <span class="org-keyword">if</span> (x-&gt;level[0].forward)
+        x-&gt;level[0].forward-&gt;backward = x;
+    <span class="org-keyword">else</span>
+        zsl-&gt;tail = x;
+    zsl-&gt;length++;
+    <span class="org-keyword">return</span> x;
+}
+
+<span class="org-comment-delimiter">/* </span><span class="org-comment">Internal function used by zslDelete, zslDeleteByScore and zslDeleteByRank</span><span class="org-comment-delimiter"> */</span>
+<span class="org-type">void</span> <span class="org-function-name">zslDeleteNode</span>(<span class="org-type">zskiplist</span> *<span class="org-variable-name">zsl</span>, <span class="org-type">zskiplistNode</span> *<span class="org-variable-name">x</span>, <span class="org-type">zskiplistNode</span> **<span class="org-variable-name">update</span>) {
+    <span class="org-type">int</span> <span class="org-variable-name">i</span>;
+    <span class="org-keyword">for</span> (i = 0; i &lt; zsl-&gt;level; i++) {
+        <span class="org-keyword">if</span> (update[i]-&gt;level[i].forward == x) {
+            update[i]-&gt;level[i].span += x-&gt;level[i].span - 1;
+            update[i]-&gt;level[i].forward = x-&gt;level[i].forward;
+        } <span class="org-keyword">else</span> {
+            update[i]-&gt;level[i].span -= 1;
+        }
+    }
+    <span class="org-keyword">if</span> (x-&gt;level[0].forward) {
+        x-&gt;level[0].forward-&gt;backward = x-&gt;backward;
+    } <span class="org-keyword">else</span> {
+        zsl-&gt;tail = x-&gt;backward;
+    }
+    <span class="org-keyword">while</span>(zsl-&gt;level &gt; 1 &amp;&amp; zsl-&gt;header-&gt;level[zsl-&gt;level-1].forward == <span class="org-constant">NULL</span>)
+        zsl-&gt;level--;
+    zsl-&gt;length--;
+}
+
+<span class="org-comment-delimiter">/* </span><span class="org-comment">Delete an element with matching score/element from the skiplist.</span>
+<span class="org-comment"> * The function returns 1 if the node was found and deleted, otherwise</span>
+<span class="org-comment"> * 0 is returned.</span>
+<span class="org-comment"> *</span>
+<span class="org-comment"> * If 'node' is NULL the deleted node is freed by zslFreeNode(), otherwise</span>
+<span class="org-comment"> * it is not freed (but just unlinked) and *node is set to the node pointer,</span>
+<span class="org-comment"> * so that it is possible for the caller to reuse the node (including the</span>
+<span class="org-comment"> * referenced SDS string at node-&gt;ele).</span><span class="org-comment-delimiter"> */</span>
+<span class="org-type">int</span> <span class="org-function-name">zslDelete</span>(<span class="org-type">zskiplist</span> *<span class="org-variable-name">zsl</span>, <span class="org-type">double</span> <span class="org-variable-name">score</span>, <span class="org-type">sds</span> <span class="org-variable-name">ele</span>, <span class="org-type">zskiplistNode</span> **<span class="org-variable-name">node</span>) {
+    <span class="org-type">zskiplistNode</span> *<span class="org-variable-name">update</span>[ZSKIPLIST_MAXLEVEL], *<span class="org-variable-name">x</span>;
+    <span class="org-type">int</span> <span class="org-variable-name">i</span>;
+
+    x = zsl-&gt;header;
+    <span class="org-keyword">for</span> (i = zsl-&gt;level-1; i &gt;= 0; i--) {
+        <span class="org-keyword">while</span> (x-&gt;level[i].forward &amp;&amp;
+                (x-&gt;level[i].forward-&gt;score &lt; score ||
+                    (x-&gt;level[i].forward-&gt;score == score &amp;&amp;
+                     sdscmp(x-&gt;level[i].forward-&gt;ele,ele) &lt; 0)))
+        {
+            x = x-&gt;level[i].forward;
+        }
+        update[i] = x;
+    }
+    <span class="org-comment-delimiter">/* </span><span class="org-comment">We may have multiple elements with the same score, what we need</span>
+<span class="org-comment">     * is to find the element with both the right score and object.</span><span class="org-comment-delimiter"> */</span>
+    x = x-&gt;level[0].forward;
+    <span class="org-keyword">if</span> (x &amp;&amp; score == x-&gt;score &amp;&amp; sdscmp(x-&gt;ele,ele) == 0) {
+        zslDeleteNode(zsl, x, update);
+        <span class="org-keyword">if</span> (<span class="org-negation-char">!</span>node)
+            zslFreeNode(x);
+        <span class="org-keyword">else</span>
+            *node = x;
+        <span class="org-keyword">return</span> 1;
+    }
+    <span class="org-keyword">return</span> 0; <span class="org-comment-delimiter">/* </span><span class="org-comment">not found</span><span class="org-comment-delimiter"> */</span>
+}
+
+</pre>
+</div>
+</div>
+<div id="content"><!-- DISQUS BEGIN --><div id="disqus_thread"></div><script>/***  RECOMMENDED CONFIGURATION VARIABLES: EDIT AND UNCOMMENT THE SECTION BELOW TO INSERT DYNAMIC VALUES FROM YOUR PLATFORM OR CMS.*  LEARN WHY DEFINING THESE VARIABLES IS IMPORTANT: https://disqus.com/admin/universalcode/#configuration-variables*/var disqus_config = function () {this.page.url = 'https://dirtysalt.github.io/html/redis-skip-list-impl.html';this.page.identifier = 'redis-skip-list-impl.html';};(function() {var d = document, s = d.createElement('script');s.src = 'https://dirlt.disqus.com/embed.js';s.setAttribute('data-timestamp', +new Date());(d.head || d.body).appendChild(s);})();</script><noscript>Please enable JavaScript to view the <a href="https://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript><!-- DISQUS END --></div></body>
+</html>

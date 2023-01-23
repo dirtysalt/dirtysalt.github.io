@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>CMU DB: Query Processing</title>
+<meta name="author" content="dirtysalt" />
+<meta name="generator" content="Org Mode" />
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content" class="content">
+<h1 class="title">CMU DB: Query Processing</h1>
+<p>
+<a href="https://15445.courses.cs.cmu.edu/fall2020/schedule.html">https://15445.courses.cs.cmu.edu/fall2020/schedule.html</a>
+</p>
+
+<p>
+Processing Models有下面三种：
+</p>
+<ol class="org-ol">
+<li>Iterator Model.  (aka. volcano model) 工作起来有点类似pipeline的方式，每个stage提供一个next方法，然后不断地去获取tuple/record.  但是某些operator需要得到所有的结果才能开始提供next数据，比如order by, subqueries, joins, 这些operators也被称为pipeline breakers. 这种模型常见于Disk DMBS</li>
+<li>Materialization Model.  每个stage都拿到所有的数据才进行返回，这种模型常见于Mem DBMS. 想象一下如果数据全部都在内存里面的，那么使用pipeline的作用其实就不太大了。</li>
+<li>Vectorization Model. 这个模式算是1和2的hybrid方案，方案1是每次emit 1个tuple, 而方案2是每个emit total result, 这个方案则是emit partial result in batch. 这种模型常见于OLAP, 因为OLAP的模式通常是将分析做水平拆分。</li>
+</ol>
+
+<p>
+<img src="../images/cmudb-iter-model.png" alt="cmudb-iter-model.png" /> <img src="../images/cmudb-vect-model.png" alt="cmudb-vect-model.png" />
+</p>
+
+
+<p>
+Access Methods有下面两种：sequential scan &amp; index scan. 一个是顺序扫描pages(non-index), 一个是顺序扫描index. 顺序扫描有几种可能的优化：
+</p>
+<ol class="org-ol">
+<li>Prefetching: Fetch the next few pages in advance so that the DBMS does not have to block when accessing each page. （预取pages来躲避延迟）</li>
+<li>Parallelization: Execute the scan using multiple threads/processes in parallel.（使用线程增加并行性）</li>
+<li>Buffer Pool Bypass: The scan operator stores pages that it fetches from disk in its local memory instead of the buffer pool in order to avoid sequential flooding. （绕过buffer pool 避免污染buffer pool）</li>
+<li>Zone Map: Pre-compute aggregations for each tuple attribute in a page. The DBMS can then decide whether it needs to access a page by checking its Zone Map first. The Zone Maps for each page are stored in separate pages and there are typically multiple entries in each Zone Map page. Thus, it is possible to reduce the total number of pages examined in a sequential scan. （提供page上的某些数据特征，比如min/max/sum这样）</li>
+<li>Late Materialization: Each operator passes the minimal amount of information needed to the next operator (e.g., record id, offset to record in column). This is only useful in column-store systems (i.e., DSM). （中间阶段使用record id而不是record本身，减少不必要的数据读取）</li>
+<li>Heap Clustering: Tuples are stored in the heap pages using an order specified by a clustering index.（不太明白是什么东西？？？）</li>
+</ol>
+
+<p>
+Parallelism:
+</p>
+<ol class="org-ol">
+<li>Inter-Query Parallelism. 不同的线程去负责不同的query</li>
+<li>Intra-Query Parallelism. 对于一个query如何提供并行性
+<ol class="org-ol">
+<li>Intra-Operator P(Horizontal) 对于单个operator 进行基于数据上的拆分，比如select * from A &gt; 99. 我们可以拆分成为多个sub-operators, [99&lt;A&lt;=150, 150&lt;A&lt;=200,200&lt;A] 或者是基于pages进行拆分。然后在上层将这些sub-operators的结果进行组合，通常包括gather, repartition(aka spark repartition), distribute(split a single input stream to multiple output streams)</li>
+<li>Inter-Operator P(Vertical) 将所有的operators进行分组，每个thread负责一个组里面的所有operators</li>
+<li>Bushy 和上面的inter-operator差不多，但是作者认为有必要单独提出来，因为这个东西在文献中非常常见。</li>
+</ol></li>
+<li>I/O Parallelism
+<ol class="org-ol">
+<li>Multi-Disk/RAID(Redundant Array of Inexpensive/Independent Disk)</li>
+<li>Database Partitioning. 不同的table放在不同的设备上，以及log file放在单独设备上</li>
+<li>Logical Partitioning. 按照columns进行拆分(vertical)或者是按照rows进行拆分(horizontal). 大部分OLAP使用的columnar storage这两点都使用上了。</li>
+</ol></li>
+</ol>
+
+<p>
+<img src="../images/cmudb-intra-parallelism.png" alt="cmudb-intra-parallelism.png" /> <img src="../images/cmudb-bushy-parallelism.png" alt="cmudb-bushy-parallelism.png" />
+</p>
+</div>
+<div id="content"><!-- DISQUS BEGIN --><div id="disqus_thread"></div><script>/***  RECOMMENDED CONFIGURATION VARIABLES: EDIT AND UNCOMMENT THE SECTION BELOW TO INSERT DYNAMIC VALUES FROM YOUR PLATFORM OR CMS.*  LEARN WHY DEFINING THESE VARIABLES IS IMPORTANT: https://disqus.com/admin/universalcode/#configuration-variables*/var disqus_config = function () {this.page.url = 'https://dirtysalt.github.io/html/cmudb-query-processing.html';this.page.identifier = 'cmudb-query-processing.html';};(function() {var d = document, s = d.createElement('script');s.src = 'https://dirlt.disqus.com/embed.js';s.setAttribute('data-timestamp', +new Date());(d.head || d.body).appendChild(s);})();</script><noscript>Please enable JavaScript to view the <a href="https://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript><!-- DISQUS END --></div></body>
+</html>

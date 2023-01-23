@@ -1,0 +1,22 @@
+#+title: CMU DB: Buffer Pools
+
+https://15445.courses.cs.cmu.edu/fall2020/schedule.html
+
+Lock & Latch: Latch更接近于C/C++编程里面的mutex, 而Lock则更加强调数据库在事务概念上的锁。
+
+所有磁盘上的disk page读取，基本上都是通过先载入到buffer pool得到memory page, 然后在访问mem page的。这个和CPU读取内存，本质上是读取L1/L2 cach是一个道理，都是为了解决延迟不匹配问题。其实这个类比还比较好，像CPU修改了L1/L2 cache之后，也需要通过MESI协议将cache写回到memory上，而DB里面如果某个mem page修改的话，那么之后也需要这个mem page写会到磁盘上。
+
+disk和mem之间的映射管理就是通过buffer pool来完成的，buffer pool里面每个slot可以认为对应一个disk page。除此之外可能还有些额外的字段比如：dirtyflag（该页是否有修改）, refcount（改页被引用的次数）以及某些和page相关的metadata. 既然磁盘读取和缓存通过buffer pool来完成的话，那么我们完全可以绕过OS Page cache，使用O_DIRECT去读取文件，虽然这个选项在读取文件上有许多限制。大部分DBMS都使用了这个选项，但是Postgres没有使用这个选项，他们的理由是OS Page cache不会带来太多的overhead, 而使用O_DIRECT会使得代码更加复杂（考虑到平台移植性，这个选项可能并不是POSIX的，或者是每个平台在实现上会有差异）。
+
+关于buffer pool有下面几个可能的优化：
+1. multiple buffer pools. 避免多个database/table之间相互影响，类似multi-tenancy问题
+2. pre-fetching 在顺序访问的时候进行预取
+3. scan sharing 多个query都需要对同一个table做scan的话，是否可以捎带上（MSSQL, DB2, Postgres支持）
+4. buffer pool bypass 对临时表扫表的话会污染buffer pool, 所以可以绕过读取到buffer pool上，另外就是如果对大表做磁盘上连续块扫描的话（这个读取会很快），那么也没有必要经过buffer pool.
+
+buffer pool仅仅是为了缓存磁盘数据，DBMS上其他组件的内存则是从其他pool里面分配出来。不过相比buffer pool尤其是大规模DB，这些pool的大小可能是微不足道的。下面是些可能的pool
+1. sorting + join buffers 如果可以放在内存的话
+2. query caches
+3. maintenance buffers (?)
+4. log buffers
+5. dictionary caches (?)

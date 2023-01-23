@@ -1,0 +1,104 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Go Scheduler: Implementing language with lightweight concurrency</title>
+<meta name="author" content="dirtysalt" />
+<meta name="generator" content="Org Mode" />
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content" class="content">
+<h1 class="title">Go Scheduler: Implementing language with lightweight concurrency</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>Table of Contents</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#org4050d94">1. GMP结构来源</a></li>
+<li><a href="#org185d66d">2. 调度策略Fairness</a></li>
+<li><a href="#org3f75af5">3. Infinite Stack</a></li>
+</ul>
+</div>
+</div>
+<p>
+<a href="https://2019.hydraconf.com/2019/talks/7336ginp0kke7n4yxxjvld/">https://2019.hydraconf.com/2019/talks/7336ginp0kke7n4yxxjvld/</a>
+</p>
+
+
+<div id="outline-container-org4050d94" class="outline-2">
+<h2 id="org4050d94"><span class="section-number-2">1.</span> GMP结构来源</h2>
+<div class="outline-text-2" id="text-1">
+<p>
+我总结GMP结构的出现有这么几点考虑：
+</p>
+<ul class="org-ul">
+<li>G(goroutine, M(multicore), P(processor)</li>
+<li>Threads不能太多，否则切换成本非常高</li>
+<li>但是太少的话，进行Syscall的时候Thread会被占用，没有执行资源</li>
+<li>所以在goroutine和thread之间必须增加一层processor</li>
+</ul>
+
+<p>
+所以最后整个系统结构如下：
+</p>
+<ul class="org-ul">
+<li>Thread会绑定Processor去执行里面对应的goroutine</li>
+<li>Processor里面有执行goroutine所有的状态信息</li>
+<li>所以要执行syscall的Thread会主动切换出去，让其他thread去执行当前processor.</li>
+<li>执行完成syscall的goroutine会被放置在global run queue里面。</li>
+</ul>
+
+<p>
+<img src="../images/go-scheduler-talk-dmitry-vyukov-0.png" alt="go-scheduler-talk-dmitry-vyukov-0.png" /> <img src="../images/go-scheduler-talk-dmitry-vyukov-1.png" alt="go-scheduler-talk-dmitry-vyukov-1.png" />
+</p>
+</div>
+</div>
+
+<div id="outline-container-org185d66d" class="outline-2">
+<h2 id="org185d66d"><span class="section-number-2">2.</span> 调度策略Fairness</h2>
+<div class="outline-text-2" id="text-2">
+<p>
+为了保证公平性，goroutine是可以被强占的，thread首先从processor的local run queue中拿到goroutine，然后local run queue里面的time slice是继承的。我的理解这里继承的意思是，如果某个goroutine是因为另外一个local run queue里面的goroutine阻塞的话，那么优先切换到这个依赖的goroutine并且继承之前的时间片。每61个sched tick就从global run queue拿goroutine. 进行network poller的goroutine在后台不断地被检查是否满足条件，然后进入global run queue.
+</p>
+
+<p>
+<img src="../images/go-scheduler-talk-dmitry-vyukov-2.png" alt="go-scheduler-talk-dmitry-vyukov-2.png" /> <img src="../images/go-scheduler-talk-dmitry-vyukov-3.png" alt="go-scheduler-talk-dmitry-vyukov-3.png" />
+</p>
+</div>
+</div>
+
+<div id="outline-container-org3f75af5" class="outline-2">
+<h2 id="org3f75af5"><span class="section-number-2">3.</span> Infinite Stack</h2>
+<div class="outline-text-2" id="text-3">
+<p>
+其实可扩展的Stack设计上和连续内存分配非常类似：一种是使用链表结构，一种是数组结构。链表结构在这里叫做split stack, 每个stack由多个segment组成, 多个segment之间通过pointer连接起来，好处就是分配快，问题就是如果堆栈经常伸缩就容易傻逼了。而数组结构就是稍微有点费空间并且需要memcopy一次（将原来stack复制到新stack空间上），好处就是局部性好内存连续。GCC也有split stack功能，加上 `-fsplit-stack` 编译就行，但是也有每次进入堆栈之前需要check一下空间是否足够的问题。
+</p>
+
+
+<div id="org382fa78" class="figure">
+<p><img src="../images/go-scheduler-talk-dmitry-vyukov-4.png" alt="go-scheduler-talk-dmitry-vyukov-4.png" />
+</p>
+</div>
+
+
+<div id="org2bad8a9" class="figure">
+<p><img src="../images/go-scheduler-talk-dmitry-vyukov-5.png" alt="go-scheduler-talk-dmitry-vyukov-5.png" />
+</p>
+</div>
+
+
+<div id="orgadc2ea5" class="figure">
+<p><img src="../images/go-scheduler-talk-dmitry-vyukov-6.png" alt="go-scheduler-talk-dmitry-vyukov-6.png" />
+</p>
+</div>
+
+<p>
+现在没有抢占式策略，完全是co-operative的策略，实现起来非常取巧。上面不是有inifinite stack检查吗？将stack limit修改小一些，但是在函数调用入口必然会进行 `morestack` 的检查逻辑中，在这个检查中判断时间片超时情况。
+</p>
+</div>
+</div>
+</div>
+<div id="content"><!-- DISQUS BEGIN --><div id="disqus_thread"></div><script>/***  RECOMMENDED CONFIGURATION VARIABLES: EDIT AND UNCOMMENT THE SECTION BELOW TO INSERT DYNAMIC VALUES FROM YOUR PLATFORM OR CMS.*  LEARN WHY DEFINING THESE VARIABLES IS IMPORTANT: https://disqus.com/admin/universalcode/#configuration-variables*/var disqus_config = function () {this.page.url = 'https://dirtysalt.github.io/html/go-scheduler-talk-dmitry-vyukov.html';this.page.identifier = 'go-scheduler-talk-dmitry-vyukov.html';};(function() {var d = document, s = d.createElement('script');s.src = 'https://dirlt.disqus.com/embed.js';s.setAttribute('data-timestamp', +new Date());(d.head || d.body).appendChild(s);})();</script><noscript>Please enable JavaScript to view the <a href="https://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript><!-- DISQUS END --></div></body>
+</html>

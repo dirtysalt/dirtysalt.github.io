@@ -1,0 +1,87 @@
+#+title: LC 6115. 统计理想数组的数目
+
+https://leetcode.cn/contest/weekly-contest-301/problems/count-the-number-of-ideal-arrays/
+
+----------
+这题如果直接上DP的话，那么时间复杂度会非常高：假如每个元素平均的因子数量是K的话，那么复杂度就是O(N * maxValue * K). 所以这题肯定需要某种数学解法。
+
+#+BEGIN_SRC python
+class Solution:
+    def idealArrays(self, n: int, maxValue: int) -> int:
+        adj = [[] for _ in range(1 + maxValue)]
+        for i in range(1, maxValue + 1):
+            for j in range(i, maxValue + 1):
+                if j % i == 0:
+                    adj[i].append(j)
+
+        dp = [[0] * (1 + maxValue) for _ in range(2)]
+        for i in range(1 + maxValue):
+            dp[0][i] = 1
+
+        now = 0
+        MOD = 10 ** 9 + 7
+        for _ in range(1, n):
+            for i in range(1 + maxValue):
+                dp[1 - now][i] = 0
+            for i in range(1, maxValue + 1):
+                for x in adj[i]:
+                    dp[1 - now][x] += dp[now][i]
+            now = 1 - now
+
+        ans = sum(dp[now]) % MOD
+        return ans
+
+#+END_SRC
+
+----------
+这个解答我觉得非常好 https://leetcode.cn/problems/count-the-number-of-ideal-arrays/solution/shu-lun-zu-he-shu-xue-zuo-fa-by-endlessc-iouh/
+
+- 我们假设结尾是X的理想数组
+- *我们不要关心数组中每个数，而关心两个数之间倍数可能性*
+- 这个倍数可能是可以通过因子分解来构造。
+
+假设X可以分解为 `X=(p1 ** x1) ... (pk ** xk)` 的话，我们可以逐个质因子考虑
+- p1出现了x1次，如果将x1次放在n个倍数之间，有多少种分布？假设是 K1
+- 那么所有可能性就是 `(K1 * K2 * .. Kk)`
+- 而将x1放在n个倍数之间分布数可以通过组合数学 `C(n+x1-1, x1)`
+
+#+BEGIN_SRC python
+class Solution:
+    def idealArrays(self, n: int, maxValue: int) -> int:
+        # 质因子分解
+        ks = [[] for _ in range(maxValue + 1)]
+        for i in range(2, maxValue + 1):
+            k, x = 2, i
+            while k * k <= x:
+                if x % k == 0:
+                    c = 0
+                    while x % k == 0:
+                        c += 1
+                        x //= k
+                    ks[i].append(c)
+                k += 1
+            if x > 1:
+                ks[i].append(1)
+
+        MOD = 10 ** 9 + 7
+
+        # 计算出C(n, k)
+        import functools
+        @functools.lru_cache(maxsize=None)
+        def comb(n, k):
+            if k == 0: return 1
+            if n == k: return 1
+            return (comb(n - 1, k - 1) + comb(n - 1, k)) % MOD
+
+        ans = 0
+        # 计算结尾为i的可能数
+        for i in range(1, maxValue + 1):
+            mul = 1
+            # 考虑每个质因子分布的可能性
+            for k in ks[i]:
+                mul = mul * comb(n + k - 1, k)
+                mul = mul % MOD
+            ans += mul
+            ans %= MOD
+        return ans
+#+END_SRC

@@ -1,0 +1,19 @@
+#+title: The Vertica Analytic Database: C-Store 7 Years Later
+
+2012年的文章，讲述从C-Store这种学术demo性质的分析数据库，到转换为商业产品Vertica的重大变化。
+
+Vertica证明分析性数据库也可以使用SQL来作为操作界面，不适合的是底层的RDBMS系统实现而不是SQL本身。完全支持ACID trx.  几乎完全从头写起，只是复用了PGSQL的SQL Parser和client library部分。
+
+Vertica并不要求用户针对每种查询模式都创建projection. 相反在大多数时候，一个super projection(包含所有columns)外加若干个narrow,non-super projections就可以工作得的很好。用户不需要预先进行计算生成物化视图来加速查询， 现在join的性能已经足够好，维护物化视图的成本和复杂度高。去掉了C-Store里面的Join Indexes概念。
+
+Vertica在数据存储上也区分了Partition和Segmentation（这个和DorisDB有对应概念，Seg在里面叫做Bucket）。Partition是在一个节点上进行拆分存储，不同partition数据存储在不同的文件里面，这样可以做pruning. 而Bucket则是让数据分散在各个节点上面，利用好这种location信息可以加入某些计算比如join(co-locate join)
+
+Vertica还自带一个叫做Database Designer的东西，可以用来辅助用户进行优化：查询和存储优化。 存储优化我觉得意义不大，可能就是能预先知道值的范围比如字典可能取值，然后来选择编码方式提高压缩比例。查询优化则是根据query pattern来指导如何设计projection, bucket以及partition的选择。按照论文的说法是， 可以枚举尽可能多的projections来选择最优的，按照这个思路就需要sample数据来进行模拟了。根据可以涵盖全量数据特征的少量数据， 来进行各种离线的优化决策，可能是个不错的优化思路。
+
+在用户体验角度出发Vertcia有下面几点值得思考学习：
+1. SQL还是个好东西，标准大家都会用
+2. Resource Management. 资源管理，并发控制，用户隔离
+3. Automated Tuning. 不知道这个东西应该怎么搞
+4. Predictability vs. Special Case Optimizations: 这点很有意思，用户有时候希望整体速度都比较快，而不是某些case非常快，而另外一些case则较慢。用户不太能理解底层具体实现，针对special case的优化，可能会让他们对这个产品的总体速度评估会产生偏差。
+5. Direct Loading to the ROS. 外部系统就产生ROS compatible的文件格式
+6. Bulk Loading and Rejected Records 批量导入以及数据过滤

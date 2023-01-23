@@ -1,0 +1,64 @@
+#+title: HTTP流媒体的代理实现
+
+ 一直很好奇是如何用HTTP协议实现流媒体传输的，尤其是当需要拖动到某个时间点的时候，后台是如何响应的。正好最近需要实现一个流媒体的代理，所以就整理一下这方面的东西。
+
+HTTP协议对这种流媒体的请求有一些特殊的字段，比如 [[https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Range][Range]], [[https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Content-Range][Content-Range]]. 浏览器/客户端可以使用这些字段对某一个chunk进行请求。
+#+BEGIN_EXAMPLE
+GET /group29/M02/49/56/wKgJWVlWP9Dw8QN3AM19gLYAhkI221.m4a HTTP/1.1
+Host: audio.xmcdn.com
+Connection: keep-alive
+Accept-Encoding: identity;q=1, *;q=0
+User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_12_4) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.36
+Accept: */*
+Referer: http://audio.xmcdn.com/group29/M02/49/56/wKgJWVlWP9Dw8QN3AM19gLYAhkI221.m4a
+Accept-Language: en-US,en;q=0.8,zh-CN;q=0.6,zh;q=0.4
+Range: bytes=11337728-
+
+HTTP/1.0 206 Partial Content
+Expires: Mon, 28 Jun 2027 13:59:42 GMT
+Date: Fri, 30 Jun 2017 13:59:42 GMT
+Server: Tengine
+Content-Type: audio/x-m4a
+Last-Modified: Fri, 30 Jun 2017 12:10:56 GMT
+Accept-Ranges: bytes
+Cache-Control: max-age=315360000
+X-Real-Server: 192.168.9.93:80
+Content-Range: bytes 11337728-13467007/13467008
+Content-Length: 2129280
+Age: 573956
+Via: 1.1 jh46:2 (Cdn Cache Server V2.0)[48 200 2], 1.0 anxun49:9 (Cdn Cache Server V2.0)[0 200 0], 1.0 rb102:7 (Cdn Cache Server V2.0)[0 200 0]
+Connection: keep-alive
+#+END_EXAMPLE
+
+至于浏览器/客户端如何根据拖动的时间定位到文件偏移，这个我猜想应该浏览器/客户端需要考虑的事情。比如浏览器可能通过根据媒体头部信息，可以将时间转换成为字节偏移。
+
+回头再说为什么做这个流媒体的代理，是因为许多流媒体走的是http协议，但是一些应用要求必须是https协议，所以我们打算做一层代理用我们自己的域名。
+
+编写这个代理并不困难，重点是除了转发body之外，也需要转发headers和status.
+#+BEGIN_SRC Javascript
+// test url http://audio.xmcdn.com/group29/M02/49/56/wKgJWVlWP9Dw8QN3AM19gLYAhkI221.m4a
+
+const {Router} = require('express');
+const request = require('request');
+const Url = require('url');
+const router = Router()
+// 服务器中转
+function proxy (req, resp) {
+  console.log('req headers:', req.headers);
+  console.log('req host:', req.headers.host);
+  let url = req.query.u;
+  const urlObj = Url.parse(url);
+  console.log('urlObj', urlObj);
+  const headers = req.headers;
+  headers.host = urlObj.host
+  resp.set({'Cache-Control': 'public, max-age=3600'})
+  request.get({
+    url: url,
+    headers:headers
+  }).pipe(resp)
+}
+router.get('/', proxy)
+
+module.exports = router
+#+END_SRC
+

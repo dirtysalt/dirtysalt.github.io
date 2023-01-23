@@ -1,0 +1,132 @@
+#+title: continuation
+
+-----
+
+- [[http://en.wikipedia.org/wiki/Continuation][Wikipedia Continuation]]
+- [[http://www.ps.uni-saarland.de/~duchier/python/continuations.html][Continuations Made Simple and Illustrated]]
+- [[http://library.readscheme.org/page6.html][Continuations and Continuation Passing Style]]
+- [[file:the-little-schemer.org][The Little Schemer]] 里面有一些关于continuation/CPS的内容
+- https://ds26gte.github.io/tyscheme/index-Z-H-15.html
+- https://dkandalov.github.io/call-with-current-continuation
+- http://www.madore.org/~david/computers/callcc.html
+
+** a call/cc example
+
+可以在这里运行 https://repl.it/languages
+
+*cont*是一个Closure对象，里面有local variable x, 也有之后的程序控制流。 *cont*可以被多次调用，然后每次都是从那个点向后执行。
+
+#+BEGIN_SRC scheme
+
+;; (defvar *cont* nil)
+
+(define *cont* #f)
+
+(define foo (lambda ()
+  (print "foo...")
+  (begin
+    (print "I'm going in")
+    (let ((x 10))
+      (print
+       (call/cc (lambda (cont)
+                  (set! *cont* cont)
+                  (print "I'm in call/cc")
+                  "ready to return")))
+      (set! x (+ x 1))
+      (print "x = " x)
+      (print "I'm going out")))
+  (print "foo end")))
+
+(define bar (lambda ()
+  (print "bar ...")
+  (foo)
+  (print "bar end")))
+
+(bar)
+(print *cont*)
+
+#+END_SRC
+
+最初调用(bar) -> (foo)里面会将那个执行点记录在*cont* 上. 从(bar)返回之后，我们可以继续调用那个continuation. continuation和C语言里面的longjmp/setjmp
+很像，但是远比它要强大。longjmp/setjmp只允许向栈底的方向跳转，而continuation向各种方向跳转，而且还能多次跳转。
+
+上面那段代码输出如下
+
+#+BEGIN_EXAMPLE
+BiwaScheme Interpreter version 0.6.4
+Copyright (C) 2007-2014 Yutaka HARA and the BiwaScheme team
+>>
+bar ...
+foo...
+I'm going in
+I'm in call/cc
+ready to return
+x = 11
+I'm going out
+foo end
+bar end
+#(#(refer-local 0 #(nuate [object Object] #(return))) -1)
+
+>> (*cont* "baby")
+baby
+x = 12
+I'm going out
+foo end
+bar end
+
+#+END_EXAMPLE
+
+** trampoline实现
+
+对于不支持尾递归的虚拟机实现，可以使用Trampoline的方式来避免爆栈。Trampoline要求函数调用递归的时候，不能直接调用，而是应该返回函数对象(continuation). 返回函数对象如果是无参数的话，trampoline实现起来会比较规整而已，并不是强制性的。
+
+#+BEGIN_SRC python
+#!/usr/bin/env python
+# coding:utf-8
+# Copyright (C) dirlt
+import types
+
+
+def trampoline(fn, *args):
+    ret = fn(*args)
+    while type(ret) == types.FunctionType or type(ret) == types.LambdaType:
+        ret = ret()
+    return ret
+
+
+def is_odd(n):
+    if n == 0:
+        return False
+    return is_even(n - 1)
+
+
+def is_even(n):
+    if n == 0:
+        return True
+    return is_odd(n)
+
+
+def is_odd_t(n):
+    if n == 0:
+        return False
+    return lambda: is_even_t(n - 1)
+
+
+def is_even_t(n):
+    if n == 0:
+        return True
+    return lambda: is_odd_t(n - 1)
+
+
+try:
+    print(is_odd(10000))
+except RecursionError as e:
+    print('recursion error: {}'.format(e))
+
+print(trampoline(is_odd_t, 10000))
+
+"""
+recursion error: maximum recursion depth exceeded while calling a Python object
+False
+"""
+#+END_SRC

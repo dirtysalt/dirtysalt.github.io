@@ -1,0 +1,147 @@
+#+title: mesos, omega, borg: a survey
+http://www.umbrant.com/blog/2015/mesos_omega_borg_survey.html
+
+** Background
+Cluster schedulers have existed long before big data. There's a rich literature on scheduling on 1000s of cores in the HPC world, but their problem domain is simpler than what is addressed by datacenter schedulers, meaning Mesos/Borg and their ilk. Let's compare and contrast on a few dimensions. # HPC集群调度问题域比数据中心调度要更简单
+
+*** Scheduling for locality
+
+网络带宽差异造成对数据局部性要求不同
+
+Supercomputers separate storage and compute and connect them with an approximately full-bisection bandwidth network that goes at close to memory speeds (GB/s). This means your tasks can get placed anywhere on the cluster without worrying much about locality, since all compute nodes can access data equally quickly. There are a few hyper-optimized applications that optimize for the network topology, but these are very rare.
+
+Data center schedulers do care about locality, and in fact this is the whole point of GFS and MapReduce co-design. Back in the 2000s, network bandwidth was comparatively much more expensive than disk bandwidth. So, there was a huge economic savings by scheduling your computation tasks on the same node that held the data. This is a major scheduling constraint; whereas before you could put the task anywhere, now it needs to go on one of the three data replicas.
+
+*** Hardware configuration
+
+硬件配置，机器同构性
+
+Supercomputers are typically composed of homogeneous nodes, i.e. they all have the same hardware specs. This is because supercomputers are typically purchased in one shot: a lab gets $x million dollars for a new one, and they spend it all upfront. Some HPC applications are optimized for the specific CPU models in a supercomputer. New technology like GPUs or co-processors are rolled out as a new cluster.
+
+In the big data realm, clusters are primarily storage constrained, so operators are continually adding new racks with updated specs to expand cluster capacity. This means it's typical for nodes to have different CPUs, memory capacities, number of disks, etc. Also toss in special additions like SSDs, GPUs, shingled drives. A single datacenter might need to support a broad range of applications, and all of this again imposes additional scheduling constraints.
+
+*** Queue management and scheduling
+
+队列管理和调度，作业性质差异
+
+When running an application on a supercomputer, you specify how many nodes you want, the queue you want to submit your job to, and how long the job will run for. Queues place different restrictions on how many resources you can request and how long your job can run for. Queues also have a priority or reservation based system to determine ordering. Since the job durations are all known, this is a pretty easy box packing problem. If the queues are long (typically true) and there's a good mix of small jobs to backfill the space leftover from big jobs (also typical), you can achieve extremely high levels of utilization. I like to visualize this in 2D, with time as X and resource usage as Y.
+
+As per the previous, datacenter scheduling is a more general problem. The "shape" of resource requests can be quite varied, and there are more dimensions. Jobs also do not have a set duration, so it's hard to pre-plan queues. Thus we have more sophisticated scheduling algorithms, and the performance of the scheduler thus becomes important.
+
+Utilization as a general rule is going to be worse (unless you're Google; more on that later), but one benefit over HPC workloads is that MapReduce and similar can be incrementally scheduled instead of gang scheduled. HPC, we wait until all N nodes that you requested are available, then run all your tasks at once. MR can instead run its tasks in multiple waves, meaning it can still effectively use bits of leftover resources. A single MR job can also ebb and flow based on cluster demand, which avoids the need for preemption or resource reservations, and also helps with fairness between multiple users.
+
+** Mesos
+Mesos predates YARN, and was designed with the problems of the original MapReduce in mind. Back then, Hadoop clusters could run only a single application: MapReduce. This made it difficult to run applications that didn't conform to a map phase followed by a reduce phase. The biggest example here is Spark. Previously, you'd have to install a whole new set of workers and masters for Spark, which would sit alongside your MapReduce workers and masters. Hardly ideal from a utilization perspective, since they were typically statically partitioned. # Mesos出发点是Spark如何和MapReduce有效共同使用一个机群
+
+Mesos addresses this problem by providing a generalized scheduler for all cluster applications. MapReduce and Spark became simply different applications using the same underlying resource sharing framework. The simplest approach would be to write a centralized scheduler, but that has a number of drawbacks: # 很难做成一个中央调度器
+- API complexity. We need a single API that is a superset of all known framework scheduler APIs. This is difficult by itself. Expressing resource requests will also become very complicated.
+- Performance. 10's of thousands of nodes and millions of tasks is a lot, especially if the scheduling problem is complex.
+- Code agility. New schedulers and new frameworks are constantly being written, with new requirements.
+
+Instead, Mesos introduces the idea of two-level scheduling. Mesos delegates the per-application scheduling work to the applications themselves, while Mesos still remains responsible for resource distribution between applications and enforcing overall fairness. This means Mesos can be pretty thin, 10K lines of code. # 两层调度，将每个应用调度还是交给应用本身处理
+
+Two-level scheduling happens through a novel API called resource offers, where Mesos periodically offers some resources to the application schedulers. This sounds backwards at first (the request goes from the master to the application?), but it's actually not that strange. In MR1, the TaskTracker workers are the source of truth as to what's running on a node. When a TT heartbeats in saying that a task has completed, the JobTracker then chooses something else to run on that TaskTracker. Scheduling decisions are triggered by what's essentially a resource offer from the worker. In Mesos, the resource offer comes from the Mesos master instead of the slave, since Mesos is managing the cluster. Not that different.
+
+Resource offers act as time-bounded leases for some resources. Mesos offers resources to an application based on policies like priority or fair share. The app then computes how it uses them, and tells Mesos what resources from the offer it wants. This gives the app lots of flexibility, since it can choose to run a portion of tasks now, wait for a bigger allocation later (gang scheduling), or size its tasks differently to fit what's available. Since offers are time-bounded, it also incentivizes applications to schedule quickly. # 使用resource-offer机制告诉应用调度器可用资源。ro是有时间限制的，所以促scheduler尽快完成调度。
+
+Some concerns and how they were addressed:
+- Long tasks hogging resources. Mesos lets you reserve some resources for short tasks, killing them after a time limit. This also incentivizes using short tasks, which is good for fairness.
+- Performance isolation. Use Linux Containers (cgroups).
+- Starvation of large tasks. It's difficult to get sole access to a node, since some other app with smaller tasks will snap it up. The fix is having a minimum offer size.
+
+Unaddressed / unknown resolution:
+- Gang scheduling. I think this is impossible to do with high utilization without either knowing task lengths or preempting. Incrementally hoarding resources works with low utilization, but can result in deadlock.
+- Cross-application preemption is also hard. The resource offer API has no way of saying "here are some low-priority tasks I could kill if you want them". Mesos depends on tasks being short to achieve fairness. # 跨应用来做抢占是非常困难的，所以mesos依赖DRF来为每个framework提供合理的RO来达到公平性。
+
+** Omega
+Omega is sort of a successor to Mesos, and in fact shares an author. Since the paper uses simulated results for its evaluation, I suspect it never went into production at Google, and the ideas were rolled into the next generation of Borg. Rewriting the API is probably too invasive of a change, even for Google. # Omega是Mesos后继，出自同一个作者。论文中Omega的评估都是通过模拟来完成的，所以推测Omega可能很难进入产生系统，很有可能会将其中一些思想并入下一代Borg.
+
+Omega takes the resource offers one degree further. In Mesos, resource offers are pessimistic or exclusive. If a resource has been offered to an app, the same resource won't be offered to another app until the offer times out. In Omega, resource offers are optimistic. Every application is offered all the available resources on the cluster, and conflicts are resolved at commit time. Omega's resource manager is essentially just a relational database of all the per-node state with different types of optimistic concurrency control to resolve conflicts. The upside of this is vastly increased scheduler performance (full parallelism) and better utilization. # Omega和Mesos一样是两层调度，不同的是Omega将当前所以可用资源告诉所有的framework，然后在commit阶段检查这些资源使用是否有冲突。使用这种方法可以极大提高调度性能以及达到更好的使用率。
+
+The downside of all this is that applications are in a free-for-all where they are allowed to gobble up resources as fast as they want, and even preempt other users. This is okay for Google because they use a priority-based system, and can go yell at their internal users. Their workload broadly falls into just two priority bands: high-priority service jobs (HBase, webservers, long-lived services) and low-priority batch jobs (MapReduce and similar). Applications are allowed to preempt lower-priority jobs, and are also trusted to stay within their cooperatively enforced limits on # of submitted jobs, amount of allocated resources, etc. I think Yahoo has said differently about being able to go yell at users (certainly not scalable), but it works somehow at Google.
+
+Most of the paper talks about how this optimistic allocation scheme works with conflicts, which is always the question. There are a few high-level notes:
+- Service jobs are larger, and have more rigorous placement requirements for fault-tolerance (spread across racks).
+- Omega can probably scale up to 10s but not 100s of schedulers, due to the overhead of distributing the full cluster state.
+- Scheduling times of a few seconds is typical. They also compare up to 10s and 100s of seconds, which is where the benefits of two-level scheduling really kick in. Not sure how common this is, maybe for service jobs?
+- Typical cluster utilization is about 60%.
+- Conflicts are rare enough that OCC works in practice. They were able to go up to 6x their normal batch workload before the scheduler fell apart.
+- Incremental scheduling is very important. Gang-scheduling is significantly more expensive to implement due to increased conflicts. Apparently most applications can do incremental okay, and can just do a couple partial allocations to get up to their total desired amount.
+- Even for complicated schedulers (10s per-job overheads), Omega can still schedule a mixed workload with reasonable wait times.
+- Experimenting with a new MapReduce scheduler was empirically easy with Omega
+
+Open questions
+- At some point, optimistic concurrency control breaks down because of a high conflict rate and the duplicated work from retries. It seems like they won't run into this in practice, but I wonder if there are worst-case scenarios with oddly-shaped tasks. Is this affected by the mix of service and batch jobs? Is this something that is tuned in practice?
+- Is a lack of global policies really acceptable? Fairness, preemption, etc.
+- What's the scheduling time like for different types of jobs? Have people written very complicated schedulers?
+
+** Borg
+This is a production experience paper. It's the same workload as Omega since it's also Google, so many of the metapoints are the same.
+
+High-level
+- Everything runs within Borg, including the storage systems like CFS and BigTable.
+- Median cluster size is 10K nodes, though some are much bigger.
+- Nodes can be very heterogeneous.
+- Linux process isolation is used (essentially containers), since Borg predates modern virtual machine infrastructure. Efficiency and launch time were important.
+- All jobs are statically linked binaries.
+- Very complicated, very rich resource specification language available
+- Can rolling update running jobs, meaning configuration and binary. This sometimes requires a task restart, so fault-tolerance is important.
+- Support for "graceful stop" via SIGTERM before final kill via SIGKILL. The soft kill is optional, and can not be relied on for correctness.
+
+Allocs
+- Resource allocation is separated from process liveness. An alloc can be used for task grouping or to hold resources across task restarts.
+- An alloc set is a group of allocs on multiple machines. Multiple jobs can be run within a single alloc.
+- This is actually a pretty common pattern! Multi-process is useful to separate concerns and development.
+
+Priorities and quotas
+- Two priority bands: high and low for service and batch.
+- Higher priority jobs can preempt lower priority
+- High priority jobs cannot preempt each other (prevents cascading livelock situations)
+- Quotas are used for admission control. Users pay more for quota at higher priorities.
+- Also provide a "free" tier that runs at lowest priority, to encourage high utilization and backfill work.
+- This is a simple and easy to understand system!
+
+Scheduling
+- Two phases to scheduling: finding feasible nodes, then scoring these nodes for final placement.
+- Feasibility is heavily determined by task constraints.
+- Scoring is mostly determined by system properties, like best-fit vs. worst-fit, job mix, failure domains, locality, etc.
+- Once final nodes are chosen, Borg will preempt to fit if necessary.
+- Typical scheduling time is around 25s, because of localizing dependencies. Downloading the binaries is 80% of this. This locality matters. Torrent and tree protocols are used to distribute binaries.
+
+Scalability
+- Centralization has not been an impossible performance bottleneck.
+- 10s of thousands of nodes, 10K tasks per minute scheduling rate.
+- Typical Borgmaster uses 10-14 cores and 50GB of RAM.
+- Architecture has become more and more multi-process over time, with reference to Omega and two-level scheduling.
+- Single master Borgmaster, but some responsibilities are still sharded: state updates from workers, read-only RPCs.
+- Some obvious optimizations: cache machine scores, compute feasibility once per task type, don't attempt global optimality when making scheduling decisions.
+- Primary argument against bigger cells is isolation from operator errors and failure propagation. Architecture keeps scaling fine
+
+Utilization
+- Their primary metric was cell compaction, or the smallest cluster that can still fit a set of tasks. Essentially box packing.
+- Big gains from the following: not segregating workloads or users, having big shared clusters, fine-grained resource requests.
+- Optimistic overcommit on a per-Borglet basis. Borglets do resource estimation, and backfill non-prod work. If the estimation is incorrect, kill off the non-prod work. Memory is the inelastic resource.
+- Sharing does not drastically affect CPI (CPU interference), but I wonder about the effect on storage.
+
+Lessons learned
+
+The issues listed here are pretty much fixed in Kubernetes, their public, open-source container scheduler.
+
+Bad:
+- Would be nice to schedule multi-job workflows rather than single joba, for tracking and management. This also requires more flexible ways of referring to components of a workflow. This is solved by attaching arbitrary key-value pairs to each task and allowing users to query against them. # 将multi-job workflows作为一个整体调度
+- One IP per machine. This leads to port conflicts on a single machine and complicates binding and service discovery. This is solved by Linux namespaces, IPv6, SDN. # 端口冲突
+- Complicated specification language. Lots of knobs to turn, which makes it hard to get started as a casual user. Some work on automatically determining resource requirements.
+Good:
+- Allocs are great! Allows helper services to be easily placed next to the main task.
+- Baking in services like load balancing and naming is very useful.
+- Metrics, debugging, web UIs are very important so users can solve their own problems.
+- Centralization scales up well, but need to split it up into multiple processes. Kubernetes does this from the start, meaning a nice clean API between the different scheduler components.
+
+** Closing remarks
+It seems like YARN will need to draw from Mesos and Omega to scale up to the 10K node scale. YARN is still a centralized scheduler, which is the strawman for comparison in Mesos and Omega. Borg specifically mentions the need to shard to scale. # YARN可以扩展到10k节点，但是依然是一个中央调度器。Borg论文中提到有必要通过shard(link-shard)来做scale(通过shard来处理borglet的资源汇报情况)
+
+Isolation is very important to achieve high utilization without compromising SLOs. This can surface at the application layer, where apps themselves need to be design to be latency-tolerant. Think tail-at-scale request replication in BigTable. Ultimately it comes down to hardware spend vs. software spend. Running at lower utilization sidesteps this problem. Or, you can tackle it head-on through OS isolation mechanisms, resource estimation, and tuning your workload and schedulers. At Google-scale, there's enough hardware that it makes sense to hire a bunch of kernel developers. Fortunately they've done the work for us :) # 资源隔离对于高利用率而不影响SLA非常重要，否则只能是让整个系统一直处在低利用率下将部分资源闲置出来。
+
+I wonder also if the Google workload assumptions apply more generally. Priority bands, reservations, and preemption work well for Google, but our customers almost all use the fair share scheduler. Yahoo uses the capacity scheduler. Twitter uses the fair scheduler. I haven't heard of any demand or usage of a priority + reservation scheduler. # Google priority + reservation scheduler是否有必要，现在看起来fair scheduler + capacity scheduler足够在比较大规模的机群上使用
+
+Finally, very few of our customers run big shared clusters as envisioned at Google. We have customers with thousands of nodes, but this is split up into pods of hundreds of nodes. It's also still common to have separate clusters for separate users or applications. Clusters are also typically homogeneous in terms of hardware. I think this will begin to change though, and soon.

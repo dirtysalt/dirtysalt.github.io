@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Efficient Query Processing with Optimistically Compressed Hash Tables &amp; Strings in the USSR</title>
+<meta name="author" content="dirtysalt" />
+<meta name="generator" content="Org Mode" />
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content" class="content">
+<h1 class="title">Efficient Query Processing with Optimistically Compressed Hash Tables &amp; Strings in the USSR</h1>
+<p>
+大致提出了3个在Hash Table和Strings上的优化思路，但是感觉每个都不是特别好应用起来，可能某些场景下可以使用起来：
+</p>
+
+<p>
+domain-guided prefix suppression. 作者是用在压缩multi-column作为group key上，思路很简单就是把每个key减去min value, 这样需要表示的bits就少了，然后多个key通过bit-packing放在一起组成int32,int64或者是int128.
+</p>
+
+<p>
+optimistic splitting. 可以认为是冷热数据各走两套逻辑，或者是按照数据性质走两套逻辑，可能一套逻辑执行非常快可以cover大部分cases. 比如我需要做count distinct, 虽然value是int64, 但是如果大部分value都是落在int32内，那么这个hashset可以做的更高效。
+</p>
+
+<p>
+USSR(User Strings Self-Aligned Reion): 说白了就是把一个执行逻辑内可能出现的strings做成unique strings. 这样比较起来就会比较快。思想倒不是特别新，但是实现方法比较有意思。
+</p>
+
+
+<div id="orge49c065" class="figure">
+<p><img src="../images/strings-ussr.png" alt="strings-ussr.png" />
+</p>
+</div>
+
+<p>
+整个结构占用768KB, 第一个部分是hash table, 第二个部分就是data array. HT里面每个bucket是4个字节，2个字节表示高16bits, 低16bits用来选择bucket. 剩下2字节来作为data array offset. 在data array上，指针前面8个字节存储具体的hash value, 然后再存储具体值（不需要存储长度吗？）
+</p>
+
+
+<p>
+计算hash可以取前面8个字节，比较的时候判断是不是落在一个USSR内，如果是的话直接比较指针即可。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-cpp">
+<span class="org-keyword">inline</span> <span class="org-type">uint64_t</span> <span class="org-function-name">hash</span>(<span class="org-type">char</span>* <span class="org-variable-name">s</span>) {
+    <span class="org-keyword">if</span> (((<span class="org-type">uintptr_t</span>)s &amp; USSR_MASK) != ussr_prefix)
+        <span class="org-keyword">return</span> strhash(s); <span class="org-comment-delimiter">// </span><span class="org-comment">compute hash</span>
+    <span class="org-keyword">return</span> ((<span class="org-type">uint64_t</span>*) (s))[-1]; <span class="org-comment-delimiter">// </span><span class="org-comment">exploit pre-computed hash</span>
+}
+
+<span class="org-keyword">inline</span> <span class="org-type">bool</span> <span class="org-function-name">equal</span>(<span class="org-type">char</span>* <span class="org-variable-name">s</span>, <span class="org-type">char</span>* <span class="org-variable-name">t</span>) {
+    <span class="org-keyword">if</span> ((((<span class="org-type">uintptr_t</span>)s &amp; USSR_MASK) != ussr_prefix) |
+        (((<span class="org-type">uintptr_t</span>)t &amp; USSR_MASK) != ussr_prefix))
+        <span class="org-keyword">return</span> strcmp(s, t)==0; <span class="org-comment-delimiter">// </span><span class="org-comment">regular string comparison</span>
+    <span class="org-keyword">return</span> s==t; <span class="org-comment-delimiter">// </span><span class="org-comment">pointer equality is enough in USSR</span>
+}
+</pre>
+</div>
+</div>
+<div id="content"><!-- DISQUS BEGIN --><div id="disqus_thread"></div><script>/***  RECOMMENDED CONFIGURATION VARIABLES: EDIT AND UNCOMMENT THE SECTION BELOW TO INSERT DYNAMIC VALUES FROM YOUR PLATFORM OR CMS.*  LEARN WHY DEFINING THESE VARIABLES IS IMPORTANT: https://disqus.com/admin/universalcode/#configuration-variables*/var disqus_config = function () {this.page.url = 'https://dirtysalt.github.io/html/query-processing-opt-compressed-ht-and-ussr.html';this.page.identifier = 'query-processing-opt-compressed-ht-and-ussr.html';};(function() {var d = document, s = d.createElement('script');s.src = 'https://dirlt.disqus.com/embed.js';s.setAttribute('data-timestamp', +new Date());(d.head || d.body).appendChild(s);})();</script><noscript>Please enable JavaScript to view the <a href="https://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript><!-- DISQUS END --></div></body>
+</html>

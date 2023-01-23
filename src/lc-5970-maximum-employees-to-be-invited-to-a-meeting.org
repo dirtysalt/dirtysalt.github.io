@@ -1,0 +1,78 @@
+#+title: LC 5970. 参加会议的最多员工数
+
+https://leetcode-cn.com/problems/maximum-employees-to-be-invited-to-a-meeting/
+
+最初看到这里还有点懵，老想着可以当做一个问题来解决，后来意识到大约是两个问题：
+1. 如果回路的长度超过2的话，那么就只能使用这个回路，比如 A->B->C->A 的话就是一个闭环，不能和其他结果链接起来。
+2. 如果回路的长度是2的话，好比A<->B这样，那么可以分别从A和B向外链接其他结果，比如
+  - F->E->D->C->A<->B
+  - H->G->J->I->B<->A
+3. 并且2得到的结果可以混合在一起比如（这点我开始没有想到）
+  - D->C->A<->B<-I<-J
+  - 6->5->1<->2<-3<-4
+  - 之间是不会有任何冲突的
+
+其中第一个问题比较好解决，第二个问题稍微有点绕，但是细想一下的话其实可以按照拓扑排序进行动态规划。以上面为例
+- F(1) -> E(2) -> D(3) -> C(4) -> A(5)
+- H(1) -> G(2) -> J(3) -> I(4) -> B(5)
+- 那么A最长链路是5，B也是5，所以总长度就是10.
+
+#+BEGIN_SRC python
+class Solution:
+    def maximumInvitations(self, favorite: List[int]) -> int:
+        n = len(favorite)
+
+        #========== 求解最长回路 ==========
+        def check_cycle():
+            cycle = [0] * n
+            res = 0
+            for i in range(n):
+                path, step, buf = {}, 0, []
+                x = i
+                while x not in path:
+                    if cycle[x]: break
+                    buf.append(x)
+                    path[x] = step
+                    step += 1
+                    x = favorite[x]
+
+                if cycle[x]:
+                    d = cycle[x]
+                else:
+                    d = step - path[x]
+
+                for x in buf:
+                    cycle[x] = d
+                res = max(res, d)
+            return res
+
+        cycle_size = check_cycle()
+
+        # ========== 按照拓扑顺序动态规划 ==========
+        deg = [0] * n
+        dp = [1] * n
+        from collections import deque
+        Q = deque()
+        for i in range(n):
+            deg[favorite[i]] += 1
+        for i in range(n):
+            if deg[i] == 0:
+                Q.append(i)
+
+        while Q:
+            x = Q.popleft()
+            to = favorite[x]
+            dp[to] = max(dp[to], dp[x] + 1)
+            deg[to] -= 1
+            if deg[to] == 0:
+                Q.append(to)
+
+        # ========== 将多个长度为2的回路拼接起来 ==========
+        concat_size = 0
+        for i in range(n):
+            if favorite[favorite[i]] == i and i < favorite[i]:
+                concat_size += dp[i] + dp[favorite[i]]
+
+        ans = max(cycle_size, concat_size)
+        return ans
+#+END_SRC

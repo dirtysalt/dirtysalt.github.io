@@ -1,0 +1,373 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>The Anatomy Of The Google Architecture</title>
+<meta name="author" content="dirtysalt" />
+<meta name="generator" content="Org Mode" />
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content" class="content">
+<h1 class="title">The Anatomy Of The Google Architecture</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>Table of Contents</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#org7b3f5e2">1. The Google Philosophy</a></li>
+<li><a href="#orga9db78e">2. The Basic Glue</a>
+<ul>
+<li><a href="#orgc419b26">2.1. Exterior Network</a></li>
+<li><a href="#org1720aaf">2.2. Data Centre</a></li>
+<li><a href="#org9dc3b2d">2.3. Rack</a></li>
+<li><a href="#org2c49e5e">2.4. Hardware</a></li>
+<li><a href="#org62ef68d">2.5. Operating System</a></li>
+<li><a href="#orge4aee64">2.6. Interior Network</a></li>
+</ul>
+</li>
+<li><a href="#orgfdd610b">3. The Major Glue</a>
+<ul>
+<li><a href="#orga74c8ec">3.1. GOOGLE FILE SYSTEM</a></li>
+<li><a href="#org0fe641e">3.2. GOOGLE DATABASE</a></li>
+<li><a href="#orgb5243c3">3.3. GOOGLE MAPREDUCE</a></li>
+<li><a href="#org5922eca">3.4. GOOGLE WORKQUEUE</a></li>
+</ul>
+</li>
+<li><a href="#org7493dd8">4. BUILD YOUR OWN GOOGLE</a></li>
+</ul>
+</div>
+</div>
+<p>
+<a href="http://www.slideshare.net/hasanveldstra/the-anatomy-of-the-google-architecture-fina-lv11">http://www.slideshare.net/hasanveldstra/the-anatomy-of-the-google-architecture-fina-lv11</a> @ 2009.12
+</p>
+
+<div id="outline-container-org7b3f5e2" class="outline-2">
+<h2 id="org7b3f5e2"><span class="section-number-2">1.</span> The Google Philosophy</h2>
+<div class="outline-text-2" id="text-1">
+<ul class="org-ul">
+<li>Jedis build their own lightsabres (the MS Eat your own Dog Food)</li>
+<li>Parallelize Everything</li>
+<li>Distribute Everything (to atomic level if possible)</li>
+<li>Compress Everything (CPU cheaper than bandwidth) <b>优化带宽</b></li>
+<li>Secure Everything (you can never be too paranoid)</li>
+<li>Cache (almost) Everything</li>
+<li>Redundantize Everything (in triplicate usually)</li>
+<li>Latency is VERY evil</li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-orga9db78e" class="outline-2">
+<h2 id="orga9db78e"><span class="section-number-2">2.</span> The Basic Glue</h2>
+<div class="outline-text-2" id="text-2">
+
+<div id="org1ad9d8c" class="figure">
+<p><img src="../images/the-anatomy-of-google-architecture-basic-glue.png" alt="the-anatomy-of-google-architecture-basic-glue.png" />
+</p>
+</div>
+
+<ol class="org-ol">
+<li>Exterior Network (Perimeter Architecture) （外部接入层）</li>
+<li>Data Centre（数据中心）</li>
+<li>Rack Characteristics（机架设计）</li>
+<li>Core Server Hardware（硬件设计）</li>
+<li>Operating System Implementation（操作系统）</li>
+<li>Interior Network Architecture（内部网络架构）</li>
+</ol>
+</div>
+
+<div id="outline-container-orgc419b26" class="outline-3">
+<h3 id="orgc419b26"><span class="section-number-3">2.1.</span> Exterior Network</h3>
+<div class="outline-text-3" id="text-2-1">
+
+<div id="org5f38787" class="figure">
+<p><img src="../images/google-architecture-exterior-network.png" alt="google-architecture-exterior-network.png" />
+</p>
+</div>
+
+<ul class="org-ul">
+<li>DNS Load Balanced splits traffic (country, .com multiple DNS, other X1) to FW</li>
+<li>Firewall filters traffic (http/s, smtp,pop etc)</li>
+<li>Netscalar Load Balancers take Request from FW blocks DOS attacks, ping floods (DOS) - blocks non IPv4/6 and none 80/443 ports and http multiplexes (limited caching capability)</li>
+<li>User Request forwarded to Squid (Reverse Proxy) probably HUGE cache (Petabytes?)
+<ul class="org-ul">
+<li>反向代理，似乎是穿透型的cache</li>
+<li>缓存命中率30-60%</li>
+<li>All Image Thumbnails caches, much Multimedia cached, Expensive common queries cached 缩略图片，多媒体以及开销比较大的搜索</li>
+</ul></li>
+<li>If not in Cache forwarded to GWS (Custom C++ Web Server) - now not using Custom apache?</li>
+<li>GWS sends the Request to appropriate internal (Cell) servers</li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-org1720aaf" class="outline-3">
+<h3 id="org1720aaf"><span class="section-number-3">2.2.</span> Data Centre</h3>
+<div class="outline-text-3" id="text-2-2">
+<ul class="org-ul">
+<li>Last estimated were 36 Data Centers, 300+ GFSII Clusters and upwards of 800K machines.（36个数据中心，300+ GFS2集群， <b>80万机器</b> ）</li>
+<li>US (#1) - Europe (#2) - Asia (#3) - South America/Russia (#4)</li>
+<li>Australia - on Hold</li>
+<li>Future: Taiwan, Malaysia, Lithuania, and Blythewood, South Carolina.</li>
+
+<li>Standard Google Modular DC (Cell) holds 1160 Servers / 250KW Power Consumption in 30 racks (40U).（cell有30个rack，支持40U one side.）</li>
+<li>A Data Centre would consist of 100s of Modular Cells.（每个数据中心最多100左右个cell)</li>
+<li>MDCs can also be deployed autonomously at the Perimeter (stand alone). MDC可以独立部署</li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-org9dc3b2d" class="outline-3">
+<h3 id="org9dc3b2d"><span class="section-number-3">2.3.</span> Rack</h3>
+<div class="outline-text-3" id="text-2-3">
+
+<div id="org70ea106" class="figure">
+<p><img src="../images/google-architecture-rack.png" alt="google-architecture-rack.png" />
+</p>
+</div>
+
+<ul class="org-ul">
+<li>Mini Server Size
+<ul class="org-ul">
+<li>Old Servers are Custom 1U</li>
+<li>New Servers are 2U</li>
+<li>seem 1/3 width of a normal 2U Server 宽度为普通2U服务器的1/3宽</li>
+</ul></li>
+<li>40U/80U Custom Racks (50% each side)
+<ul class="org-ul">
+<li>Huge Heating and Power Issues（冷却系统）</li>
+<li>Optimized Motherboards（主板优化）</li>
+<li>Have their own HW builds（定制硬件）</li>
+</ul></li>
+<li>Motherboard directly mounted into Rack
+<ul class="org-ul">
+<li>servers have no casing - just bare boards（没有盖子）</li>
+<li>assist with heat dispersal issues</li>
+</ul></li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-org2c49e5e" class="outline-3">
+<h3 id="org2c49e5e"><span class="section-number-3">2.4.</span> Hardware</h3>
+<div class="outline-text-3" id="text-2-4">
+<p>
+#note: 配置都非常普通
+</p>
+<ul class="org-ul">
+<li>2U Low-Cost (but not slow) Commodity Servers
+<ul class="org-ul">
+<li>2009 Currently 2-Way, Dual Core/16GB/1-2TB +- Standard</li>
+<li>Both Intel/AMD Chipsets - 1 NIC - 2 USB</li>
+<li>Looks like they RAID1/mirror the disks for better I/O - read performance</li>
+<li>SATA 7.2K/10K/15K drives? 8 x 2GB DDR3 ECC</li>
+</ul></li>
+<li>Standard HW Build (Several HW Build Versions at any one time)
+<ul class="org-ul">
+<li>Currently at 7Gen Build (1G 2005 was probably Dual Core/SMP)</li>
+<li>Each Server 12V Battery Backup and can run autonomously without external power (lasts 20-30s?)</li>
+</ul></li>
+</ul>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">YEAR</th>
+<th scope="col" class="org-left">Average Server Specification</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left">1999/2000</td>
+<td class="org-left">PII/PIII 128MB+</td>
+</tr>
+
+<tr>
+<td class="org-left">2003/2004</td>
+<td class="org-left">Celeron 533, PIII 1.4 SMP, 2-4GB DRAM, Dual XEON 2.0/1-4GB/40-160GB IDE - SATA Disks via Silicon Images SATA 3114/SATA 3124</td>
+</tr>
+
+<tr>
+<td class="org-left">2006</td>
+<td class="org-left">Dual Opteron/Working Set DRAM(4GB+)/2x400GB IDE (RAID0?)</td>
+</tr>
+
+<tr>
+<td class="org-left">2009</td>
+<td class="org-left">2-Way/Dual Core/16GB/1-2TB SATA</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+
+<div id="outline-container-org62ef68d" class="outline-3">
+<h3 id="org62ef68d"><span class="section-number-3">2.5.</span> Operating System</h3>
+<div class="outline-text-3" id="text-2-5">
+<ul class="org-ul">
+<li>100% Redhat Linux Based since 1998 inception
+<ul class="org-ul">
+<li>RHEL (Why not CentOS?)</li>
+<li>2.6.X Kernel</li>
+<li>PAE(Physical Address Extension) 物理地址扩展，32位下面支持64GB内存</li>
+<li>Custom glibc.. rpc&#x2026; ipvs&#x2026;</li>
+<li>Custom FS (GFS II)</li>
+<li>Custom Kerberos</li>
+<li>Custom NFS</li>
+<li>Custom CUPS</li>
+<li>Custom gPXE bootloader #note: open-source network booting software</li>
+<li>Custom EVERYTHING&#x2026;..</li>
+</ul></li>
+<li>Kernel/Subsystem Modifications
+<ul class="org-ul">
+<li>tcmalloc - replaces glibc 2.3 malloc - much faster! works very well with threads&#x2026;</li>
+<li>rpc - the rpc layer extensively modified to provide &gt; perf increase &lt; latency (52%/40%) #todo: ???</li>
+<li>Significantly modified Kernel and Subsystems - all IPv6 enabled</li>
+<li>Developed and maintained systems to automate installation, updates, and upgrades of Linux systems.</li>
+<li>Served as technical lead of team responsible for customizing and deploying Linux to internal systems and workstations.</li>
+</ul></li>
+<li>Use Python as the primary scripting language</li>
+<li>Deploy Ubuntu internally (likely for the Desktop) - also Chrome OS base</li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-orge4aee64" class="outline-3">
+<h3 id="orge4aee64"><span class="section-number-3">2.6.</span> Interior Network</h3>
+<div class="outline-text-3" id="text-2-6">
+<p>
+Routing Protocol：
+</p>
+<ul class="org-ul">
+<li>Internal network is IPv6 (exterior machines can be reached using IPv6)</li>
+<li>Heavily Modified Version of OSPF as the IRP</li>
+<li>Intra-rack network is 100baseT</li>
+<li>Inter-rack network is 1000baseT</li>
+<li>Inter-DC network pipes unknown but very fast</li>
+</ul>
+
+<p>
+Technology:
+</p>
+<ul class="org-ul">
+<li>Juniper, Cisco, Foundry, HP, routers and switches</li>
+</ul>
+
+<p>
+Software:
+</p>
+<ul class="org-ul">
+<li>ipvs (ip virtual server)</li>
+</ul>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgfdd610b" class="outline-2">
+<h2 id="orgfdd610b"><span class="section-number-2">3.</span> The Major Glue</h2>
+<div class="outline-text-2" id="text-3">
+
+<div id="org5ddb87e" class="figure">
+<p><img src="../images/the-anatomy-of-google-architecture-major-glue.png" alt="the-anatomy-of-google-architecture-major-glue.png" />
+</p>
+</div>
+
+<ul class="org-ul">
+<li>Google File System Architecture - GFS II</li>
+<li>Google Database - Bigtable</li>
+<li>Google Computation - Mapreduce</li>
+<li>Google Scheduling - GWQ</li>
+</ul>
+</div>
+
+<div id="outline-container-orga74c8ec" class="outline-3">
+<h3 id="orga74c8ec"><span class="section-number-3">3.1.</span> GOOGLE FILE SYSTEM</h3>
+<div class="outline-text-3" id="text-3-1">
+<ul class="org-ul">
+<li>GFS II “Colossus“ Version 2 improves in many ways (is a complete rewrite)</li>
+<li>Elegant Master Failover (no more 2s delays&#x2026;) <b>master 2s内可以恢复</b></li>
+<li>Chunk Size is now 1MB - likely to improve latency for serving data other than Indexing <b>偏向实时处理,chunksize=1MB</b></li>
+<li>Master can store more Chunk Metadata (therefore more chunks addressable up to 100 million) = also more Chunk Servers <b>支持亿级别chunk</b></li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-org0fe641e" class="outline-3">
+<h3 id="org0fe641e"><span class="section-number-3">3.2.</span> GOOGLE DATABASE</h3>
+<div class="outline-text-3" id="text-3-2">
+<ul class="org-ul">
+<li>Increased Scalability (across Namespace/Datacenters)
+<ul class="org-ul">
+<li>Tablets spread over DC s for a table but expensive (both computationally and financially!) #note: 对于tablet跨数据中心的话代价非常大</li>
+</ul></li>
+<li>Multiple Bigtable Clusters replicated throughout DC 数据中心之间的bigtable集群相互同步。</li>
+<li>Current Status
+<ul class="org-ul">
+<li>Many Hundreds may be thousands of Bigtable Cells. Late 2009 stated 500 Bigtable clusters（2009年500个多个bigtable cluster)</li>
+<li>At minimum scaled to many thousands of machine per cell in production 每个集群上面有上千台机器。</li>
+<li>Cells manage Managing 3-figure TB data (0.X PB) 每个集群管理PB级别数据。</li>
+</ul></li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-orgb5243c3" class="outline-3">
+<h3 id="orgb5243c3"><span class="section-number-3">3.3.</span> GOOGLE MAPREDUCE</h3>
+<div class="outline-text-3" id="text-3-3">
+<ul class="org-ul">
+<li>STATISTICS
+<ul class="org-ul">
+<li>In September 2009 Google ran 3,467,000 MR Jobs with an average 475 sec completion time averaging 488 machines per MR and utilising 25.5K Machine years</li>
+<li>Technique extensively used by Yahoo with Hadoop (similar architecture to Google) and Facebook (since 06 multiple Hadoop clusters, one being 2500CPU/1PB with HBase).</li>
+</ul></li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-org5922eca" class="outline-3">
+<h3 id="org5922eca"><span class="section-number-3">3.4.</span> GOOGLE WORKQUEUE</h3>
+<div class="outline-text-3" id="text-3-4">
+<ul class="org-ul">
+<li>Batch Submission/Scheduler System 批量提交和调度系统</li>
+<li>Arbitrates (process priorities) Schedules, Allocates Resources, process failover, Reports status, collects results 优先级分配资源，处理failover，汇报状态</li>
+<li>Workqueue can manage many tens of thousands of machines <b>管理上万机器</b></li>
+<li>Launched via API or command line (sawzall example shown)</li>
+</ul>
+<pre class="example" id="org60056ed">
+saw --program code.szl --workqueue testing
+--input_files /gfs/cluster1/2005-02-0[1-7]/submits.* \
+--destination /gfs/cluster2/$USER/output@100
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org7493dd8" class="outline-2">
+<h2 id="org7493dd8"><span class="section-number-2">4.</span> BUILD YOUR OWN GOOGLE</h2>
+<div class="outline-text-2" id="text-4">
+
+<div id="org28ee58c" class="figure">
+<p><img src="../images/the-open-source-google-stack.png" alt="the-open-source-google-stack.png" />
+</p>
+</div>
+
+<ul class="org-ul">
+<li>Google PROFITS US $16M A DAY</li>
+<li>“Libraries are the predominant way of building programs”</li>
+<li>Agile Methodologies Used (development iterations, teamwork, collaboration, and process adaptability throughout the life-cycle of the project) #todo: 敏捷开发？</li>
+<li>An infrastructure handles versioning of applications so they can be release without a fear of breaking things = roll out with minimal QA #todo: 持续集成？</li>
+</ul>
+</div>
+</div>
+</div>
+<div id="content"><!-- DISQUS BEGIN --><div id="disqus_thread"></div><script>/***  RECOMMENDED CONFIGURATION VARIABLES: EDIT AND UNCOMMENT THE SECTION BELOW TO INSERT DYNAMIC VALUES FROM YOUR PLATFORM OR CMS.*  LEARN WHY DEFINING THESE VARIABLES IS IMPORTANT: https://disqus.com/admin/universalcode/#configuration-variables*/var disqus_config = function () {this.page.url = 'https://dirtysalt.github.io/html/the-anatomy-of-the-google-architecture.html';this.page.identifier = 'the-anatomy-of-the-google-architecture.html';};(function() {var d = document, s = d.createElement('script');s.src = 'https://dirlt.disqus.com/embed.js';s.setAttribute('data-timestamp', +new Date());(d.head || d.body).appendChild(s);})();</script><noscript>Please enable JavaScript to view the <a href="https://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript><!-- DISQUS END --></div></body>
+</html>

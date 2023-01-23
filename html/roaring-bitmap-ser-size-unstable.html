@@ -1,0 +1,195 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Roaring Bitmap 序列化长度变化分析</title>
+<meta name="author" content="dirtysalt" />
+<meta name="generator" content="Org Mode" />
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content" class="content">
+<h1 class="title">Roaring Bitmap 序列化长度变化分析</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>Table of Contents</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#orgc63ccd4">1. 问题复现</a></li>
+<li><a href="#org02fe5be">2. 问题分析</a></li>
+<li><a href="#org8d87287">3. 复现代码</a></li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-orgc63ccd4" class="outline-2">
+<h2 id="orgc63ccd4"><span class="section-number-2">1.</span> 问题复现</h2>
+<div class="outline-text-2" id="text-1">
+<p>
+复现代码可以看最末尾，运行结果如下：
+</p>
+<ul class="org-ul">
+<li>创建bitmap塞入values</li>
+<li>bitmap认为序列化大小1073字节 (1)</li>
+<li>bitmap执行序列化写入1073字节</li>
+<li>反序列话得到bitmap2</li>
+<li>bitmap2认为序列化大小1071字节 (2)</li>
+<li>`(bitmap ^ bitmap2).cardinality() = 0` 可以认为两个bitmap语义上完全一致。</li>
+</ul>
+
+<pre class="example" id="org75f08a0">
+allocate size 1073
+write size 1073
+=========
+new allocate size 1071
+check equality. card = 0
+</pre>
+
+<p>
+其中(1)(2)两步得到的序列化长度不一致，导致在发送chunk的时候会出错。原因是我们接收到大小为size的data, 反序列话成为chunk之后，会重新检查一下 `chunk-&gt;serialize_size() == size` <a href="https://github.com/StarRocks/starrocks/blob/main/be/src/column/chunk.cpp">https://github.com/StarRocks/starrocks/blob/main/be/src/column/chunk.cpp</a>
+</p>
+</div>
+</div>
+
+<div id="outline-container-org02fe5be" class="outline-2">
+<h2 id="org02fe5be"><span class="section-number-2">2.</span> 问题分析</h2>
+<div class="outline-text-2" id="text-2">
+<p>
+这个问题只有在 `bitmap_serialize_version=2` 的时候才会出现。当 `bitmap_serialize_version=2` 的时候，roaring bitmap可能会使用 `array_of_uint32` 而不是 `container` 的方式。其中 `container` 格式是最开始的格式，几乎就是将内存印象dump出去，能够完整地保留原始的数据结构。而使用 `array_of_uint32` 的话，是将bitmap value原始值存储起来，反序列化的时候重新将这些value添加进来。这种存储格式对于稀疏bitmap非常有帮助，缺点就是前后内存格式可能会出现差别。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-c++"><span class="org-type">size_t</span> <span class="org-function-name">roaring_bitmap_size_in_bytes</span>(<span class="org-keyword">const</span> <span class="org-type">roaring_bitmap_t</span> *<span class="org-variable-name">r</span>) {
+    <span class="org-type">size_t</span> <span class="org-variable-name">portablesize</span> = roaring_bitmap_portable_size_in_bytes(r); <span class="org-comment-delimiter">// </span><span class="org-comment">&lt;-- container&#26684;&#24335;</span>
+    <span class="org-type">uint64_t</span> <span class="org-variable-name">sizeasarray</span> = roaring_bitmap_get_cardinality(r) * <span class="org-keyword">sizeof</span>(uint32_t) +
+                         <span class="org-keyword">sizeof</span>(uint32_t); <span class="org-comment-delimiter">// </span><span class="org-comment">&lt;-- array of uint32 &#26684;&#24335;</span>
+    <span class="org-keyword">return</span> portablesize &lt; sizeasarray ? portablesize + 1 : (<span class="org-type">size_t</span>)sizeasarray + 1;
+}
+
+<span class="org-type">size_t</span> <span class="org-function-name">roaring_bitmap_serialize</span>(<span class="org-keyword">const</span> <span class="org-type">roaring_bitmap_t</span> *<span class="org-variable-name">r</span>, <span class="org-type">char</span> *<span class="org-variable-name">buf</span>) {
+    <span class="org-type">size_t</span> <span class="org-variable-name">portablesize</span> = roaring_bitmap_portable_size_in_bytes(r);
+    <span class="org-type">uint64_t</span> <span class="org-variable-name">cardinality</span> = roaring_bitmap_get_cardinality(r);
+    <span class="org-type">uint64_t</span> <span class="org-variable-name">sizeasarray</span> = cardinality * <span class="org-keyword">sizeof</span>(uint32_t) + <span class="org-keyword">sizeof</span>(uint32_t);
+    <span class="org-keyword">if</span> (portablesize &lt; sizeasarray) {
+        buf[0] = SERIALIZATION_CONTAINER;
+        <span class="org-keyword">return</span> roaring_bitmap_portable_serialize(r, buf + 1) + 1;
+    } <span class="org-keyword">else</span> {
+        buf[0] = SERIALIZATION_ARRAY_UINT32;
+        memcpy(buf + 1, &amp;cardinality, <span class="org-keyword">sizeof</span>(uint32_t));
+        roaring_bitmap_to_uint32_array(
+            r, (<span class="org-type">uint32_t</span> *)(buf + 1 + <span class="org-keyword">sizeof</span>(uint32_t)));
+        <span class="org-keyword">return</span> 1 + (<span class="org-type">size_t</span>)sizeasarray;
+    }
+}
+</pre>
+</div>
+
+<p>
+roaring bitmap里面有3类container: bitset(B), array(A), run(R) (可以认为是RLE). 其中bitset和array之间是可以相互转换的，而run转变成为bitset/array只有一种情况，就是调用 `runOptimize` 方法。这个方法主要是检查container里面的values是否连续，如果连续的话可以按照RLE方式做压缩。 <a href="https://github.com/RoaringBitmap/CRoaring/blob/master/src/roaring.c#L1288">https://github.com/RoaringBitmap/CRoaring/blob/master/src/roaring.c#L1288</a>
+</p>
+
+<p>
+下面是bitmap一系列操作之后的可能出现的containers:
+</p>
+<ul class="org-ul">
+<li>增加元素 （B, A)</li>
+<li>做OR/AND 操作 (B, A)</li>
+<li>`runOptimize` 操作 (B, A, R)</li>
+<li>按照 `container` 格式序列化 + 反序列化 (B, A, R)</li>
+<li>按照 `array of uint32` 格式序列化 + 反序列化 (B, A)</li>
+</ul>
+
+<p>
+两个语义上相同的bitmap, 如果里面的container不同的话，那么可能序列化的长度是不同的。这个就是序列化长度出现变化的根本原因。
+</p>
+<ul class="org-ul">
+<li>bitmap A 有 bitset/array, 可能按照 `container` 格式序列化。</li>
+<li>bitmap B 有 bitset/array/run, 那么可能按照 `array of uint32` 格式序列化。</li>
+</ul>
+
+<p>
+我设想整个过程应该是这样的：
+</p>
+<ol class="org-ol">
+<li>创建bitmap并且插入values, container有 (B, A)</li>
+<li>`runOptimize` (B, A, R)</li>
+<li>序列化选择了 `array of uint32` 格式，长度1032字节 (B, A, R)</li>
+<li>反序列话成为bitmap2. 注意此时container只有 (B, A)</li>
+<li>重新将bitmap2序列化，因为container只有(B, A), 那么可能选择 `container` 格式，长度1030字节</li>
+</ol>
+</div>
+</div>
+
+<div id="outline-container-org8d87287" class="outline-2">
+<h2 id="org8d87287"><span class="section-number-2">3.</span> 复现代码</h2>
+<div class="outline-text-2" id="text-3">
+<div class="org-src-container">
+<pre class="src src-c++"><span class="org-comment-delimiter">/* </span><span class="org-comment">coding:utf-8</span>
+<span class="org-comment"> * Copyright (C) dirlt</span>
+<span class="org-comment-delimiter"> */</span>
+
+<span class="org-preprocessor">#include</span> <span class="org-string">&lt;cstdio&gt;</span>
+<span class="org-preprocessor">#include</span> <span class="org-string">&lt;roaring/roaring.hh&gt;</span>
+<span class="org-preprocessor">#include</span> <span class="org-string">&lt;string&gt;</span>
+<span class="org-preprocessor">#include</span> <span class="org-string">&lt;vector&gt;</span>
+
+<span class="org-type">int</span> <span class="org-function-name">main</span>() {
+    <span class="org-constant">std</span>::<span class="org-type">vector</span>&lt;<span class="org-type">int</span>&gt; <span class="org-variable-name">values</span> = {
+            4380909, 33259,   1918485, 1918841, 3980353, 7167248, 8504382, 3337731, 7722088, 2698368, 2379295, 3098644,
+            4410101, 3955405, 6664357, 2401359, 4041201, 6014068, 7332661, 6256905, 69988,   8198997, 2929553, 1170061,
+            2358844, 3352643, 2703215, 3093874, 47508,   48529,   77104,   4412211, 110702,  7627175, 7954476, 3501454,
+            3972388, 3678615, 105081,  7616014, 2362270, 1271665, 59438,   4095392, 8175288, 8504383, 2381679, 1834168,
+            4388328, 8195920, 4680392, 3352658, 8068225, 3352850, 1395415, 33250,   41913,   136431,  3593444, 2977457,
+            3051097, 2618079, 4381875, 7864468, 4410453, 6220741, 2906159, 55645,   7845508, 5149831, 136605,  1270502,
+            108862,  7951387, 4977905, 3583809, 77553,   4417430, 3972370, 1030324, 5057344, 77111,   8069326, 6942747,
+            3894918, 1167896, 6654615, 2399994, 33246,   2387959, 8113360, 7627251, 7372452, 8196711, 6653821, 6319723,
+            7364445, 3894926, 7891638, 3980291, 1920421, 4067611, 7864441, 3999736, 7361409, 7485174, 6122833, 5056761,
+            7899056, 7916565, 3088830, 2947285, 7241007, 7357335, 7611281, 3972406, 8591795, 82833,   5957069, 724376,
+            1944820, 1270284, 4012919, 87003,   4413577, 3999696, 1824634, 4159195, 7478088, 7872349, 3087787, 5301087,
+            2121187, 7366802, 6653583, 3501480, 7172210, 7212660, 8180758, 1030471, 7872289, 134507,  3093537, 3926457,
+            2381531, 6677317, 4137114, 3454193, 33258,   4409731, 2403215, 4403736, 126779,  7252593, 2402796, 7951378,
+            7967516, 7738012, 7370309, 3931577, 4416934, 108861,  5954194, 5301753, 7186869, 4062257, 3972391, 2388405,
+            7175974, 4681279, 3973400, 7480531, 108836,  3877204, 3593628, 3337825, 136413,  7626522, 5811568, 2379497,
+            1170473, 6902396, 4416830, 3980265, 3980310, 5301912, 7345732, 6121300, 3922165, 3050987, 2749179, 7191269,
+            5876351, 8198941, 7863299, 3894894, 7611305, 3088584, 2906392, 7951408, 3960356, 50033,   3337566, 3891474,
+            2397011, 77100,   108822,  8198021, 7910905, 2380493, 8049844, 73801,   3337870, 6673691, 1661412, 41943,
+            47503,   4094419, 3573784, 3581222, 3587918, 8111955, 3093906, 4372914, 3583406, 5959049, 172395,  7864492,
+            2906493, 48528,   4437807, 7864533, 4392498, 2929694, 7738037, 7139675, 171343,  7951594, 1030676, 77115,
+            7872270, 3473500, 7534524, 7611015, 41058,   4041200, 7806555, 7864443, 3586453, 7349264, 7928917, 135762,
+            7476084, 71753,   3924414, 41938,   4062251, 4076051, 3920738, 7239759, 7611121, 5809363, 4078132, 3678115,
+            33254,   3592097, 8504384,
+    };
+    <span class="org-type">Roaring</span> <span class="org-variable-name">bitmap</span>;
+    <span class="org-keyword">for</span> (<span class="org-type">int</span> <span class="org-variable-name">v</span> : values) {
+        bitmap.add(<span class="org-keyword">static_cast</span>&lt;<span class="org-type">uint64_t</span>&gt;(v));
+    }
+
+    printf(<span class="org-string">"=========\n"</span>);
+    bitmap.runOptimize();
+    bitmap.shrinkToFit();
+    <span class="org-type">bool</span> <span class="org-variable-name">portable</span> = <span class="org-constant">false</span>;
+    <span class="org-type">size_t</span> <span class="org-variable-name">old_size</span> = bitmap.getSizeInBytes(portable);
+    printf(<span class="org-string">"alloc size %zu\n"</span>, old_size);
+
+    <span class="org-constant">std</span>::<span class="org-type">string</span> <span class="org-variable-name">buffer</span>;
+    buffer.reserve(old_size);
+    <span class="org-type">size_t</span> <span class="org-variable-name">write_size</span> = bitmap.write(buffer.data(), portable);
+    printf(<span class="org-string">"write size %zu\n"</span>, write_size);
+
+    printf(<span class="org-string">"=========\n"</span>);
+    <span class="org-type">Roaring</span> <span class="org-variable-name">bitmap2</span> = <span class="org-constant">Roaring</span>::read(buffer.data(), portable);
+    <span class="org-type">size_t</span> <span class="org-variable-name">new_size</span> = bitmap2.getSizeInBytes(portable);
+    printf(<span class="org-string">"---&gt; new alloc size %zu\n"</span>, new_size);
+
+    bitmap2 ^= bitmap;
+    printf(<span class="org-string">"check equality. card = %llu\n"</span>, bitmap2.cardinality());
+    <span class="org-keyword">return</span> 0;
+}
+</pre>
+</div>
+</div>
+</div>
+</div>
+<div id="content"><!-- DISQUS BEGIN --><div id="disqus_thread"></div><script>/***  RECOMMENDED CONFIGURATION VARIABLES: EDIT AND UNCOMMENT THE SECTION BELOW TO INSERT DYNAMIC VALUES FROM YOUR PLATFORM OR CMS.*  LEARN WHY DEFINING THESE VARIABLES IS IMPORTANT: https://disqus.com/admin/universalcode/#configuration-variables*/var disqus_config = function () {this.page.url = 'https://dirtysalt.github.io/html/roaring-bitmap-ser-size-unstable.html';this.page.identifier = 'roaring-bitmap-ser-size-unstable.html';};(function() {var d = document, s = d.createElement('script');s.src = 'https://dirlt.disqus.com/embed.js';s.setAttribute('data-timestamp', +new Date());(d.head || d.body).appendChild(s);})();</script><noscript>Please enable JavaScript to view the <a href="https://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript><!-- DISQUS END --></div></body>
+</html>

@@ -1,0 +1,84 @@
+#+title: rolling hash的两种实现
+
+我想以leetcode这道题目来讲讲rolling hash的两种实现 https://leetcode.com/problems/longest-duplicate-substring/
+
+这道题目一个关键点是计算rolling hash. 好的hash算法可以使得冲突减少，减少长字符串的比较。
+什么是好的hash算法不太好说，但是我可以举出一个比较差的hash算法如下：
+#+BEGIN_SRC python
+def make_hash(s):
+    h = 0
+    for c in s:
+        v = ord(c) - ord('a')
+        h += v
+    return h
+
+def add_hash(h, c):
+    return h + (ord(c) - ord('a'))
+
+def sub_hash(h, c):
+    return h - (ord(c) - ord('a'))
+#+END_SRC
+这个算法只是去考虑字符串中所有字符的和，那么冲突率自然是比较高的，比如"abcd"和"dcba"就会被计算成为一个hash.
+
+----------
+一个简单的改进就是给每个字符应该考虑相应的位置，算法大致如下。这里需要对hash取模，否则字符串太长的话整数会溢出。
+#+BEGIN_SRC python
+def make_hash(s):
+    P = 10000019
+    h = 0
+    for c in s:
+        h = h * 26 + ord(c) - ord('a')
+        h = h % P
+    return h
+#+END_SRC
+这里有两个选择lsb(least significant bit)和msb(most significant bit). 以"abcd"来说：
+- lsb意味着 a * (26**3) + b * (26**2) + c * (26**1) + d
+- msb意味着 a + b * (26**1) + c * (26**2) + d * (26**3)
+乍看下觉得两者差不多，但是在实现rolling的时候差别还是蛮大的。我一开始使用的msb稍微有点麻烦，而lsb则简单得多。
+
+简单地说下lsb的实现，假设字符串是[x0,x1...,xn-1],下一个字符是xn,当前hash值是h
+- 先将x0移出. x0对应的权重是 (26**(n-1)) % P. 所以 h = h - x0 * (26**(n-1)) % P
+- 然后整体将[x1,...xn-1]左移，h = h * 26
+- 然后将xn移入，h = h + xn
+
+msb的实现过程和lsb接近：
+- 先将x0移出, h = (h - x0 + P) % P
+- 然后整体将[x1,..xn-1]右移, 这里出现问题？？？，肯定不能 h = h // 26
+- 然后将xn移入， h = h + xn * (26**(n-1))
+但是msb的实现在右移这步出现一个问题，h应该如何计算？？？
+
+----------
+
+假设上面右移之后的值是h', 那么有这个等式 (h'*26) % P = h. 问题就在于我们怎么计算出h'.
+这里可以用到 [[file:extended-gcd.org][扩展欧几里得算法]], 上面等式其实就是 h'*26+P*u=h.
+
+#+BEGIN_SRC python
+def ext_gcd(a, b, init_y2 = 0):
+    if b == 0:
+        return a, 1, 0
+    d, x2, y2 = ext_gcd(b, a % b, init_y2)
+    x1, y1 = y2, x2 - (a // b) * y2
+    return d, x1, y1
+
+#+END_SRC
+
+我们先求得ext_gcd(26, P)=1的解（因为P是素数）"d, x, y = ext_gcd(26, P)"，然后 h' = x*h.
+另外这里x只需要计算一次就行。
+
+#+BEGIN_SRC python
+P = 10000019
+C = 26
+_, AX, _ = ext_gcd(C, P)
+
+def add_hash(h, c, exp_sz):
+    v = ord(c) - ord('a')
+    h = h + (v * exp_sz) % P
+    h = h % P
+    return h
+
+def sub_hash(h, c):
+    v = ord(c) - ord('a')
+    h = (h - v + P) % P
+    h = (h * AX) % P
+    return h
+#+END_SRC

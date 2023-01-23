@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Columnar Storage Optimization and Caching for Data Lakes</title>
+<meta name="author" content="dirtysalt" />
+<meta name="generator" content="Org Mode" />
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content" class="content">
+<h1 class="title">Columnar Storage Optimization and Caching for Data Lakes</h1>
+<p>
+Short Paper@2022  因为调研Data Lake下面的Caching所以看了一下这篇文论，感觉好像没啥特别的东西。
+</p>
+
+<p>
+总结一下大约几个点，也可能是我看的比较粗，没有太Get到作者们的深层意图：
+</p>
+<ol class="org-ol">
+<li>按照column而不是row group进行聚合（Storage Layout Optimization）</li>
+<li>针对column chunk而不是row group进行缓存（column chunk是一个row group里面的单列）</li>
+<li>lazy cache population/eviction策略</li>
+</ol>
+
+<blockquote>
+<p>
+We refer to each column of a row group as a 𝑐𝑜𝑙𝑢𝑚𝑛 𝑐h𝑢𝑛𝑘, which is independently compressed with a domain-specific compression algorithm (e.g., dictionary encod- ing, run-length encoding) to reduce space overheads and I/O costs. Given a query, as projection is pushed down to the table scan operator, it only reads needed column chunks.
+</p>
+
+<p>
+However, each existing cache has its limitation. The page cache employs LRU-based policies, and the query engine cannot directly control which part of the data is cached. The hot data that is more worthy of being cached might be evicted by a query that reads a large amount of cold data. The file cache in storage systems and the distributed file caching systems cache entire files or blocks. For PAX layout that stores all the column chunks of a row group in the same file or block, they lead to very low space efficiency.
+</p>
+</blockquote>
+
+<p>
+Storage Layout Optimization将column而不是row group进行聚合，大致思路就是下面这样的，好处就是顺序性好，缺点就是要在后台改写文件格式，这个对于Query Engine来说似乎不太合适，做成单独服务可以让用户触发。
+</p>
+
+
+<div id="org98831bf" class="figure">
+<p><img src="../images/columnar-storage-optimization-and-caching-for-data-lakes-0.png" alt="columnar-storage-optimization-and-caching-for-data-lakes-0.png" />
+</p>
+</div>
+
+<p>
+Cache Eviction不是在Population的时候就完成，而是在后台分析之后异步完成的，选择合适的colum chunk删除掉。
+</p>
+
+<blockquote>
+<p>
+In Pixels, we envisage the high efficiency of lazy cache replace- ment. The cache misses in each node are collected by Prometheus (Section 2), without immediately triggering cache replacement. Whenever the workload pattern evolves, the Storage Optimizer calculates the cache efficiency of each column chunk by dividing its hit+miss count by its size. The hit count is stored before each column chunk in the cache area (Figure 4), while the miss count is collected from the cache miss messages in the cache miss MQ. The most-efficient column chunks that do not exceed the cache capacity are included in the new cache plan that is then applied across the cluster. This is based on the temporal locality of the column access.
+</p>
+</blockquote>
+</div>
+<div id="content"><!-- DISQUS BEGIN --><div id="disqus_thread"></div><script>/***  RECOMMENDED CONFIGURATION VARIABLES: EDIT AND UNCOMMENT THE SECTION BELOW TO INSERT DYNAMIC VALUES FROM YOUR PLATFORM OR CMS.*  LEARN WHY DEFINING THESE VARIABLES IS IMPORTANT: https://disqus.com/admin/universalcode/#configuration-variables*/var disqus_config = function () {this.page.url = 'https://dirtysalt.github.io/html/columnar-storage-optimization-and-caching-for-data-lakes.html';this.page.identifier = 'columnar-storage-optimization-and-caching-for-data-lakes.html';};(function() {var d = document, s = d.createElement('script');s.src = 'https://dirlt.disqus.com/embed.js';s.setAttribute('data-timestamp', +new Date());(d.head || d.body).appendChild(s);})();</script><noscript>Please enable JavaScript to view the <a href="https://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript><!-- DISQUS END --></div></body>
+</html>

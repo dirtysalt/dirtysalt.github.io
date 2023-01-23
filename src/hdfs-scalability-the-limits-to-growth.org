@@ -1,0 +1,62 @@
+#+title: HDFS scalability: the limits to growth
+http://c59951.r51.cf2.rackcdn.com/5424-1908-shvachko.pdf @ 2010
+
+|          | Target | Deployed |
+|----------+--------+----------|
+| Capacity | 10PB   | 14PB     |
+| Nodes    | 10K    | 4K       |
+| Clients  | 100K   | 15K      |
+| Files    | 100M   | 60M      |
+
+The question is now whether the goals are feasible with the current system architecture. And the main concern is the single namespace server architec- ture. This article studies scalability and performance limitations imposed on HDFS by this architecture.（其实这篇文章主要是想分析在single-namespace-server这个架构下面可扩展性以及性能的极限）
+
+** Storage
+- 200 bytes to store a single metadata object (a file inode or a block)
+- a file on average consists of 1.5 blocks, which means that it takes 600 bytes (1 file object + 2 block objects) to store an average file in name-node’s RAM.
+  - Sadly, based on practical observations, the block-to-file ratio tends to decrease during the lifetime of a file system, meaning that the object count (and therefore the memory footprint) of a single namespace server grows faster than the physical data storage. That makes the object-count problem, which becomes a file-count problem when λ → 1, the real bottleneck for cluster scalability.（实际上这个数字会逐渐下降到1，除非定期做compaction）
+- in order to store 100 million files (referencing 200 million blocks) a name-node should have at least 60GB (108 .600) of RAM.
+- If the maximal block size is 128MB and every block is replicated three times, then the total disk space required to store these blocks is close to 60PB.
+- As a rule of thumb, the correlation between the representation of the metadata in RAM and physical storage space required to store data ref- erenced by this namespace is: *1GB metadata ≈ 1PB physical storage*
+- In order to accommodate data referenced by a 100 million file namespace, an HDFS cluster needs 10,000 nodes equipped with eight 1TB hard drives. The total storage capacity of such a cluster is 60PB.
+
+** Load
+- Block Reports, Heartbeats
+  - A data-node identifies block replicas in its possession to the name-node by sending a block report. A block report contains block ID, length, and the gen- eration stamp for each block replica.
+    - The first block report is sent immediately after the data-node registration.
+    - Subsequently, block reports are sent periodically every hour by default and serve as a sanity check（时间间隔1小时）
+  - During normal operation, data-nodes periodically send heartbeats to the name-node to indicate that the data-node is alive.
+    - The default heartbeat interval is three seconds. （心跳间隔3s）
+    - If the name-node does not receive a heartbeat from a data-node in 10 minutes, it pronounces the data-node dead and schedules its blocks for replication on other nodes.（10min没有接收到心跳那么认为死亡）
+    - Heartbeats also carry information about total and used disk capacity and the number of data transfers currently performed by the node, which plays an important role in the name-node’s space and load-balancing decisions.（心跳携带信息还包含磁盘使用情况等）
+    - The communication on HDFS clusters is organized in such a way that the name-node does not call data-nodes directly. It uses heartbeats to reply to the data-nodes with important instructions. The instructions include com- mands to:（而对于nn来说通过在心跳里面piggyback一些信息来操作dn)
+      - Replicate blocks to other nodes
+      - Remove local block replicas
+      - Re-register or shut down the node
+      - Send an urgent block report
+
+- The Internal Load
+  - The block reports and heartbeats form the internal load of the cluster. This load mostly depends on the number of data-nodes. If the internal load is too high, the cluster becomes dysfunctional, able to process only a few, if any, external client operations such as 1s, read, or write.(internal load和dn的数量相关，主要是block report和heartbeat造成的。如果internal load非常高的话，那么会导致响应外部请求非常慢，比如ls, create, read, write）
+  - This section analyzes what percentage of the total processing power of the name-node is dedicated to the internal load. 这节主要是想了解，internal load使用的百分比。
+    - 200M blocks / 10K nodes = 20K blocks/node. 需要考虑blocks replication factor是3，那么每个节点上有60k个blocks。This is the size of an average block report sent by a data-node to the name-node.
+    - The sending of block reports is randomized so that they do not come to the name-node together or in large waves. Thus, the average number of block reports the name-node receives is 10,000/hour, which is about three reports per second. #note: 这里假设dn发送report都是均匀地发送。那么nn每个小时接收到10k block reports，每个block report里面有60K个blocks.相当于3/s
+    - The heartbeats are not explicitly randomized by the current implementa- tion and, in theory, can hit the name-node together, although the likelihood of this is very low. Nevertheless, let’s assume that the name-node should be able to handle 10,000 heartbeats per second on a 10,000 node cluster. #note: 如果均匀发送心跳而心跳间隔是3s的话，那么应该是3k/s.但是考虑到均匀发送概率比较低，所以假设NN每秒需要处理10k heartbeats
+  - In order to measure the name-node performance, I implemented a bench- mark called *NNThroughputBenchmark*, which now is a standard part of the HDFS code base.
+    - NNThroughputBenchmark is a single-node benchmark, which starts a name-node and runs a series of client threads on the same node. Each client repetitively performs the same name-node operation by directly calling the name-node method implementing this operation. Then the benchmark mea- sures the number of operations performed by the name-node per second.
+    - The reason for running clients locally rather than remotely from different nodes is to avoid any communication overhead caused by RPC connections and serialization, and thus reveal the upper bound of pure name-node per- formance.（没有远端发起的原因是因为有RPC代价开销，另外我感觉结果统计也不太好完成）
+    - Number of blocks processed in block reports per second == 639713 / 60K blocks per block report = 10/s. 而NN接收为3/s, 所以占据30%。
+    - Number of heartbeats per second == 300000. 而NN接收是10k/s, 所以占据3%。
+    - #note: 所以heartbeat带来的影响相对于block report的影响基本上可以忽略不计
+
+- Resonable Load Expections
+  - DFSIO was one of the first standard benchmarks for HDFS. The bench- mark is a map-reduce job with multiple mappers and a single reducer. Each mapper writes (reads) bytes to (from) a distinct file. Mappers within the job either all write or all read, and each mapper transfers the same amount of data. The mappers collect the I/O stats and pass them to the reducer. The reducer averages them and summarizes the I/O throughput for the job. The key measurement here is the byte transfer rate of an average mapper.(使用DFSIO来测算吞吐，mapper进行读取然后将统计数据交给reducer)
+    - Average read throughput == 66 MB/s
+    - Average write throughput == 40 MB/s
+  - Another series of throughput results produced by NNThroughputBench- mark (Table 4) measures the number of “open” (the same as “get block loca- tion”) and “create” operations processed by the name-node per second:
+    - Get block locations == 126,119 ops/s
+    - Create new block == 5,600 ops/s
+  - 然后考虑MapReduce对HDFS操作，每个map读取一个block。假设block size = 128MB，而每个file有1.5block。这样有的block就会是128MB, 有的是64MB，平均下来96MB. 并且假设写block也是96MB
+    - Read Only. 每个map读取花去 96 / 66 ~= 1.45s. 这期间相当有10k client发起了Get block location操作，相当10k/1.45s = 68750/s. 低于126119 * 0.7.  *所以NN不会限制read性能。*
+    - Write Only. 每个map写入花去 96 / 40 ~= 2.4. 这期间想当有10k client发起了Create new block操作，相当10k/2.4s = 41667/s. 高于 5600 * 0.7,  *所以NN会限制write性能。*
+  - We have seen that a 10,000 node HDFS cluster with a single name-node is expected to handle well a workload of 100,000 readers, but even 10,000 writers can produce enough workload to saturate the name-node, making it a bottleneck for linear scaling. Such a large difference in performance is attributed to get block locations (read workload) being a memory-only operation, while creates (write work- load) require journaling, which is bounded by the local hard drive perfor- mance.（这个差距的根源还是在于，get操作是从memory里面完成的，而write操作需要journal）
+
+** Final Notes

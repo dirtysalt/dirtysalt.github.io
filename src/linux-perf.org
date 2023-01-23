@@ -1,0 +1,139 @@
+#+title: Linux Perf
+
+** 参考链接
+- perf (Linux) - Wikipedia, the free encyclopedia http://en.wikipedia.org/wiki/Perf_(Linux)
+- Tutorial - Perf Wiki : https://perf.wiki.kernel.org/index.php/Tutorial
+
+** 多线程优化
+
+Performance analysis of multithreaded applications. | Easyperf https://easyperf.net/blog/2019/10/05/Performance-Analysis-Of-MT-apps
+
+How to find expensive locks in multithreaded application. | Easyperf https://easyperf.net/blog/2019/10/12/MT-Perf-Analysis-part2
+
+Detect false sharing with Data Address Profiling. | Easyperf https://easyperf.net/blog/2019/12/17/Detecting-false-sharing-using-perf
+
+C2C - False Sharing Detection in Linux Perf - My Octopress Blog https://joemario.github.io/blog/2016/09/01/c2c-blog/
+
+caching - Is it possible to know the address of a cache miss? - Stack Overflow https://stackoverflow.com/questions/23736999/is-it-possible-to-know-the-address-of-a-cache-miss/45899495#45899495
+
+https://www.brendangregg.com/perf.html#SchedulerAnalysis
+
+perf查看内存访问情况
+- `perf mem record -- <process>` 对内存访问进行采样
+- `perf mem report --stdio` 查看每个内存地址的访问频率和延迟
+- `perf mem -t load/store report --sort=mem --stdio` 针对load/store查看内存层次上的次数和延迟
+
+perf分析单个线程情况
+- `perf record -s` 对每个线程分别进行采样
+- `perf report -n -T` 对线程进行group by分析
+- `perf report -T --tid 6607 -n` 针对某个线程进行单独分析
+- `perf record -s -e sched:sched_switch -g --call-graph dwarf` 对线程切换进行分析（需要存储调用堆栈）
+- `perf report -n --stdio --no-call-graph -T` （然后在阅读的时候把堆栈省略）
+
+perf查看cache之间冲突 (https://joemario.github.io/blog/2016/09/01/c2c-blog/)
+- `perf c2c record --all-user/-u --ldlat 50` 收集用户态的cache冲突，并且load时间超过50cycles才会上报
+- TODO: 需要具体场景来使用
+
+** 常见问题
+*** 确保perf版本和内核版本匹配
+
+#+BEGIN_EXAMPLE
+sandbox-sql :: ~/work/run-bench ‹master› » uname -r
+3.10.0-1160.42.2.el7.x86_64
+sandbox-sql :: ~/work/run-bench ‹master› » perf -v
+perf version 3.10.0-1160.42.2.el7.x86_64.debug
+#+END_EXAMPLE
+
+某些情况下内核会自动升级（可能也是执行了yum update时候触发的），从我的经验来看就会在/boot目录下面产生多个启动配置
+
+#+BEGIN_EXAMPLE
+sandbox-sql :: ~/work/run-bench ‹master› » ls /boot/config-3.10.0-11* -l
+-rw-r--r--  1 root root 153567 Aug 26  2020 /boot/config-3.10.0-1127.19.1.el7.x86_64
+-rw-r--r--. 1 root root 153562 Apr  1  2020 /boot/config-3.10.0-1127.el7.x86_64
+-rw-r--r--  1 root root 153596 Sep  7 22:54 /boot/config-3.10.0-1160.42.2.el7.x86_64
+sandbox-sql :: ~/work/run-bench ‹master› » ls /boot/initramfs-* -l
+-rw-------. 1 root root 58572648 Sep 14  2020 /boot/initramfs-0-rescue-20200914151306980406746494236010.img
+-rw-------  1 root root 17784907 Sep 18 10:54 /boot/initramfs-3.10.0-1127.19.1.el7.x86_64.img
+-rw-------  1 root root 10733878 Sep 14  2020 /boot/initramfs-3.10.0-1127.19.1.el7.x86_64kdump.img
+-rw-------  1 root root 18199672 Sep 14  2020 /boot/initramfs-3.10.0-1127.el7.x86_64.img
+-rw-------  1 root root 10731212 Sep 14  2020 /boot/initramfs-3.10.0-1127.el7.x86_64kdump.img
+-rw-------  1 root root 17785753 Sep 18 10:53 /boot/initramfs-3.10.0-1160.42.2.el7.x86_64.img
+#+END_EXAMPLE
+
+如果发现内核和perf版本不同的话，那么可能就需要重启机器了，版本不同很多PMU/hardward events就没有办法使用。
+
+为了避免系统自动更新，可以使用这篇文章的方法 [CentOS 7禁止内核自动更新升级 LiuJason'sBlog](https://www.liujason.com/article/742.html) ：
+
+执行更新的时候加上exclude参数 `sudo yum --exclude=kernel* update`
+
+或者是在 `/etc/yum.conf` 文件里面 [main] section里面增加
+
+#+BEGIN_EXAMPLE
+#禁止更新内核
+exclude=kernel*
+# 禁止更新系统
+exclude=centos-release*
+#+END_EXAMPLE
+
+*** 调试perf版本时yum几个命令
+
+使用所有仓库查看可用的perf
+
+> yum --enablerepo="**" list available perf
+
+查看不同版本的perf
+
+> yum --enablerepo="**" --showduplicates list available perf
+
+只在某些特定仓库下查找
+
+> yum --enablerepo="centos-kernel,centos-sclo-rh,fasttrack" --showduplicates search perf
+
+列举所有的仓库
+
+> yum repolist
+
+*** 反编译和符号解析问题
+
+最近跑perf想看某个符号的汇编代码总是失败，我想到这个是不是和objdump有关系，因为objdump就是用来做反汇编的。
+
+用系统自带的objdump出现下面这个错误
+
+#+BEGIN_EXAMPLE
+sandbox-sql :: ~/DorisDB ‹ext-planner-profile› » objdump -d ./output/be/lib/starrocks_be
+objdump: ./output/be/lib/starrocks_be: unable to initialize decompress status for section .debug_aranges
+objdump: ./output/be/lib/starrocks_be: unable to initialize decompress status for section .debug_aranges
+objdump: ./output/be/lib/starrocks_be: File format not recognized
+#+END_EXAMPLE
+
+google了一下这个问题，发现golang社区也有，https://github.com/golang/go/issues/42136 就是因为使用了低版本的binutils. 然后对于某一类最新编译的section无法解析导致的，升级到bintuils-2.32就能解决这个问题。 https://centos.pkgs.org/7/centos-sclo-rh-x86_64/devtoolset-9-binutils-2.32-14.el7.x86_64.rpm.html
+
+- yum install centos-release-scl-rh
+- yum install devtoolset-9-binutils
+
+#+BEGIN_EXAMPLE
+sandbox-sql :: ~/DorisDB ‹ext-planner-profile› » /opt/rh/devtoolset-9/root/usr/bin/objdump -d ./output/be/lib/starrocks_be > x
+sandbox-sql :: ~/DorisDB ‹ext-planner-profile*› » head x
+
+./output/be/lib/starrocks_be:     file format elf64-x86-64
+
+
+Disassembly of section .plt:
+
+00000000022de000 <JNI_CreateJavaVM@plt-0x10>:
+ 22de000:       ff 35 02 50 38 04       pushq  0x4385002(%rip)        # 6663008 <_GLOBAL_OFFSET_TABLE_+0x8>
+ 22de006:       ff 25 04 50 38 04       jmpq   *0x4385004(%rip)        # 6663010 <_GLOBAL_OFFSET_TABLE_+0x10>
+ 22de00c:       0f 1f 40 00             nopl   0x0(%rax)
+#+END_EXAMPLE
+
+接着问题就是如何让perf使用这个objdump, 修改一下PATH就好了: `export PATH=/opt/rh/devtoolset-9/root/usr/bin/:$PATH`
+
+*** flamegraph和perf结果差异
+
+http://smalldatum.blogspot.com/2022/04/i-previously-wrote-about-generating.html
+
+https://github.com/brendangregg/FlameGraph/issues/165
+
+目前flamegraph在解析-F的时候，没有把sample period考虑进去，所以导致flamegraph和perf report结果是不一致的。
+
+这个区别至今不是特别理解，总之就是如果在解释的时候出现什么问题的话，可以考虑使用-c而不是-F重新进行profile

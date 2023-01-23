@@ -1,0 +1,31 @@
+#+title: Kaggle Bike Sharing Demand
+
+[[file:codes/misc/kaggle/bike-sharing-demand][code on github]]
+
+这是第一次做kaggle, 所以挑选了一道相对比较简单的题目，目的是为了积累经验。下面是总结出的几点：
+
+1. RF对于离散值和连续值(在这道题目里面，连续值其实还是离散值)都可以处理比较好。主要调参对象是min_samples_split([2,3,4,5,6,7]). # of trees >= 1000.
+
+2. 将整数值当做浮点数值处理没有太大关系。我读取CSV方式是先将一行转换成为list, 然后使用np.array变为ndarray. 因为ndarry采用的是同构数组，所以如果list里面有整数和浮点的话，会全部变为浮点。(对于这点直接使用numpy好像还没有什么办法，如果确实非常重要的话，可以用pandas来读取CSV)
+
+3. 训练计分方式应该以题目evaluation为准。这道题目中evaluation为RMLSE, 我将registered中预测对象变为log(y+1)之后效果提高一些。
+
+4. features: a. 年份(2011, 2012) b. 星期x(weekday) c. 因为month和season属性重复所以要去掉month.(多余/重复属性会降低效果) d. 对casual和registered分别建模 e. registered模型中以log(y+1)作为预测对象
+
+5. RF可以通过feature_importances来判断属性重要性。holiday这一项对register count的影响非常小在0.001左右。在预测registered count去掉这项，去除前和去除后成绩分别是0.38554和0.38557. 差别非常小。
+
+6. 在调参min_samples_split犯了一个错误，就是分别对casual和registered的RF model使用CV来寻找参数。这样寻找到的参数结果将会是，两个构造出的模型独立来看都不错，但是放在一起就不行。正确方式应该将两个model结果叠加来做CV.  虽然这样一来min_samples_split查找空间就会从n->n^2, 可是我们可以加入"两个model使用相同min_samples_split"的限制来保持查找空间为n。
+
+7. 在选择validation set上犯了一个错误，就是简单地使用kFold来做train和validation set的分离。可是使用这种抽样方式造成的时间分布是不平均的，但是从RF训练出来的feature_importances可以看出时间尤其是hour是最重要的指标。所以之后我改成按照day来做抽样，比如选择day为[1~9, 12~19]为训练数据集合，而[10,11]为验证数据集合(选择10%来做验证). 修改选择validation方式重新选择参数和模型。
+
+有个 [[http://blog.dato.com/using-gradient-boosted-trees-to-predict-bike-sharing-demand][帖子]] 使用GBDT来训练的, 里面说了什么时候使用GBDT比较合适。同时适合处理数值和离散特征（在DT中数值特征基本上也当做离散特征来做），但是要求这些特征维度不能太大。如果这些维度过于稀疏的话，那么需要做一些预处理，或者是使用数值分析模型来做。
+
+#+BEGIN_QUOTE
+When to use a boosted trees model?
+
+Different kinds of models have different advantages. The boosted trees model is very good at handling tabular data with numerical features, or categorical features with fewer than hundreds of categories.
+
+One important note is that tree based models are not designed to work with very sparse features. When dealing with sparse input data (e.g. categorical features with large dimension), we can either pre-process the sparse features to generate numerical statistics, or switch to a linear model, which is better suited for such scenarios.
+#+END_QUOTE
+
+NOTE@201805: 修改了一下代码（用ipython notebook, 用pandas），设置了`random_state`这样可以稳定复现结果，可以复现出0.388的结果。

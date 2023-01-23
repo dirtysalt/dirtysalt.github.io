@@ -1,0 +1,251 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>一个简单的tcmalloc/jemalloc性能测试对比</title>
+<meta name="author" content="dirtysalt" />
+<meta name="generator" content="Org Mode" />
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content" class="content">
+<h1 class="title">一个简单的tcmalloc/jemalloc性能测试对比</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>Table of Contents</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#org66df090">1. 测试背景</a></li>
+<li><a href="#org4af36fd">2. 测试构造</a></li>
+<li><a href="#org5913e2d">3. 测试结果</a>
+<ul>
+<li><a href="#org706449a">3.1. 16cores</a></li>
+<li><a href="#orgb05af59">3.2. 64cores</a></li>
+</ul>
+</li>
+<li><a href="#org0a14e3d">4. 测试代码</a></li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-org66df090" class="outline-2">
+<h2 id="org66df090"><span class="section-number-2">1.</span> 测试背景</h2>
+<div class="outline-text-2" id="text-1">
+<p>
+最近在测试block cache的时候(ssb100g), 发现使用jemalloc和tcmalloc在执行速度上存在一定的差距。以ssb/q07为例，jemalloc版本大约在1200ms, 而tcmalloc版本在1000ms左右。如果对BE进行oncpu分析的话，发现有比较大的部分在 `do_async_page_fault` 这个函数上。
+</p>
+
+
+<div id="org5be10de" class="figure">
+<p><img src="../images/simple-benchmark-on-jemalloc-and-tcmalloc-0.jpg" alt="simple-benchmark-on-jemalloc-and-tcmalloc-0.jpg" />
+</p>
+</div>
+
+<p>
+这个函数是KVM在处理page fault. [KVM async page fault](<a href="https://terenceli.github.io/%E6%8A%80%E6%9C%AF/2019/03/24/kvm-async-page-fault">https://terenceli.github.io/%E6%8A%80%E6%9C%AF/2019/03/24/kvm-async-page-fault</a>) 因为整个dataset其实都是放在内存里面的，所以这些page fault都是minor page fault, 物理内存分配速度跟不上导致的。
+</p>
+
+<pre class="example" id="org2382a72">
+sr@dla-cache01 ~]$ systemd-detect-virt
+kvm
+</pre>
+
+<p>
+目前我们jemalloc的配置如下 [JEMALLOC](<a href="https://jemalloc.net/jemalloc.3.html">https://jemalloc.net/jemalloc.3.html</a>)
+</p>
+
+<p>
+export JEMALLOC_CONF="percpu_arena:percpu,oversize_threshold:0,muzzy_decay_ms:5000,dirty_decay_ms:5000,metadata_thp:auto,background_thread:true"
+</p>
+</div>
+</div>
+
+<div id="outline-container-org4af36fd" class="outline-2">
+<h2 id="org4af36fd"><span class="section-number-2">2.</span> 测试构造</h2>
+<div class="outline-text-2" id="text-2">
+<p>
+测试思路是，在不同尺寸内存块上反复分配以及释放，观察执行时间以及minor page fault. 实现思路是如下，具体代码可以看 `测试代码`一节：
+</p>
+<ul class="org-ul">
+<li>每个线程上有N个大小为 `BLOCK_SIZE` 的内存块</li>
+<li>每次随机挑选一个内存块进行释放或者是分配</li>
+<li>如果是分配的话，那么进行memcpy</li>
+</ul>
+
+<p>
+软件配置：
+</p>
+<ul class="org-ul">
+<li>jemalloc-5.3.0 直接使用 `configure`, 编译参数 `CONFIGURE_CXXFLAGS : -Wall -Wextra -g3 -fvisibility=hidden -Wimplicit-fallthrough -O3`</li>
+<li>gperftools-2.9.1 直接使用 `configure`, 编译参数好像是 `-g -O2`</li>
+<li>jemalloc 配置 `JEMALLOC_CONF="percpu_arena:percpu,oversize_threshold:0,muzzy_decay_ms:5000,dirty_decay_ms:5000,metadata_thp:auto,background_thread:true"`</li>
+<li>tcmalloc 默认配置</li>
+<li>mimalloc  <a href="https://github.com/microsoft/mimalloc">https://github.com/microsoft/mimalloc</a> 默认配置</li>
+</ul>
+
+<p>
+参数选择：
+</p>
+<ul class="org-ul">
+<li>线程数量 16/64</li>
+<li>BLOCK_SIZE 4K, 16K, 256K, 1M, 4M, 16M, 32M</li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-org5913e2d" class="outline-2">
+<h2 id="org5913e2d"><span class="section-number-2">3.</span> 测试结果</h2>
+<div class="outline-text-2" id="text-3">
+<p>
+其中有个 `&#x2013;nofree` 版本是，我们不释放内存而复用之前的内存，看看因为minor page fault造成多少开销。
+</p>
+</div>
+
+<div id="outline-container-org706449a" class="outline-3">
+<h3 id="org706449a"><span class="section-number-3">3.1.</span> 16cores</h3>
+<div class="outline-text-3" id="text-3-1">
+<p>
+硬件配置: 16cores, 128GB(内存充足)
+</p>
+
+<p>
+有这么几个发现：
+</p>
+<ul class="org-ul">
+<li>BLOCK_SIZE在4M以下
+<ul class="org-ul">
+<li>两者执行差不多, 两者都可以完全使用满CPU</li>
+<li>jemalloc的minor pgflt都比tcmalloc高， maxrss也要更高。</li>
+</ul></li>
+<li>BLOCK_SIZE在16M,32M下面
+<ul class="org-ul">
+<li>如果线程数是16，那么jemalloc只用到了核数的一半</li>
+<li>如果线程数是32，那么jemalloc可以完全使用CPU</li>
+<li>tcmalloc都可以完全使用CPU</li>
+<li>jemalloc的minor pgflt是tcmalloc的倍数，maxrss也要更高。</li>
+</ul></li>
+</ul>
+
+<hr />
+
+<p>
+线程数16执行情况如下图：
+</p>
+
+
+<div id="org716dd29" class="figure">
+<p><img src="../images/simple-benchmark-on-jemalloc-and-tcmalloc-1.jpg" alt="simple-benchmark-on-jemalloc-and-tcmalloc-1.jpg" />
+</p>
+</div>
+
+<p>
+线程数64执行情况如下图：
+</p>
+
+
+<div id="orgd9f7bb0" class="figure">
+<p><img src="../images/simple-benchmark-on-jemalloc-and-tcmalloc-2.jpg" alt="simple-benchmark-on-jemalloc-and-tcmalloc-2.jpg" />
+</p>
+</div>
+</div>
+</div>
+
+
+<div id="outline-container-orgb05af59" class="outline-3">
+<h3 id="orgb05af59"><span class="section-number-3">3.2.</span> 64cores</h3>
+<div class="outline-text-3" id="text-3-2">
+<p>
+硬件配置104cores, 内存充足，使用 `taskset -c 0-63` 绑核处理来模拟64cores
+</p>
+
+<p>
+因为运行的时候没有办法确定cpu cores, 会出现如下错误：
+</p>
+
+<pre class="example" id="org46da9ac">
+=== jemalloc: percpu_arena:percpu,oversize_threshold:0,muzzy_decay_ms:5000,dirty_decay_ms:5000,metadata_thp:auto,background_thread:true ===
+&lt;jemalloc&gt;: Number of CPUs detected is not deterministic. Per-CPU arena disabled.
+</pre>
+
+<p>
+所以这里修改了JEMALLOC_CONF配置如下
+</p>
+
+<p>
+JEMALLOC_CONF="percpu_arena:disabled,narenas:64,oversize_threshold:0,muzzy_decay_ms:5000,dirty_decay_ms:5000,metadata_thp:auto,background_thread:true"
+</p>
+
+<p>
+有这么几个发现：
+</p>
+<ul class="org-ul">
+<li>16线程下面
+<ul class="org-ul">
+<li>两者执行时间都差不多，但是tcmalloc CPU略高</li>
+<li>大部分情况下面两者的minor pgflt差不多，tcmalloc也有略高的时候</li>
+<li>内存块&lt;=16K的时候，tcmalloc maxrss更高，而&gt;16K之后, jemalloc maxrss更高</li>
+</ul></li>
+<li>64线程下面
+<ul class="org-ul">
+<li>jemalloc maxrss和minor pgflt都比tcmalloc高</li>
+<li>内存块&gt;=16M 上面jemalloc核没有充分利用起来，CPU利用率比tcmalloc低，时间也更长</li>
+<li>UPDATE: 看上去mimalloc在maxrss, pgflt, 时间上都要更好点</li>
+</ul></li>
+</ul>
+
+<hr />
+
+<p>
+16线程情况如下图
+</p>
+
+
+<div id="org2ad0bee" class="figure">
+<p><img src="../images/simple-benchmark-on-jemalloc-and-tcmalloc-3.jpg" alt="simple-benchmark-on-jemalloc-and-tcmalloc-3.jpg" />
+</p>
+</div>
+
+<p>
+64线程情况如下图
+</p>
+
+
+<div id="org82bcb18" class="figure">
+<p><img src="../images/simple-benchmark-on-jemalloc-and-tcmalloc-4.jpg" alt="simple-benchmark-on-jemalloc-and-tcmalloc-4.jpg" />
+</p>
+</div>
+
+
+<p>
+UDPATE: 64线程下面增加mimalloc
+</p>
+
+
+<div id="org0b5c370" class="figure">
+<p><img src="../images/simple-benchmark-on-jemalloc-and-tcmalloc-5.jpg" alt="simple-benchmark-on-jemalloc-and-tcmalloc-5.jpg" />
+</p>
+</div>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org0a14e3d" class="outline-2">
+<h2 id="org0a14e3d"><span class="section-number-2">4.</span> 测试代码</h2>
+<div class="outline-text-2" id="text-4">
+<p>
+<a href="https://github.com/dirtysalt/codes/blob/master/cc/sr-test/malloc_perf.cpp">https://github.com/dirtysalt/codes/blob/master/cc/sr-test/malloc_perf.cpp</a>
+</p>
+
+<p>
+<a href="https://github.com/dirtysalt/codes/blob/master/cc/sr-test/run_malloc_perf.sh">https://github.com/dirtysalt/codes/blob/master/cc/sr-test/run_malloc_perf.sh</a>
+</p>
+
+<p>
+<a href="https://github.com/dirtysalt/codes/blob/master/cc/sr-test/run_malloc_suite.sh">https://github.com/dirtysalt/codes/blob/master/cc/sr-test/run_malloc_suite.sh</a>
+</p>
+</div>
+</div>
+</div>
+<div id="content"><!-- DISQUS BEGIN --><div id="disqus_thread"></div><script>/***  RECOMMENDED CONFIGURATION VARIABLES: EDIT AND UNCOMMENT THE SECTION BELOW TO INSERT DYNAMIC VALUES FROM YOUR PLATFORM OR CMS.*  LEARN WHY DEFINING THESE VARIABLES IS IMPORTANT: https://disqus.com/admin/universalcode/#configuration-variables*/var disqus_config = function () {this.page.url = 'https://dirtysalt.github.io/html/simple-benchmark-on-jemalloc-and-tcmalloc.html';this.page.identifier = 'simple-benchmark-on-jemalloc-and-tcmalloc.html';};(function() {var d = document, s = d.createElement('script');s.src = 'https://dirlt.disqus.com/embed.js';s.setAttribute('data-timestamp', +new Date());(d.head || d.body).appendChild(s);})();</script><noscript>Please enable JavaScript to view the <a href="https://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript><!-- DISQUS END --></div></body>
+</html>

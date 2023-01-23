@@ -1,0 +1,72 @@
+#+title: python universal feed parser
+
+universal feed parser的实现并不太多，[feedparser](https://pythonhosted.org/feedparser/) 算是其中最健壮的一个，可以做一些数据修复以及处理各种格式的rss. 但是就是速度比较慢。[cfeedparser](https://github.com/sloonz/cfeedparser) 看上会比较快速，但是感觉不能应对各种rss(我没有尝试这个库，后面我会试试这个库，估计速度是慢不了的). 一个看上去比较折衷(不做数据修复)但是速度也比较快的实现是[speedparser](https://github.com/jmoiron/speedparser). 从代码上看这个库基于feedparser做了一些改动，牺牲了一些准确性但是提升了速度。在prod环境下面我是这样使用的
+#+BEGIN_SRC Python
+try:
+    dom = speedparser.parse(data)
+except:
+    dom = feedparser.parse(data)
+#+END_SRC
+这种方式要求两种parser输出结果标签要一致。虽然speedparser fork下来的代码输出结果和feedparser输出有一些出入，但是可以通过修改speedparser代码来解决。比如添加itunes:author对应到author这个标签上，然后仿照parse_date添加一个parse_author实现
+#+BEGIN_SRC Python
+class SpeedParserFeedRss20(object):
+    channel_xpath = '/rss/channel'
+    tag_map = {
+        'title': 'title',
+        'itunes:title': 'title',
+        'description': 'summary',
+        'tagline': 'subtitle',
+        'subtitle': 'subtitle',
+        'link': 'links',
+        'pubDate': 'date',
+        'updated': 'date',
+        'modified': 'date',
+        'date': 'date',
+        'generator': 'generator',
+        'generatorAgent': 'generator',
+        'language': 'lang',
+        'id': 'id',
+        'lastBuildDate': 'date',
+        'itunes:summary': 'summary',
+        'itunes:image': 'image',
+        'author': 'author',
+        'itunes:author': 'author'
+    }
+
+    def parse_author(self, node, feed, ns = ''):
+        feed['author'] = strip_outer_tag(self.clean(unicoder(node.text))) or ''
+
+#+END_SRC
+
+速度上我也简单地对比了两者. 代码如下。 parse数据100遍，feedparser用时28.96, speedparser在15.24s. 接近一倍。
+#+BEGIN_SRC Python
+#!/usr/bin/env python
+# coding:utf-8
+# Copyright (C) dirlt
+
+import feedparser
+import speedparser
+import requests
+
+r = requests.get('http://nj.lizhi.fm/rss/353471.xml')
+data = r.content
+
+import time
+
+"""
+feedparser = 28.96
+speedparser = 15.24
+"""
+
+s = time.time()
+for i in xrange(100):
+    d = feedparser.parse(data)
+e = time.time()
+print 'feedparser = %.2f' % (e - s)
+
+s = time.time()
+for i in xrange(100):
+    d = speedparser.parse(data)
+e = time.time()
+print 'speedparser = %.2f' % (e - s)
+#+END_SRC

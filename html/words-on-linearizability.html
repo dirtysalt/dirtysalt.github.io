@@ -1,0 +1,166 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>一小段关于linearizability的解释</title>
+<meta name="author" content="dirtysalt" />
+<meta name="generator" content="Org Mode" />
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content" class="content">
+<h1 class="title">一小段关于linearizability的解释</h1>
+<p>
+<a href="https://pdos.csail.mit.edu/6.824/notes/l-raft2.txt">https://pdos.csail.mit.edu/6.824/notes/l-raft2.txt</a>
+</p>
+
+<p>
+<a href="https://www.anishathalye.com/2017/06/04/testing-distributed-systems-for-linearizability/">https://www.anishathalye.com/2017/06/04/testing-distributed-systems-for-linearizability/</a>
+</p>
+
+<p>
+<a href="https://pdos.csail.mit.edu/6.824/papers/zookeeper-faq.txt">https://pdos.csail.mit.edu/6.824/papers/zookeeper-faq.txt</a>
+</p>
+
+<p>
+满足linearizability的要求是：
+</p>
+<ol class="org-ol">
+<li>可以对executions进行定序</li>
+<li>这个序列满足: a)时间要求 b)写入之后才可见的要求</li>
+</ol>
+
+<pre class="example" id="org7f46657">
+we need a definition of "correct" for Lab 3 &amp;c
+  how should clients expect Put and Get to behave?
+  often called a consistency contract
+  helps us reason about how to handle complex situations correctly
+    e.g. concurrency, replicas, failures, RPC retransmission,
+         leader changes, optimizations
+  we'll see many consistency definitions in 6.824
+
+"linearizability" is the most common and intuitive definition
+  formalizes behavior expected of a single server ("strong" consistency)
+
+linearizability definition:
+  an execution history is linearizable if
+    one can find a total order of all operations,
+    that matches real-time (for non-overlapping ops), and
+    in which each read sees the value from the
+    write preceding it in the order.
+
+a history is a record of client operations, each with
+  arguments, return value, time of start, time completed
+
+example history 1:
+  |-Wx1-| |-Wx2-|
+    |---Rx2---|
+      |-Rx1-|
+"Wx1" means "write value 1 to record x"
+"Rx1" means "a read of record x yielded value 1"
+draw the constraint arrows:
+  the order obeys value constraints (W -&gt; R)
+  the order obeys real-time constraints (Wx1 -&gt; Wx2)
+this order satisfies the constraints:
+  Wx1 Rx1 Wx2 Rx2
+  so the history is linearizable
+
+note: the definition is based on external behavior
+  so we can apply it without having to know how service works
+note: histories explicitly incorporates concurrency in the form of
+  overlapping operations (ops don't occur at a point in time), thus good
+  match for how distributed systems operate.
+
+example history 2:
+  |-Wx1-| |-Wx2-|
+    |--Rx2--|
+              |-Rx1-|
+draw the constraint arrows:
+  Wx1 before Wx2 (time)
+  Wx2 before Rx2 (value)
+  Rx2 before Rx1 (time)
+  Rx1 before Wx2 (value)
+there's a cycle -- so it cannot be turned into a linear order. so this
+history is not linearizable. (it would be linearizable w/o Rx2, even
+though Rx1 overlaps with Wx2.)
+
+example history 3:
+|--Wx0--|  |--Wx1--|
+            |--Wx2--|
+        |-Rx2-| |-Rx1-|
+order: Wx0 Wx2 Rx2 Wx1 Rx1
+so the history linearizable.
+so:
+  the service can pick either order for concurrent writes.
+  e.g. Raft placing concurrent ops in the log.
+
+example history 4:
+|--Wx0--|  |--Wx1--|
+            |--Wx2--|
+C1:     |-Rx2-| |-Rx1-|
+C2:     |-Rx1-| |-Rx2-|
+what are the constraints?
+  Wx2 then C1:Rx2 (value)
+  C1:Rx2 then Wx1 (value)
+  Wx1 then C2:Rx1 (value)
+  C2:Rx1 then Wx2 (value)
+  a cycle! so not linearizable.
+so:
+  service can choose either order for concurrent writes
+  but all clients must see the writes in the same order
+  this is important when we have replicas or caches
+    they have to all agree on the order in which operations occur
+
+example history 5:
+|-Wx1-|
+        |-Wx2-|
+                |-Rx1-|
+constraints:
+  Wx2 before Rx1 (time)
+  Rx1 before Wx2 (value)
+  (or: time constraints mean only possible order is Wx1 Wx2 Rx1)
+there's a cycle; not linearizable
+so:
+  reads must return fresh data: stale values aren't linearizable
+  even if the reader doesn't know about the write
+    the time rule requires reads to yield the latest data
+  linearzability forbids many situations:
+    split brain (two active leaders)
+    forgetting committed writes after a reboot
+    reading from lagging replicas
+
+example history 6:
+suppose clients re-send requests if they don't get a reply
+in case it was the response that was lost:
+  leader remembers client requests it has already seen
+  if sees duplicate, replies with saved response from first execution
+but this may yield a saved value from long ago -- a stale value!
+what does linearizabilty say?
+C1: |-Wx3-|          |-Wx4-|
+C2:          |-Rx3-------------|
+order: Wx3 Rx3 Wx4
+so: returning the old saved value 3 is correct
+
+You may find this page useful:
+https://www.anishathalye.com/2017/06/04/testing-distributed-systems-for-linearizability/
+
+
+</pre>
+
+<p>
+两个概念linearizability和serializability之间的区别是什么（说实话我也是一知半解）
+</p>
+
+<pre class="example" id="org424a4ff">
+Q: How does linearizability differ from serializability?
+
+A: The usual definition of serializability is much like
+linearizability, but without the requirement that operations respect
+real-time ordering. Have a look at this explanation:
+http://www.bailis.org/blog/linearizability-versus-serializability/
+</pre>
+</div>
+<div id="content"><!-- DISQUS BEGIN --><div id="disqus_thread"></div><script>/***  RECOMMENDED CONFIGURATION VARIABLES: EDIT AND UNCOMMENT THE SECTION BELOW TO INSERT DYNAMIC VALUES FROM YOUR PLATFORM OR CMS.*  LEARN WHY DEFINING THESE VARIABLES IS IMPORTANT: https://disqus.com/admin/universalcode/#configuration-variables*/var disqus_config = function () {this.page.url = 'https://dirtysalt.github.io/html/words-on-linearizability.html';this.page.identifier = 'words-on-linearizability.html';};(function() {var d = document, s = d.createElement('script');s.src = 'https://dirlt.disqus.com/embed.js';s.setAttribute('data-timestamp', +new Date());(d.head || d.body).appendChild(s);})();</script><noscript>Please enable JavaScript to view the <a href="https://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript><!-- DISQUS END --></div></body>
+</html>

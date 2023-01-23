@@ -1,0 +1,399 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>int64数组转为int8数组的矢量化方式</title>
+<meta name="author" content="dirtysalt" />
+<meta name="generator" content="Org Mode" />
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content" class="content">
+<h1 class="title">int64数组转为int8数组的矢量化方式</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>Table of Contents</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#org2dd9336">1. native版本</a></li>
+<li><a href="#org957c13b">2. pack版本</a></li>
+<li><a href="#org8fbd331">3. simd版本</a></li>
+<li><a href="#orge377ac3">4. simd2版本</a></li>
+<li><a href="#org3198f5d">5. simd avx512版本</a></li>
+<li><a href="#orgbffa072">6. 性能结果</a>
+<ul>
+<li><a href="#org2962526">6.1. clang</a></li>
+<li><a href="#org065da2b">6.2. gcc</a></li>
+<li><a href="#org5235b01">6.3. 结论分析</a></li>
+</ul>
+</li>
+</ul>
+</div>
+</div>
+<p>
+背景就不说了，目标就是把int64数组转为int8数组，不用考虑overflow的情况。
+</p>
+<ul class="org-ul">
+<li><a href="https://github.com/dirtysalt/codes/tree/master/cc/misc/ConvertI64ToI8Test.cpp">正确测试代码</a></li>
+<li><a href="https://github.com/dirtysalt/codes/tree/master/cc/misc/ConvertI64ToI8Bench.cpp">性能测试代码</a></li>
+</ul>
+
+<p>
+编译命令是 `g++ -std=c++17 -mavx512vl -mavx512bw -mavx512vbmi`, 如果不支持cpu avx512的话，那么avx512版本就不能运行。
+</p>
+
+<p>
+下面代码中 `RE` 是宏 `__restrict__`
+</p>
+
+<div id="outline-container-org2dd9336" class="outline-2">
+<h2 id="org2dd9336"><span class="section-number-2">1.</span> native版本</h2>
+<div class="outline-text-2" id="text-1">
+<p>
+native的版本就是下面这样的，非常简单。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-cpp"><span class="org-type">void</span> <span class="org-function-name">convert_i64toi8_native</span>(<span class="org-type">int64_t</span>* <span class="org-variable-name">RE</span> src, <span class="org-type">int8_t</span> * <span class="org-variable-name">RE</span> dst, <span class="org-type">size_t</span> <span class="org-variable-name">size</span>) {
+    <span class="org-keyword">for</span>(<span class="org-type">size_t</span> <span class="org-variable-name">i</span> = 0; i &lt; size ; i++) {
+        dst[i] = <span class="org-keyword">static_cast</span>&lt;<span class="org-type">int8_t</span>&gt;(src[i]);
+    }
+}
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org957c13b" class="outline-2">
+<h2 id="org957c13b"><span class="section-number-2">2.</span> pack版本</h2>
+<div class="outline-text-2" id="text-2">
+<p>
+pack的版本有两个作用：
+</p>
+<ol class="org-ol">
+<li>按照8个单位循环展开</li>
+<li>合并成为int64写入</li>
+</ol>
+
+<div class="org-src-container">
+<pre class="src src-cpp"><span class="org-type">void</span> <span class="org-function-name">convert_i64toi8_pack</span>(<span class="org-type">int64_t</span>* <span class="org-variable-name">RE</span> src, <span class="org-type">int8_t</span> * <span class="org-variable-name">RE</span> dst, <span class="org-type">size_t</span> <span class="org-variable-name">size</span>) {
+    <span class="org-type">size_t</span> <span class="org-variable-name">offset</span> = 0;
+    <span class="org-type">int64_t</span>* <span class="org-variable-name">end</span> = src + size;
+    <span class="org-type">size_t</span> <span class="org-variable-name">loop</span> = size / 8;
+    <span class="org-keyword">for</span>(<span class="org-type">size_t</span> <span class="org-variable-name">i</span> = 0; i &lt; loop ; i++) {
+<span class="org-preprocessor">#define</span> <span class="org-function-name">REP</span>(<span class="org-variable-name">x</span>, <span class="org-variable-name">o</span>) <span class="org-type">int64_t</span> <span class="org-variable-name">x</span> = ((*(src + o)) &amp; 0xff) &lt;&lt; (o * 8)
+        REP(a, 0);
+        REP(b, 1);
+        REP(c, 2);
+        REP(d, 3);
+        REP(e, 4);
+        REP(f, 5);
+        REP(g, 6);
+        REP(h, 7);
+        <span class="org-type">int64_t</span> <span class="org-variable-name">x</span> = a | b | c | d;
+        <span class="org-type">int64_t</span> <span class="org-variable-name">y</span> = e | f | g | h;
+        *((<span class="org-type">int64_t</span>*)dst) = x | y;
+        dst += 8;
+        src += 8;
+    }
+    <span class="org-keyword">while</span>(src &lt; end) {
+        <span class="org-type">int8_t</span> <span class="org-variable-name">a</span> = (<span class="org-type">int8_t</span>)(*src &amp; 0xff);
+        *dst = a;
+        dst++;
+        src++;
+    }
+}
+
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org8fbd331" class="outline-2">
+<h2 id="org8fbd331"><span class="section-number-2">3.</span> simd版本</h2>
+<div class="outline-text-2" id="text-3">
+<p>
+这个版本的想法是：
+</p>
+<ol class="org-ol">
+<li>按照128字节载入a, b, c, d</li>
+<li>对a,b,c,d里面进行shuffle, 将两个int8放在低位</li>
+<li>unpacklo, 把所有的int8最终聚合到一个m128的低位</li>
+<li>以64bit方式写入</li>
+</ol>
+
+<p>
+为了简化代码，这里没有考虑对齐load/store方式。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-cpp"><span class="org-type">void</span> <span class="org-function-name">convert_i64toi8_simd</span>(<span class="org-type">int64_t</span>* <span class="org-variable-name">RE</span> src, <span class="org-type">int8_t</span> * <span class="org-variable-name">RE</span> dst, <span class="org-type">size_t</span> <span class="org-variable-name">size</span>) {
+    <span class="org-type">size_t</span> <span class="org-variable-name">offset</span> = 0;
+    <span class="org-type">int64_t</span>* <span class="org-variable-name">end</span> = src + size;
+    <span class="org-type">size_t</span> <span class="org-variable-name">loop</span> = size / 8;
+    <span class="org-keyword">static</span> <span class="org-type">uint8_t</span> <span class="org-variable-name">mask_data</span>[16] = {
+        0x00, 0x08
+    };
+    <span class="org-type">__m128i</span> <span class="org-variable-name">mask</span> = _mm_loadu_si128((__m128i <span class="org-keyword">const</span>*)mask_data);
+    <span class="org-keyword">for</span>(<span class="org-type">size_t</span> <span class="org-variable-name">i</span> = 0; i &lt; loop ; i++) {
+        <span class="org-type">__m128i</span> <span class="org-variable-name">a</span> = _mm_lddqu_si128((__m128i <span class="org-keyword">const</span>*)src);
+        <span class="org-type">__m128i</span> <span class="org-variable-name">b</span> = _mm_lddqu_si128((__m128i <span class="org-keyword">const</span>*)(src+2));
+        <span class="org-type">__m128i</span> <span class="org-variable-name">c</span> = _mm_lddqu_si128((__m128i <span class="org-keyword">const</span>*)(src+4));
+        <span class="org-type">__m128i</span> <span class="org-variable-name">d</span> = _mm_lddqu_si128((__m128i <span class="org-keyword">const</span>*)(src+6));
+        a = _mm_shuffle_epi8(a, mask);
+        b = _mm_shuffle_epi8(b, mask);
+        c = _mm_shuffle_epi8(c, mask);
+        d = _mm_shuffle_epi8(d, mask);
+        <span class="org-type">__m128i</span> <span class="org-variable-name">e</span> = _mm_unpacklo_epi16(a, b);
+        <span class="org-type">__m128i</span> <span class="org-variable-name">f</span> = _mm_unpacklo_epi16(c, d);
+        <span class="org-type">__m128i</span> <span class="org-variable-name">g</span> = _mm_unpacklo_epi32(e, f);
+        _mm_storeu_si64(dst, g);
+        dst += 8;
+        src += 8;
+    }
+    <span class="org-keyword">while</span>(src &lt; end) {
+        <span class="org-type">int8_t</span> <span class="org-variable-name">a</span> = (<span class="org-type">int8_t</span>)(*src &amp; 0xff);
+        *dst = a;
+        dst++;
+        src++;
+    }
+}
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orge377ac3" class="outline-2">
+<h2 id="orge377ac3"><span class="section-number-2">4.</span> simd2版本</h2>
+<div class="outline-text-2" id="text-4">
+<p>
+simd版本是按照64字节写入，而对于m128i最合适的方式是按照128字节写入，所以对simd版本在做一次展开。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-cpp"><span class="org-type">void</span> <span class="org-function-name">convert_i64toi8_simd2</span>(<span class="org-type">int64_t</span>* <span class="org-variable-name">RE</span> src, <span class="org-type">int8_t</span> * <span class="org-variable-name">RE</span> dst, <span class="org-type">size_t</span> <span class="org-variable-name">size</span>) {
+    <span class="org-type">size_t</span> <span class="org-variable-name">offset</span> = 0;
+    <span class="org-type">int64_t</span>* <span class="org-variable-name">end</span> = src + size;
+    <span class="org-type">size_t</span> <span class="org-variable-name">loop</span> = size / 16;
+    <span class="org-keyword">static</span> <span class="org-type">uint8_t</span> <span class="org-variable-name">mask_data</span>[16] = {
+        0x00, 0x08
+    };
+    <span class="org-type">__m128i</span> <span class="org-variable-name">mask</span> = _mm_loadu_si128((__m128i <span class="org-keyword">const</span>*)mask_data);
+    <span class="org-keyword">for</span>(<span class="org-type">size_t</span> <span class="org-variable-name">i</span> = 0; i &lt; loop ; i++) {
+        <span class="org-type">__m128i</span> <span class="org-variable-name">a</span> = _mm_loadu_si128((__m128i <span class="org-keyword">const</span>*)src);
+        <span class="org-type">__m128i</span> <span class="org-variable-name">b</span> = _mm_loadu_si128((__m128i <span class="org-keyword">const</span>*)(src+2));
+        <span class="org-type">__m128i</span> <span class="org-variable-name">c</span> = _mm_loadu_si128((__m128i <span class="org-keyword">const</span>*)(src+4));
+        <span class="org-type">__m128i</span> <span class="org-variable-name">d</span> = _mm_loadu_si128((__m128i <span class="org-keyword">const</span>*)(src+6));
+        a = _mm_shuffle_epi8(a, mask);
+        b = _mm_shuffle_epi8(b, mask);
+        c = _mm_shuffle_epi8(c, mask);
+        d = _mm_shuffle_epi8(d, mask);
+        a = _mm_unpacklo_epi16(a, b);
+        c = _mm_unpacklo_epi16(c, d);
+        <span class="org-type">__m128i</span> <span class="org-variable-name">x</span> = _mm_unpacklo_epi32(a, c);
+        src += 8;
+
+        a = _mm_loadu_si128((__m128i <span class="org-keyword">const</span>*)src);
+        b = _mm_loadu_si128((__m128i <span class="org-keyword">const</span>*)(src+2));
+        c = _mm_loadu_si128((__m128i <span class="org-keyword">const</span>*)(src+4));
+        d = _mm_loadu_si128((__m128i <span class="org-keyword">const</span>*)(src+6));
+        a = _mm_shuffle_epi8(a, mask);
+        b = _mm_shuffle_epi8(b, mask);
+        c = _mm_shuffle_epi8(c, mask);
+        d = _mm_shuffle_epi8(d, mask);
+        a = _mm_unpacklo_epi16(a, b);
+        c = _mm_unpacklo_epi16(c, d);
+        <span class="org-type">__m128i</span> <span class="org-variable-name">y</span> = _mm_unpacklo_epi32(a, c);
+        src += 8;
+
+        x = _mm_unpacklo_epi64(x, y);
+        _mm_storeu_si128((<span class="org-type">__m128i</span>*)(dst), x);
+        dst += 16;
+    }
+    <span class="org-keyword">while</span>(src &lt; end) {
+        <span class="org-type">int8_t</span> <span class="org-variable-name">a</span> = (<span class="org-type">int8_t</span>)(*src &amp; 0xff);
+        *dst = a;
+        dst++;
+        src++;
+    }
+}
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org3198f5d" class="outline-2">
+<h2 id="org3198f5d"><span class="section-number-2">5.</span> simd avx512版本</h2>
+<div class="outline-text-2" id="text-5">
+<p>
+在AVX512之前，寄存器内部的shuffle是不能cross 128bit-lane的，我看了好几个shuffle指令都是如此。
+简单地说就是shuffle只允许在一个128bit宽度内进行。这也是为什么上面simd版本没有按照m256去读，因为即便读上来在shuffle的时候，
+也只能得到两个int8放在一起，最后开始要解开成为m128i.
+</p>
+
+<p>
+在AVX512之后，如果CPU支持 AVX512_VBMI 的话，那么就有指令做cross lane的shuffle了，比如 `_mm512_permutex2var_epi8` 这个指令。
+这个指令可以对512-bit的寄存器内部按照8bit任意进行shuffle，这个真是太了不起了。而且按照 <a href="https://software.intel.com/sites/landingpage/IntrinsicsGuide/#text=_mm512_permutex2var_epi8&amp;expand=3876,3965,4262">文档来看</a> CPI只有2，算是比较高效的指令。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-cpp"><span class="org-preprocessor">#ifdef</span> AVX512
+<span class="org-type">void</span> <span class="org-function-name">convert_i64toi8_simd_avx512</span>(<span class="org-type">int64_t</span>* <span class="org-variable-name">RE</span> src, <span class="org-type">int8_t</span> * <span class="org-variable-name">RE</span> dst, <span class="org-type">size_t</span> <span class="org-variable-name">size</span>) {
+    <span class="org-keyword">static</span> <span class="org-type">uint8_t</span> <span class="org-variable-name">mask_data</span>[64] = {
+        0x00, 0x08, 0x10, 0x18, 0x20, 0x28, 0x30, 0x38,
+    };
+    <span class="org-type">size_t</span> <span class="org-variable-name">offset</span> = 0;
+    <span class="org-type">int64_t</span>* <span class="org-variable-name">end</span> = src + size;
+    <span class="org-type">size_t</span> <span class="org-variable-name">loop</span> = size / 8;
+    <span class="org-type">__m512i</span> <span class="org-variable-name">mask</span> = _mm512_loadu_epi8(mask_data);
+    <span class="org-keyword">for</span>(<span class="org-type">size_t</span> <span class="org-variable-name">i</span> = 0; i &lt; loop ; i++) {
+        <span class="org-type">__m512i</span> <span class="org-variable-name">a</span> = _mm512_loadu_epi8(src);
+        <span class="org-type">__m512i</span> <span class="org-variable-name">b</span> = _mm512_permutex2var_epi8(a, mask, a);
+        <span class="org-type">__m128i</span> <span class="org-variable-name">x</span> = _mm512_castsi512_si128(b);
+        _mm_storeu_si64(dst, x);
+        dst += 8;
+        src += 8;
+    }
+    <span class="org-keyword">while</span>(src &lt; end) {
+        <span class="org-type">int8_t</span> <span class="org-variable-name">a</span> = (<span class="org-type">int8_t</span>)(*src &amp; 0xff);
+        *dst = a;
+        dst++;
+        src++;
+    }
+}
+<span class="org-preprocessor">#endif</span>
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgbffa072" class="outline-2">
+<h2 id="orgbffa072"><span class="section-number-2">6.</span> 性能结果</h2>
+<div class="outline-text-2" id="text-6">
+</div>
+<div id="outline-container-org2962526" class="outline-3">
+<h3 id="org2962526"><span class="section-number-3">6.1.</span> clang</h3>
+<div class="outline-text-3" id="text-6-1">
+<p>
+在我的mac上，用clang 12.0.0，分别按照O0, O2, O3编译，O0编译主要是为了看看avx512的效果。
+</p>
+
+<p>
+O0 编译的话，可以看到avx512效果很好，另外pack版本也很好，估计减少了内存和寄存器的倒腾。
+</p>
+<pre class="example" id="org34d140f">
+mbp :: .codes/cc/misc ‹master*› » g++ ConvertI64ToI8Bench.cpp -std=c++17 -mavx512f -mavx512vbmi -DAVX512 -O0
+mbp :: .codes/cc/misc ‹master*› » ./a.out
+native version: N = 1024000, total = 4600, avg = 1.4969ns(per item)
+simd avx512 version: N = 1024000, total = 2622, avg = 0.853231ns(per item)
+simd version: N = 1024000, total = 5611, avg = 1.82589ns(per item)
+simd2 version: N = 1024000, total = 5096, avg = 1.6583ns(per item)
+pack version: N = 1024000, total = 2659, avg = 0.865271ns(per item)
+</pre>
+
+<p>
+O2 编译的话，可以看到native版本就非常好了，和avx512基本持平，其他实现也不差。估计native版本已经展开成为了向量化。
+</p>
+
+<pre class="example" id="org8e49090">
+mbp :: .codes/cc/misc ‹master*› » g++ ConvertI64ToI8Bench.cpp -std=c++17 -mavx512f -mavx512vbmi -DAVX512 -O2
+mbp :: .codes/cc/misc ‹master*› » ./a.out
+native version: N = 1024000, total = 1078, avg = 0.350795ns(per item)
+simd avx512 version: N = 1024000, total = 957, avg = 0.31142ns(per item)
+simd version: N = 1024000, total = 1279, avg = 0.416202ns(per item)
+simd2 version: N = 1024000, total = 1282, avg = 0.417179ns(per item)
+pack version: N = 1024000, total = 1329, avg = 0.432473ns(per item
+</pre>
+
+<p>
+O3 编译的话性能也就差不多了
+</p>
+
+<pre class="example" id="org13e7d86">
+mbp :: .codes/cc/misc ‹master*› » g++ ConvertI64ToI8Bench.cpp -std=c++17 -mavx512f -mavx512vbmi -DAVX512 -O3
+mbp :: .codes/cc/misc ‹master*› » ./a.out
+native version: N = 1024000, total = 1080, avg = 0.351445ns(per item)
+simd avx512 version: N = 1024000, total = 943, avg = 0.306864ns(per item)
+simd version: N = 1024000, total = 1318, avg = 0.428893ns(per item)
+simd2 version: N = 1024000, total = 1353, avg = 0.440283ns(per item)
+pack version: N = 1024000, total = 1393, avg = 0.453299ns(per item)
+</pre>
+</div>
+</div>
+
+<div id="outline-container-org065da2b" class="outline-3">
+<h3 id="org065da2b"><span class="section-number-3">6.2.</span> gcc</h3>
+<div class="outline-text-3" id="text-6-2">
+<p>
+然后在测试机上用gcc(9.2.0) 按照O0, O2, O3编译
+</p>
+
+<p>
+O0 编译的话，同样pack版本效果很好
+</p>
+
+<pre class="example" id="orgb230875">
+doris-sandbox04 :: ~ » g++ ConvertI64ToI8Bench.cpp -mssse3 -O0
+doris-sandbox04 :: ~ » ./a.out
+native version: N = 1024000, total = 6989, avg = 2.27431ns(per item)
+simd version: N = 1024000, total = 9611, avg = 3.12754ns(per item)
+simd2 version: N = 1024000, total = 8860, avg = 2.88315ns(per item)
+pack version: N = 1024000, total = 3799, avg = 1.23624ns(per item)
+</pre>
+
+<p>
+O2 编译的话，simd效果上来了，但是pack依然很好
+</p>
+
+<pre class="example" id="org08246b1">
+doris-sandbox04 :: ~ » g++ ConvertI64ToI8Bench.cpp -mssse3 -O2
+doris-sandbox04 :: ~ » ./a.out
+native version: N = 1024000, total = 2490, avg = 0.810277ns(per item)
+simd version: N = 1024000, total = 1157, avg = 0.376502ns(per item)
+simd2 version: N = 1024000, total = 1229, avg = 0.399932ns(per item)
+pack version: N = 1024000, total = 1393, avg = 0.453299ns(per item)
+</pre>
+
+<p>
+O3 编译的话，不知道为什么pack下来了，但是native版本效果很好，估计是使用向量化
+</p>
+
+<pre class="example" id="org4ad007a">
+doris-sandbox04 :: ~ » g++ ConvertI64ToI8Bench.cpp -mssse3 -O3
+doris-sandbox04 :: ~ » ./a.out
+native version: N = 1024000, total = 1245, avg = 0.405138ns(per item)
+simd version: N = 1024000, total = 1174, avg = 0.382034ns(per item)
+simd2 version: N = 1024000, total = 1175, avg = 0.38236ns(per item)
+pack version: N = 1024000, total = 1864, avg = 0.606569ns(per item)
+</pre>
+</div>
+</div>
+
+<div id="outline-container-org5235b01" class="outline-3">
+<h3 id="org5235b01"><span class="section-number-3">6.3.</span> 结论分析</h3>
+<div class="outline-text-3" id="text-6-3">
+<p>
+有条件的话，还是尽可能地使用simd指令加上O2编译，这个性能是有保证的。
+</p>
+
+<p>
+没有条件的话，那就尽可能地优化算法减少写入，同样在O2编译下，性能也是很有保证的。
+</p>
+
+<p>
+和clang相比，感觉gcc有点问题：
+</p>
+<ul class="org-ul">
+<li>如果不开-O3, 那么native实现都没有办法向量化</li>
+<li>如果开了-O3, 那么pack实现比-O2版本性能还要差（看了下汇编，指令比-O2情况多很多）</li>
+</ul>
+<p>
+这个是比较矛盾的事情，究竟改用-O2还是-O3呢？
+</p>
+</div>
+</div>
+</div>
+</div>
+<div id="content"><!-- DISQUS BEGIN --><div id="disqus_thread"></div><script>/***  RECOMMENDED CONFIGURATION VARIABLES: EDIT AND UNCOMMENT THE SECTION BELOW TO INSERT DYNAMIC VALUES FROM YOUR PLATFORM OR CMS.*  LEARN WHY DEFINING THESE VARIABLES IS IMPORTANT: https://disqus.com/admin/universalcode/#configuration-variables*/var disqus_config = function () {this.page.url = 'https://dirtysalt.github.io/html/convert-array-int64-to-int8.html';this.page.identifier = 'convert-array-int64-to-int8.html';};(function() {var d = document, s = d.createElement('script');s.src = 'https://dirlt.disqus.com/embed.js';s.setAttribute('data-timestamp', +new Date());(d.head || d.body).appendChild(s);})();</script><noscript>Please enable JavaScript to view the <a href="https://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript><!-- DISQUS END --></div></body>
+</html>

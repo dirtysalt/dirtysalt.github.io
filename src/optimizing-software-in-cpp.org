@@ -1,0 +1,372 @@
+#+title: Optimizing software in C++(An optimization guide for Windows, Linux and Mac platforms)
+#+options: num:nil
+
+http://www.agner.org/optimize/
+
+** 1. Introduction
+** 2. Choosing the optimal platform
+主处理器搭配上为特殊任务定制的协处理器可以有效地提高性能，而FPGA将有效地降低了制作协处理器的成本。
+
+It is possible to implement a microprocessor in an FPGA as a so-called soft processor. Such a soft processor is much slower than a dedicated microprocessor and therefore not advantageous by itself. But a solution where a soft processor activates critical application- specific instructions that are coded in a hardware definition language in the same chip can be a very efficient solution in some cases. An even more powerful solution is the combination of a dedicated microprocessor core and an FPGA in the same chip. Such hybrid solutions are now used in some embedded systems.
+
+64位处理器相比32位在CPU密集型任务上可以有5-10%的性能提升，并且支持更大内存，而其他情况则没有太大差异，真是免费的午餐。
+
+64-bit operating systems are common today. These system are capable of running both 32- bit and 64-bit programs. The 64-bit systems can improve the performance by 5-10% for some CPU-intensive applications with many function calls and for applications that use large amounts of RAM memory. If the bottleneck is elsewhere, then there is no difference in performance between 32-bit and 64-bit systems. Applications that use large amounts of memory will benefit from the larger address space of the 64-bit systems.
+
+MacOSX上默认使用PIC方式来编译，PIC在函数初次调用上的时候有符号解析的时间，如果想继续提升效率则可以考虑静态编译（PIC代码是为编译出动态库设计的）
+
+The Intel-based Mac OS X operating system is based on BSD, but the compiler uses position-independent code and lazy binding by default, which makes it less efficient. The performance can be improved by using static linking and by not using position-independent code (option -fno-pic).
+
+
+下表是64位和32位系统的对比。粗看下来就是64位系统都是优势，更多的寄存器，支持更大的内存，支持更大的寻址空间，缺点就是指令上稍微大些不太利于缓存。
+
+64 bit systems have several advantages over 32 bit systems:
+- The number of registers is doubled. This makes it possible to store intermediate data and local variables in registers rather than in memory.
+- Function parameters are transferred in registers rather than on the stack. This makes function calls more efficient.
+- The size of the integer registers is extended to 64 bits. This is only an advantage in applications that can take advantage of 64-bit integers.
+- The allocation and deallocation of big memory blocks is more efficient.
+- The SSE2 instruction set is supported on all 64-bit CPUs and operating systems.
+- The 64 bit instruction set supports self-relative addressing of data. This makes position-independent code more efficient.
+64 bit systems have the following disadvantages compared to 32 bit systems:
+- Pointers, references, and stack entries use 64 bits rather than 32 bits. This makes data caching less efficient.
+- Access to static or global arrays require a few extra instructions for address calculation in 64 bit mode if the image base is not guaranteed to be less than 2^31. This extra cost is seen in 64 bit Windows and Mac programs but rarely in Linux.
+- Address calculation is more complicated in a large memory model where the combined size of code and data can exceed 2 Gbytes. This large memory model is hardly ever used, though.
+- Some instructions are one byte longer in 64 bit mode than in 32 bit mode.
+- Some 64-bit compilers are inferior to their 32-bit counterparts.
+
+64位的Linux会比Windows使用更多的寄存器来传递函数参数，可是为什么Windows不这么做呢？
+
+The similarity between the operating systems disappears when running in 64-bit mode because the function calling conventions are different. 64-bit Windows allows only four function parameters to be transferred in registers, whereas 64-bit Linux, BSD and Mac allow up to fourteen parameters to be transferred in registers (6 integer and 8 floating point). There are also other details that make function calling more efficient in 64-bit Linux than in 64-bit Windows (See page 49 and manual 5: "Calling conventions for different C++ compilers and operating systems"). An application with many function calls may run slightly faster in 64-bit Linux than in 64-bit Windows. The disadvantage of 64-bit Windows may be mitigated by making critical functions inline or static or by using a compiler that can do whole program optimization.
+
+使用平台独立中间语言（Java Bytecode，CIL）好处是代码会更加紧凑。但是这个紧凑仅仅是对于发布而言，而不是对于运行时而言。使用JIT可以有效地提升性能，但是JIT的runtime本身开销就比较大。此外因为托管代码的引入抽象层，而JIT本身行为也非常复杂，所以造成手动地对进行某种优化会非常困难。
+
+The reason for using an intermediate code is that it is intended to be platform-independent and compact. The biggest disadvantage of using an intermediate code is that the user must install a large runtime framework for interpreting or compiling the intermediate code. This framework typically uses much more resources than the code itself.
+
+Another disadvantage of intermediate code is that it adds an extra level of abstraction which makes detailed optimization more difficult. On the other hand, a just-in-time compiler can optimize specifically for the CPU it is running on, while it is more complicated to make CPU- specific optimizations in precompiled code.
+
+在Visual Studio上C++也可以被编译成为托管代码！！
+
+Development in C++ is quite efficient thanks to the availability of powerful development tools. One popular development tool is Microsoft Visual Studio. This tool can make two different implementations of C++, directly compiled code and intermediate code for the common language runtime of the .NET framework. Obviously, the directly compiled version is preferred when speed is important.
+
+对于Intel这种行为感到强烈鄙视！！
+
+The compiler supports automatic CPU dispatching to make multiple code versions for different Intel CPUs. The most important disadvantage of the Intel compiler is that the code is optimized for a specific Intel CPU. The compiled code checks whether it is running on an Intel CPU. If another brand of CPU (AMD or VIA) is detected, then it will run a different branch of the code with reduced speed, even if the optimal code branch is compatible with the processor it is running on. It is possible to avoid this problem in some cases by bypassing the CPU-dispatcher that checks whether the code is running on an Intel CPU. See page 139 for details).
+
+作者自己编写的库函数集合，可以作为学习材料
+
+My own function library made for demonstration purposes. Available from http://www.agner.org/optimize/asmlib.zip. Currently includes optimized versions of memory and string functions and some other functions that are difficult to find elsewhere. Faster than most other libraries when running on the newest processors. Supports all x86 and x86-64 platforms.
+
+** 3. Finding the biggest time consumers
+
+下面是几种性能剖分方式：指令，调试，时间采样，事件采样
+
+There are several different profiling methods:
+- Instrumentation: The compiler inserts extra code at each function call to count how many times the function is called and how much time it takes.
+- Debugging. The profiler inserts temporary debug breakpoints at every function or every code line.
+- Time-based sampling: The profiler tells the operating system to generate an interrupt, e.g. every millisecond. The profiler counts how many times an interrupt occurs in each part of the program. This requires no modification of the program under test, but is less reliable.
+- Event-based sampling: The profiler tells the CPU to generate interrupts at certain events, for example every time a thousand cache misses have occurred. This makes it possible to see which part of the program has most cache misses, branch mispredictions, floating point exceptions, etc. Event-based sampling requires a CPU-specific profiler. For Intel CPUs use Intel VTune, for AMD CPUs use AMD CodeAnalyst.
+
+
+注意区分吞吐量和延迟，对于CPU来说也是一样。在加入了流水线之后（尤其是深度流水），指令的延迟和吞吐量就出现了偏离。一个指令可能会执行10个周期，但是如果前后指令不出现依赖的话，那么理论上实际的吞吐量可以达到一个指令1周期。乱序执行以及分支预测技术，也是为了提高流水线效率，而被设计出来的。
+
+There is an important distinction between the latency and the throughput of an execution unit. For example, it may take 3 - 5 clock cycles to do a floating point addition on a modern CPU. But it is possible to start a new floating point addition every clock cycle. This means that if each addition depends on the result of the preceding addition then you will have only one addition every three clock cycles. But if all the additions are independent then you can have one addition every clock cycle.
+
+现代CPU执行单元被分成为了许多部分，比如整数计算，浮点加法，浮点乘法等等，并且可能这些部分还会存在冗余。这些部分是相互独立的，为了提升并行度，在指令上我们最好可以将整数计算和浮点计算进行搭配，来有效使用CPU。
+
+The execution core of modern microprocessors is split between several execution units. Typically, there are two or more integer units, one or two floating point addition units, and one or two floating point multiplication units. This means that it is possible to do an integer addition, a floating point addition, and a floating point multiplication at the same time.
+
+A code that does floating point calculations should therefore preferably have a balanced mix of additions and multiplications. Subtractions use the same unit as additions. Divisions take longer time. It is possible to do integer operations in-between the floating point operations without reducing the performance because the integer operations use different execution units. For example, a loop that does floating point calculations will typically use integer operations for incrementing a loop counter, comparing the loop counter with its limit, etc. In most cases, you can assume that these integer operations do not add to the total computation time.
+
+** 4. Performance and usability
+** 5. Choosing the optimal algorithm
+** 6. Development process
+** 7. The efficiency of different C++ constructs
+
+关于浮点寄存器的变化。最开始intel提供的是x87浮点协处理器，操作方式是栈式的，所以好处是指令比较精简，但是缺点就是对编译器的限制太大。x87寄存器是80bits的，精度上没有任何问题，并且提供了许多内置的数学计算指令，在浮点本身精度转换上效率可以，但是在整数和浮点转换上效率不好。
+
+Modern microprocessors in the x86 family have two different types of floating point registers and correspondingly two different types of floating point instructions. Each type has advantages and disadvantages.
+
+The original method of doing floating point operations involves eight floating point registers organized as a register stack. These registers have long double precision (80 bits). The advantages of using the register stack are:
+- All calculations are done with long double precision.
+- Conversions between different precisions take no extra time.
+- There are intrinsic instructions for mathematical functions such as logarithms and trigonometric functions.
+- The code is compact and takes little space in the code cache.
+The register stack also has disadvantages:
+- It is difficult for the compiler to make register variables because of the way the register stack is organized.
+- Floating point comparisons are slow unless the Pentium-II or later instruction set is enabled.
+- Conversions between integers and floating point numbers is inefficient.
+- Division, square root and mathematical functions take more time to calculate when long double precision is used.
+
+在出了SSE之后，提供了一套和整形寄存器类似使用方式的寄存器组(XMM,YMM,ZMM)，这些寄存器尺寸很大所以适合做并行计算。
+
+A newer method of doing floating point operations involves eight or more vector registers (XMM, YMM, or ZMM) which can be used for multiple purposes. Floating point operations are done with single or double precision, and intermediate results are always calculated with the same precision as the operands. The advantages of using the vector registers are:
+- It is easy to make floating point register variables.
+- Vector operations are available for doing parallel calculations on multiple variables in vector registers (see page 112).
+Disadvantages are:
+- Long double precision is not supported.
+- The calculation of expressions where operands have mixed precision require precision conversion instructions which can be quite time-consuming (see page 150).
+- Mathematical functions must use a function library, but this is often faster than the intrinsic hardware functions.
+
+The x87 floating point registers are available in all systems that have floating point capabilities (except in device drivers for 64-bit Windows). The XMM, YMM, and ZMM registers require the SSE, AVX, and AVX512 instruction set, respectively. See page 131 for how to test for the availability of these instruction sets.
+
+关于单精度和双精度浮点的选择上，主要还是依照精度本身而定。单精度在某些操作上会快些，并且因为体积更小缓存效果更好。浮点加法在3-6周期，乘法4-8周期，除法14-45周期，类型转换在2-15周期（除非使用x87, 但是应该也不怎么用了吧）。有符号整数转为浮点使用4-16个周期，而浮点转回去则需要使用50-100个周期，之所以这么大是因为C/C++转换使用截断而非round，如果使用汇编进行round的话，那么速度会快不少（也就是说，不要用C/C++内置的浮点到整形的类型转换）。
+
+In most cases, double precision calculations take no more time than single precision as long as they are not joined into vectors. Single precision division, square root, and mathematical functions are calculated faster than double precision when the XMM registers are used, while the speed of addition, subtraction, multiplication, etc. is still the same regardless of precision on most processors when vector operations are not used.
+
+You may use double precision without worrying too much about the costs if it is good for the application. You may use single precision if you have big arrays and want to get as much data as possible into the data cache. Single precision is good if you can take advantage of vector operations, as explained on page 112.
+
+Floating point addition takes 3 - 6 clock cycles, depending on the microprocessor. Multiplication takes 4 - 8 clock cycles. Division takes 14 - 45 clock cycles. Floating point comparisons and floating point to integer conversions are inefficient when the old x87 floating point registers are used.
+
+Conversions between float, double and long double take no extra time when the floating point register stack is used. It takes between 2 and 15 clock cycles (depending on the processor) when the XMM registers are used.
+
+Conversion of a signed integer to a float or double takes 4 - 16 clock cycles, depending on the processor and the type of registers used. Conversion of an unsigned integer takes longer time. It is faster to first convert the unsigned integer to a signed integer if there is no risk of overflow.
+
+Conversion of a floating point number to an integer takes a very long time unless the SSE2 or later instruction set is enabled. Typically, the conversion takes 50 - 100 clock cycles. The reason is that the C/C++ standard specifies truncation so the floating point rounding mode has to be changed to truncation and back again. Use rounding instead of truncation and make a round function using assembly language. See page 150 for details about rounding.
+
+分支预测正确跳转占用0-2个时钟周期，而错误的话占用12-25个时钟周期。为了加快分支跳转，有个特殊的cache叫做branch target buffer. 但是因为容量有效，所以如果分支或者是函数调用特别多的话，那么因为冲突也会造成性能损失，所以在关键代码部分要减少分支和函数调用。
+
+A branch instruction takes typically 0 - 2 clock cycles in the case that the microprocessor has made the right prediction. The time it takes to recover from a branch misprediction is approximately 12 - 25 clock cycles, depending on the processor. This is called the branch misprediction penalty.
+
+The target of branches and function calls are saved in a special cache called the branch target buffer. Contentions in the branch target buffer can occur if a program has many branches or function calls. The consequence of such contentions is that branches can be mispredicted even if they otherwise would be predicted well. Even direct function calls can be mispredicted for this reason. A program with many branches and function calls in the critical part of the code can therefore suffer from mispredictions.
+
+64位系统下面Linux和Windows的传参方式对比。相比32位，64位有更多的寄存器可以用来传递参数。
+
+Parameter transfer is more efficient in 64-bit mode than in 32-bit mode, and more efficient in 64-bit Linux than in 64-bit Windows. In 64-bit Linux, the first six integer parameters and the first eight floating point parameters are transferred in registers, totaling up to fourteen register parameters. In 64-bit Windows, the first four parameters are transferred in registers, regardless of whether they are integers or floating point numbers. Therefore, 64-bit Linux is more efficient than 64-bit Windows if functions have more than four parameters. There is no difference between 32-bit Linux and 32-bit Windows in this respect.
+
+The number of registers available for floating point and vector variables is 8 registers in 32- bit mode, and 16 registers in 64-bit mode. It is further increased to 32 registers in 64 bit mode when the AVX512 instruction set is enabled. A high number of registers improves the performance because the compiler can store variables in registers rather than in memory.
+
+上下文切换开销是显著的。系统在会分配给前台任务时间片是30ms，后台任务时间片10ms。这个数量级别可以作为参考。
+
+Threads are used for doing two or more jobs simultaneously or seemingly simultaneously. Modern CPUs have multiple cores that makes it possible to run multiple threads simultaneously. Each thread will get time slices of typically 30 ms for foreground jobs and 10 ms for background jobs when there are more threads than CPU cores. The context switches after each time slice are quite costly because all caches have to adapt to the new context. It is possible to reduce the number of context switches by making longer time slices. This will make applications run faster at the cost of longer response times for user input.
+
+** 8. Optimizations in the compiler
+
+编译器优化的几种重要（不完全）技术：
+
+How compilers optimize
+- Function inlining
+- Constant folding and constant propagation
+- Pointer elimination
+- Common subexpression elimination
+- Register variables
+  - The maximum number of integer register variables is approximately six in 32-bit systems and fourteen in 64-bit systems.
+  - The maximum number of floating point register variables is eight in 32-bit systems and sixteen in 64-bit systems.
+  - Some compilers have difficulties making floating point register variables in 32-bit systems unless the SSE2 (or later) instruction set is enabled.
+- Live range analysis
+- Join identical branches
+- Eliminate jumps
+- Loop unrolling
+- Loop invariant code motion
+- Induction variables
+- Scheduling
+- Algebraic reductions
+- Devirtualization
+
+阻碍编译器进行优化的几种原因：
+
+Obstacles to optimization by compiler
+- Cannot optimize across modules
+- Pointer aliasing
+  - It is also possible to tell the compiler that a specific pointer does not alias anything by using the keyword `__restrict` or `__restrict__`, if supported by the compiler.
+  - We can never be sure that the compiler takes the hint about no pointer aliasing. The only way to make sure that the code is optimized is to do it explicitly.
+- Dynamic memory allocation
+- Pure functions
+  - Unfortunately, the compiler cannot know that a function is pure if the function is defined in a different module or a function library.
+  - __attribute__((const))
+- Virtual functions and function pointers
+- Algebraic reduction
+- Floating point induction variables
+- Inlined functions have a non-inlined copy
+
+其中关于 "pointer aliasing" 如果编译器没有办法认为不同指针指向不同内存区域的时候，那么就没有办法把指针内容放到寄存器当中。比如下面这段程序，编译器没有办法确定 `*p` 和 `a` 是否指向同样一个区域，
+所以这个 `*p` 每次都需要从内存里面进行载入，而且也没有办法将 `*p+2` 这个表达式从循环中提出去。这个例子中如果p不指向a中的元素的话，那么就可以增加 `__restrict__` 关键字。
+
+#+BEGIN_SRC cpp
+// Example 8.21
+void Func1 (int a[], int * p) {
+  int i;
+  for (i = 0; i < 100; i++) {
+    a[i] = *p + 2;
+  }
+}
+void Func2() {
+  int list[100];
+  Func1(list, &list[8]);
+}
+#+END_SRC
+
+
+想做interprocedure optimization，有好几种方式。据说clang可以在link阶段做优化，但是估计优化程度可能有效。除了编译器生成特定的中间格式之外，把所有的.cpp放在一起进行编译也是个比较独辟蹊径的办法。据说sqlite就是这么做的，性能可以提升5-10%（不准确）。
+
+Some compilers have support for whole program optimization. This works by compiling in two steps. All source files are first compiled to an intermediate file format instead of the usual object file format. The intermediate files are then linked together in the second step where the compilation is finished. Register allocation and function inlining is done at the second step. The intermediate file format is not standardized. It is not even compatible with different versions of the same compiler. It is therefore not possible to distribute function libraries in this format.
+
+Other compilers offer the possibility of compiling multiple .cpp files into a single object file. This enables the compiler to do cross-module optimizations when interprocedural optimization is enabled. A more primitive, but efficient, way of doing whole program optimization is to join all source files into one by means of #include directives and declare all functions static or inline. This will enable the compiler to do interprocedural optimizations of the whole program.
+
+下面还有几个关于编译器优化的建议：关闭异常处理，关闭RTTI，关闭浮点计算严格模式，去除指针别名，不使用ebp/rbp来增加寄存器使用
+- The code becomes more efficient when there is no exception handling. It is recommended to turn off support for exception handling unless the code relies on structured exception handling and you want the code to be able to recover from exceptions.
+- It is recommended to turn off support for runtime type identification (RTTI).
+- It is recommended to enable fast floating point calculations or turn off requirements for strict floating point calculations unless the strictness is required.
+- Use the option for "assume no pointer aliasing" if you are sure the code has no pointer aliasing.
+- Many compilers have an option for "standard stack frame" or "frame pointer". The standard stack frame is used for debugging and exception handling. Omitting the standard stack frame makes function calls faster and makes an extra register available for other purposes. This is advantageous because registers is a scarce resource. Do not use a stack frame unless your program relies on exception handling.
+
+** 9. Optimizing memory access
+
+SSE/SSE2提供指令进行显示的缓存控制(Explicit cache control), 可以决定内存是否需要预期，或者是写入内存的时候绕过cache. 比如prefetch的指令是 `_mm_prefetch` (SSE), 而写入8个字节绕过cache的指令是 `_mm_stream_si64(SSE2)`.
+可能prefetch效果不是特别大，通常CPU在访问内存的时候就自动做了，write bypass cache倒是可以用用。
+
+The prefetch instruction can be used for fetching a cache line that we expect to use later in the program flow. However, this did not improve the execution speed in any of the examples I have tested. The reason is that modern processors prefetch data automatically thanks to out-of-order execution and advanced prediction mechanisms. Modern microprocessors are able to automatically prefetch data for regular access patterns containing multiple streams with different strides. Therefore, you do not have to prefetch data explicitly if data access can be arranged in regular patterns with fixed strides.
+
+** 10. Multithreading
+** 11. Out of order execution
+
+对于充分使用CPU OOO的建议：确保没有太长的依赖链条，混合各种类型的操作，避免整数和浮点的类型转换。
+
+In general, the out-of-order execution mechanism works automatically. However, there are a couple of things that the programmer can do to take maximum advantage of out-of-order execution. The most important thing is to avoid long dependency chains. Another thing that you can do is to mix different kinds of operations in order to divide the work evenly between the different execution units in the CPU. It can be advantageous to mix integer and floating point calculations as long as you do not need conversions between integers and floating point numbers. It can also be advantageous to mix floating point addition with floating point multiplication, to mix simple integer with vector integer operations, and to mix mathematical calculations with memory access.
+
+** 12. Using vector operations
+之前调研过x86 simd指令集并且整理过一篇[[file:simd.org][文章]]，但是看起来里面也是没啥干货。
+
+CPU涉及到SIMD的寄存器大小在不断地增长，SSE2/XMM(128bits), AVX/YMM(256bits), AVX512/ZMM(512bits). 充分利用这些寄存器和指令也可以有效地提高计算速度。
+
+The vector operations use a set of special vector registers. The maximum size of each vector register is 128 bits (XMM) if the SSE2 instruction set is available, 256 bits (YMM) if the AVX instruction set is supported by the microprocessor, and 512 bits when the AVX512 instruction set is available.
+
+现代优化编译器Gnu/Clang都会自动进行矢量化，但是必须符合某些要求，下面就是这些要求的列表。我记得clang已经可以在编译器里面打印消息说，那些操作已经被矢量化了，以及那些操作为什么不能被矢量化，这种信息对改进程序非常有帮助。
+我粗略地总结一下就是：好的编译器，打开编译选项，减少浮点操作限制，优化内存布局，循环次数常量（应该也可以放开吧），避免指针别名，减少branch以及complexity包括不要做函数调用以及查表。
+
+The automatic vectorization works best if the following conditions are satisfied:
+1. Use a compiler with good support for automatic vectorization, such as Gnu, Clang, or Intel.
+2. Use the latest version of the compiler. The compilers are becoming better and better at vectorization.
+3. Use appropriate compiler options to enable the desired instruction set (/arch:SSE2, /arch:AVX etc. for Windows, -msse2, -mavx512f, etc. for Linux)
+4. Use the less restrictive floating point options. For Gnu and Clang compilers, use the options -O3 -fno-trapping-math -fno-math-errno -fno-signed-zeros (-ffast-math works as well, but functions like isnan(x) do not work under -ffast-math).
+5. Align arrays and big structures by 16 for SSE2, preferably 32 for AVX and preferably 64 for AVX512.
+6. The loop count should preferably be a constant that is divisible by the number of elements in a vector.
+7. If arrays are accessed through pointers so that the alignment is not visible in the scope of the function where you want vectorization then follow the advice given above.
+8. If the arrays or structures are accessed through pointers or references then tell the compiler explicitly that pointers do not alias, if appropriate. See the compiler documentation for how to do this.
+9. Minimize the use of branches at the vector element level.
+10. Avoid table lookup at the vector element level.
+
+The compiler may fail to vectorize the code, or make the code unnecessarily complicated for a number of reasons. The most important obstacles to automatic vectorization are listed here:
+- The compiler cannot rule out that data pointers are pointing to overlapping or aliasing addresses
+- The compiler cannot rule out that not-taken branches will generate exceptions or other side effects
+- The compiler does not know whether the size of an array is a multiple of the vector size
+- The compiler does not know whether data structures are properly aligned
+- Data need to be rearranged to fit into vectors
+- The code is too complex
+- The code calls external functions that are not available in vector versions
+- The code uses lookup tables
+
+上面限制还是颇多的，更好的方式还是自己显示地使用SIMD进行优化。写汇编不行的话，用 intrinsic functions 就简单多了。要是觉得使用 intrisic functions 还麻烦的话，还可以使用 vector classes 这个使用起来基本就像是写普通的C++代码。
+
+The advantages of vector classes are:
+- You can specify explicitly what part of the code to vectorize, and how
+- You can overcome the obstacles to automatic vectorization listed on page 116
+- The code often becomes simpler than what the compiler would do because the compiler has to take care of special cases that may not be relevant in your case
+- The code is simpler and more readable than assembly code or intrinsic functions, yet equally efficient.
+
+Various libraries of predefined vector classes are currently available, including one from Intel and one from me. My vector class library (VCL) has many features, see https://github.com/vectorclass. The Intel vector class library has few features and is rarely updated.
+
+关于vector math libraries作者提到了两类：long/short. 我理解一个简单的区别就是（瞎猜的），short更关注底层函数使用，而long更加关注高层函数比如矩阵操作。long在最底层还是会使用到short的东西，但是会在计算方法上也做许多的优化。
+
+There are two different kinds of vector math libraries: long vector libraries and short vector libraries. To explain the difference, let's say that you want to calculate the same function on a thousand numbers. With a long vector library, you are feeding an array of thousand numbers as a parameter to the library function, and the function stores the thousand results in another array. The disadvantage of using a long vector library is that if you are doing a sequence of calculations then you have to store the intermediate result of each step of the sequence in a temporary array before calling the function for the next step. With a short vector library, you divide the data set into sub-vectors that fit the size of the vector registers in the CPU. If the vector registers can hold e.g. four numbers, then you have to call the library function 250 times with four numbers at a time packed into a vector register. The library function will return the result in a vector register which can be fed directly to the next step in the sequence of calculations without the need to store intermediate results in RAM memory. This may be faster despite the extra function calls, because the CPU can do calculations while simultaneously prefetching the code of the next function. However, the short vector method may be at a disadvantage if the sequence of calculations forms a long dependency chain. We want the CPU to start calculations on the second sub-vector before it has finished the calculations on the first sub-vector. A long dependency chain may fill up the queue of pending instructions in the CPU and prevent it from fully utilizing its out-of- order calculation capabilities.
+
+** 13. Making critical code in multiple versions for different instruction sets
+
+在做CPU dispatching的时候需要考虑到虚拟化技术，所以唯一可靠地知道CPU能力的指令就是 `CPUID`. 作者在后面还建议，不要试图去判断CPU的品牌和型号，而应该关注在CPU本身所提供的能力上：是否支持SSE,SSE2,AVX.
+
+Ignoring virtualization. The time when the CPUID instruction was certain to truly represent a known CPU model is over. Virtualization is quite common today. A virtual processor may have a reduced number of cores in order to reserve resources for other virtual processors on the same machine. The virtual processor may be given a false model number to reflect this or for the sake of compatibility with some legacy software. It may even have a false vendor string. In the future, we may also see emulated processors and FPGA soft cores that do not correspond to any known hardware CPU. These virtual processors can have any brand name and model number. The only CPUID information that we can surely rely on is the feature information, such as supported instruction sets and cache sizes.
+
+永远要针对未来会被使用的CPU进行优化，而不是针对那些将要被淘汰的CPU。
+
+In difficult cases like these, it is important to remember that your code is likely to run most of its time on processors that were unknown at the time it was programmed. Therefore, it is important to consider which method is likely to work best on future processors, and choose this method for all unknown processors that support the necessary instruction set. It is rarely worth the effort to make a CPU dispatcher based on complicated criteria or lists of specific CPU models if the problem is likely to go away in the future due to general improvements in microprocessor hardware design.
+
+** 14. Specific optimization topics
+
+从浮点转到整数，如果进行截断并且不适用SSE2的话，上面提到大约需要50-100个周期，但是这里说需要40个周期，姑且就认为是50个周期吧。在32bits下面SSE2默认不是打开的，而64bits下面是开的，所以64bits下面就不要考虑截断还是rounding. 在32bits下面，如果没有SSE2，但是使用rounding的话，可以只使用13个周期。32bits下面的rounding其实使用的是x87浮点处理器，而在64bits下面SSE2/xmm就自带了rouding指定。
+
+According to the standards for the C++ language, all conversions from floating point numbers to integers use truncation towards zero, rather than rounding. This is unfortunate because truncation takes much longer time than rounding unless the SSE2 instruction set is used. It is recommended to enable the SSE2 instruction set if possible. SSE2 is always enabled in 64-bit mode.
+
+A conversion from floating point to integer without SSE2 typically takes 40 clock cycles. If you cannot avoid conversions from float or double to int in the critical part of the code, then you may improve efficiency by using rounding instead of truncation. This is approximately three times faster. The logic of the program may need modification to compensate for the difference between rounding and truncation.
+
+In 64-bit mode or when the SSE2 instruction set is enabled there is no difference in speed between rounding and truncation.
+
+#+BEGIN_SRC cpp
+// Example 14.19
+static inline int lrint (double const x) { // Round to nearest integer
+int n;
+#if defined(__unix__) || defined(__GNUC__)
+// 32-bit Linux, Gnu/AT&T syntax:
+__asm ("fldl %1 \n fistpl %0 " : "=m"(n) : "m"(x) : "memory" ); #else
+// 32-bit Windows, Intel/MASM syntax: __asm fld qword ptr x;
+__asm fistp dword ptr n;
+    #endif
+       return n;
+}
+
+// Example 14.21. // Only for SSE2 or x64 #include <emmintrin.h>
+static inline int lrintf (float const x) { return _mm_cvtss_si32(_mm_load_ss(&x));}
+static inline int lrint (double const x) { return _mm_cvtsd_si32(_mm_load_sd(&x));}
+#+END_SRC
+
+数学库实现上，硬件最好只提供基本的快速操作比如SSE2指令，让软件来完成具体函数实现，是更好的方法。
+
+The most common mathematical functions such as logarithms, exponential functions, trigonometric functions, etc. are implemented in hardware in the x86 CPUs. However, a software implementation is faster than the hardware implementation in most cases when the
+SSE2 instruction set is available. The best compilers use the software implementation if the SSE2 instruction set is enabled.
+
+The advantage of using a software implementation rather than a hardware implementation of these functions is higher for single precision than for double precision. But the software implementation is faster than the hardware implementation in most cases, even for double precision.
+
+
+关于PIC，我之前写过一篇相关[[file:pic.org][文章]]，但是对这个东西我理解依旧是停留在表面。关于动态链接库中如何解决地址问题，Windows和Linux/MacOS使用了两种不同的方式，Windows使用的是Relocation, 而Linux/MacOSX使用的是PIC.
+
+The memory address at which a dynamic library is loaded cannot be determined in advance, because a fixed address might clash with another dynamic library requiring the same address. There are two commonly used methods for dealing with this problem:
+1. Relocation. All pointers and addresses in the code are modified, if necessary, to fit the actual load address. Relocation is done by the linker and the loader.
+2. Position-independent code. All addresses in the code are relative to the current position.
+
+Windows DLLs use relocation. The DLLs are relocated by the linker to a specific load address. If this address is not vacant then the DLL is relocated (rebased) once more by the loader to a different address. A call from the main executable to a function in a DLL goes through an import table or a pointer. A variable in a DLL can be accessed from main through an imported pointer, but this feature is seldom used. It is more common to exchange data or pointers to data through function calls. Internal references to data within the DLL use absolute references in 32 bit mode and mostly relative references in 64 bit mode. The latter is slightly more efficient because relative references do not need relocation at load time.
+
+Shared objects in Unix-like systems use position-independent code by default. This is less efficient than relocation, especially in 32-bit mode. The next chapter describes how this works and suggests methods for avoiding the costs of position-independent code.
+
+** 15. Metaprogramming
+** 16. Testing speed
+
+如果关注CPU效率那么就看best case也就是非初次情况下时钟耗费，而如果关注cache效率那么就看worst case也就是初次启动情况下时钟耗费。为了减少任务切换带来的影响，可以提高任务的优先级别。此外有些CPU是会变频运行的，所以光看外部时间就不要太靠谱，最好的方式还是通过CPU内部计数器器来观察所花费的核心时钟周期，这个数值是和运行频率无关的。
+
+The measured time is interpreted in the following way. The first count is usually higher than the subsequent counts. This is the time it takes to execute CriticalFunction when code and data are not cached. The subsequent counts give the execution time when code and data are cached as good as possible. The first count and the subsequent counts represent the "worst case" and "best case" values. Which of these two values is closest to the truth depends on whether CriticalFunction is called once or multiple times in the final program and whether there is other code that uses the cache in between the calls to CriticalFunction. If your optimization effort is concentrated on CPU efficiency then it is the "best case" counts that you should look at to see if a certain modification is profitable. On the other hand, if your optimization effort is concentrated on arranging data in order to improve cache efficiency, then you may also look at the "worst case" counts. In any event, the clock counts should be multiplied by the clock period and by the number of times CriticalFunction is called in a typical application to calculate the time delay that the end user is likely to experience.
+
+Occasionally, the clock counts that you measure are much higher than normal. This happens when a task switch occurs during execution of CriticalFunction. You cannot avoid this in a protected operating system, but you can reduce the problem by increasing the thread priority before the test and setting the priority back to normal afterwards.
+
+The clock counts are often fluctuating and it may be difficult to get reproducible results. This is because modern CPUs can change their clock frequency dynamically depending on the work load. The clock frequency is increased when the work load is high and decreased when the work load is low in order to save power. There are various ways to get more reproducible time measurements:
+- warm up the CPU by giving it some heavy work to do immediately before the code to test.
+- disable power-save options in the BIOS setup.
+- on Intel CPUs: use the core clock cycle counter (see below)
+
+For my own research, I have developed a test tool for using the performance monitor counters. My test tool supports both Intel, AMD and VIA processors, and it is available from https://www.agner.org/optimize/testp.zip. This tool is not a profiler. It is not intended for finding hot spots, but for studying a piece of code once the hot spots have been identified.
+
+A particularly useful performance monitor counter in Intel processors is called core clock cycles. The core clock cycles counter is counting clock cycles at the actual clock frequency that the CPU core is running at, rather than the external clock. This gives a measure that is almost independent of changes in the clock frequency. The core clock cycle counter is very useful when testing which version of a piece of code is fastest because you can avoid the problem that the clock frequency goes up and down.
+
+Remember to insert a switch in your program to turn off the reading of the counters when you are not testing. Trying to read the performance monitor counters when they are disabled will crash the program.
+
+如果要针对最坏情况进行性能测试的话，下面是一些建议：
+
+Each of the following methods could possibly be relevant when testing worst-case performance:
+- The first time you activate a particular part of the program, it is likely to be slower than the subsequent times because of lazy loading of the code, cache misses and branch mispredictions.
+- Test the whole software package, including all runtime libraries and frameworks, rather than isolating a single function. Switch between different parts of the software package in order to increase the likelihood that certain parts of the program code are uncached or even swapped to disk.
+- Software that relies on network resources and servers should be tested on a network with heavy traffic and a server in full use rather than a dedicated test server.
+- Use large data files and databases with lots of data.
+- Use an old computer with a slow CPU, an insufficient amount of RAM, a lot of irrelevant software installed, a lot of background processes running, and a fragmented hard disk.
+- Test with different brands of CPUs, different types of graphics cards, etc.
+- Use an antivirus program that scans all files on access.（减少操作系统对文件缓存影响）
+- Run multiple processes or threads simultaneously. If the microprocessor has hyperthreading, then try to run two threads in each processor core.
+- Try to allocate more RAM than there is, in order to force the swapping of memory to disk.
+- Provoke cache misses by making the code size or data used in the innermost loop bigger than the cache size. Alternatively, you may actively invalidate the cache. The operating system may have a function for this purpose, or you may use the _mm_clflush intrinsic function. （通过指令强制cache失效）
+- Provoke branch mispredictions by making the data more random than normal.（使用随机数据来触发分支误判）
+
+** 17. Optimization in embedded systems
+
+嵌入式系统的CPU相比服务器CPU，许多特性是没有的，所以就没有必要做这方面优化了。
+
+Most of the advice in the rest of the present manual is also relevant to small devices, but there are some differences due to the design of small microcontrollers:
+- Smaller microcontrollers have no branch prediction (see p. 43). There is no need to take branch prediction into account in the software.
+- Smaller microcontrollers have no cache (see p. 89). There is no need to organize data to optimize caching.
+- Smaller microcontrollers have no out-of-order execution. There is no need to break down dependency chains (see p. 21).
+
+** 18. Overview of compiler options

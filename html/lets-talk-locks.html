@@ -1,0 +1,132 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Let’s talk locks!</title>
+<meta name="author" content="dirtysalt" />
+<meta name="generator" content="Org Mode" />
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content" class="content">
+<h1 class="title">Let’s talk locks!</h1>
+<p>
+<a href="https://www.infoq.com/presentations/go-locks/">https://www.infoq.com/presentations/go-locks/</a>
+</p>
+
+<p>
+使用spinlokc容易空转CPU，所以为了避免浪费CPU有时候需要陷入到kernel里面挂起，linux下面可以使用futex来做到。
+</p>
+
+<p>
+使用CAS/spinlock的开销大致如下
+</p>
+<ul class="org-ul">
+<li>普通操作大约2ns</li>
+<li>1个线程CAS操作大约13ns</li>
+<li>12个线程CAS操作大约110ns（完全序列化，没有context switch时间）</li>
+</ul>
+
+
+<div id="org6f0e442" class="figure">
+<p><img src="../images/locks-atomic-op-cost.png" alt="locks-atomic-op-cost.png" />
+</p>
+</div>
+
+
+<p>
+Linux futex 使用方式大致如下：
+</p>
+
+
+<div id="org1243f83" class="figure">
+<p><img src="../images/locks-futex-wait.png" alt="locks-futex-wait.png" />
+</p>
+</div>
+
+
+<div id="org10bbf96" class="figure">
+<p><img src="../images/locks-futex-wake.png" alt="locks-futex-wake.png" />
+</p>
+</div>
+
+
+<p>
+内核实现上使用阻塞队列进行管理
+</p>
+
+
+<div id="orgbb1d2bc" class="figure">
+<p><img src="../images/locks-futex-in-kernel.png" alt="locks-futex-in-kernel.png" />
+</p>
+</div>
+
+<p>
+虽然futex不会白白地耗费CPU，但是因为有了context switch,  所以多个线程冲突的时候延迟会非常高：12个冲突线程从130ns -&gt; 900ns(0.9us)
+</p>
+
+
+<div id="org6a22393" class="figure">
+<p><img src="../images/locks-futex-cost.png" alt="locks-futex-cost.png" />
+</p>
+</div>
+
+<p>
+go sync.Mutex在上面做了一些优化：
+</p>
+<ul class="org-ul">
+<li>如果只有一个goroutine尝试去做CAS，那么其实没有waiter去需要唤醒</li>
+<li>如果某个waiter等待时间太长的话，那么优先将这个waiter放在queue头部，另外1ms内都没有办法拿到锁，那么其他goroutine不能继续CAS必去进行queue.</li>
+</ul>
+
+
+<div id="orge299aeb" class="figure">
+<p><img src="../images/locks-go-sync-mutex.png" alt="locks-go-sync-mutex.png" />
+</p>
+</div>
+
+<p>
+Slide结尾给了不少有用的链接：
+</p>
+<ol class="org-ol">
+<li>如何使用profiling工具定位竞争冲突 <a href="https://github.com/iovisor/bcc/issues/892">https://github.com/iovisor/bcc/issues/892</a> <a href="http://brendangregg.com/offcpuanalysis.html">http://brendangregg.com/offcpuanalysis.html</a></li>
+<li>避免/减少竞争冲突：lock-free, granular lock, 缩小关键区域 <a href="http://www.1024cores.net/">http://www.1024cores.net/</a> <a href="http://www.ece.ubc.ca/~sasha/papers/eurosys16-final29.pdf">http://www.ece.ubc.ca/~sasha/papers/eurosys16-final29.pdf</a></li>
+<li>content-aware scheduler <a href="https://web.eecs.umich.edu/~mozafari/php/data/uploads/lock-schd-report.pdf">https://web.eecs.umich.edu/~mozafari/php/data/uploads/lock-schd-report.pdf</a></li>
+</ol>
+
+
+<hr />
+
+<p>
+<a href="https://docs.google.com/document/d/1TTj4T2JO42uD5ID9e89oa0sLKhJYD0Y_kqxDv3I3XMw/edit">https://docs.google.com/document/d/1TTj4T2JO42uD5ID9e89oa0sLKhJYD0Y_kqxDv3I3XMw/edit</a>#
+</p>
+
+<p>
+最多只有一个spinlock空转等待获取任务，其他线程则block住
+</p>
+<blockquote>
+<p>
+Spinning is two-level: (1) an idle M with an associated P spins looking for new G’s, (2) an M w/o an associated P spins waiting for available P’s. There are at most GOMAXPROCS spinning M’s (both (1) and (2)). Idle M’s of type (1) do not block while there are idle M’s of type (2).
+When a new G is spawned, or M enters syscall, or M transitions from idle to busy, it ensures that there is at least 1 spinning M (or all P’s are busy). This ensures that there are no runnable G’s that can be otherwise running; and avoids excessive M blocking/unblocking at the same time.
+Spinning is mostly passive (yield to OS, sched_yield()), but may include a little bit of active spinning (loop burnging CPU) (requires investigation and tuning).
+</p>
+</blockquote>
+
+<p>
+在调度方面的考虑：亲和性，延迟创建资源，以及避免过多的线程创建
+</p>
+
+<blockquote>
+<ol class="org-ol">
+<li>Try out LIFO scheduling, this will improve locality. However, it still must provide some degree of fairness and gracefully handle yielding goroutines.</li>
+<li>Better locality of G-to-P. Try to enqueue an unblocked G to a P on which it was last running.</li>
+<li>Throttling of M creation. The scheduler can be easily forced to create thousands of M's per second until OS refuses to create more threads. M’s must be created promptly up to k*GOMAXPROCS, after that new M’s may added by a timer.</li>
+<li>Do not allocate G and stack until the goroutine first runs. For a newly created goroutine we need just callerpc, fn, narg, nret and args, that is, about 6 words. This will allow to create a lot of running-to-completion goroutines with significantly lower memory overhead.</li>
+<li>Better locality of P-to-M. Try to execute P on the same M it was last running.</li>
+</ol>
+</blockquote>
+</div>
+<div id="content"><!-- DISQUS BEGIN --><div id="disqus_thread"></div><script>/***  RECOMMENDED CONFIGURATION VARIABLES: EDIT AND UNCOMMENT THE SECTION BELOW TO INSERT DYNAMIC VALUES FROM YOUR PLATFORM OR CMS.*  LEARN WHY DEFINING THESE VARIABLES IS IMPORTANT: https://disqus.com/admin/universalcode/#configuration-variables*/var disqus_config = function () {this.page.url = 'https://dirtysalt.github.io/html/lets-talk-locks.html';this.page.identifier = 'lets-talk-locks.html';};(function() {var d = document, s = d.createElement('script');s.src = 'https://dirlt.disqus.com/embed.js';s.setAttribute('data-timestamp', +new Date());(d.head || d.body).appendChild(s);})();</script><noscript>Please enable JavaScript to view the <a href="https://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript><!-- DISQUS END --></div></body>
+</html>

@@ -1,0 +1,196 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>filter range实现优化</title>
+<meta name="author" content="dirtysalt" />
+<meta name="generator" content="Org Mode" />
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content" class="content">
+<h1 class="title">filter range实现优化</h1>
+<p>
+基本代码都来自于 [StarRocks](<a href="https://github.com/StarRocks/starrocks/blob/main/be/src/column/column_helper.h#L315">https://github.com/StarRocks/starrocks/blob/main/be/src/column/column_helper.h#L315</a>)
+</p>
+
+<p>
+benchmark代码放在 [Github](<a href="https://github.com/dirtysalt/codes/blob/master/cc/sr-test/filter_range_perf.cpp">https://github.com/dirtysalt/codes/blob/master/cc/sr-test/filter_range_perf.cpp</a>)
+</p>
+
+<p>
+所谓filter range就是类似下面这样的代码：
+</p>
+<ul class="org-ul">
+<li>基于0/1数组来选择目标数组里面的元素</li>
+<li>如果对应位置是1那么就选择，否则就丢弃</li>
+</ul>
+
+<p>
+普通实现版本如下：
+</p>
+<div class="org-src-container">
+<pre class="src src-cpp"><span class="org-keyword">for</span> (<span class="org-keyword">auto</span> <span class="org-variable-name">i</span> = start_offset; i &lt; to; ++i) {
+    <span class="org-keyword">if</span> (f_data[i]) {
+        *(data + result_offset) = *(data + i);
+        result_offset++;
+    }
+}
+</pre>
+</div>
+
+<hr />
+
+<p>
+在这个基础上，我们可以使用SIMD来做些优化：
+</p>
+<ul class="org-ul">
+<li>一次性加载32个filter元素，每个元素是8bit，那么就是256bit. `__m256i f = _mm256_loadu_si256((const __m256i*)(f_data + start_offset));`</li>
+<li>将这256bit压缩成为32bit的mask `uint32_t mask = _mm256_movemask_epi8(_mm256_cmpgt_epi8(f, all0));`</li>
+<li>如果 `mask==0` 那么认为这32个元素都不用选择，就可以直接跳过</li>
+<li>如果 `mask==0xffffffff` 那么认为这32个元素都可以选择，可以使用 `memmove` 挪动数据</li>
+<li>如果都不满足，那么就要根据mask里面的bit来做选择了，这个可以使用类似 `__builtin_ctz` 和 `x &amp; (x-1)` 来配合使用。</li>
+</ul>
+
+<p>
+完整代码如下，这个 `phmap::priv::BitMask` 其实就是上面那个实现：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-cpp">        <span class="org-keyword">if</span> (mask == 0) {
+            <span class="org-comment-delimiter">// </span><span class="org-comment">all no hit, pass</span>
+        } <span class="org-keyword">else</span> <span class="org-keyword">if</span> (mask == 0xffffffff) {
+            <span class="org-comment-delimiter">// </span><span class="org-comment">all hit, copy all</span>
+            memmove(data + result_offset, data + start_offset, kBatchNums * data_type_size);
+            result_offset += kBatchNums;
+        } <span class="org-keyword">else</span> {
+<span class="org-preprocessor">#define</span> <span class="org-function-name">BITMASK_COPY</span>(<span class="org-variable-name">mask</span>)                                            \
+    {                                                                 \
+        <span class="org-constant">phmap</span>::<span class="org-constant">priv</span>::BitMask&lt;uint32_t, 32&gt; bitmask(mask);             \
+        <span class="org-keyword">for</span> (<span class="org-keyword">auto</span> <span class="org-variable-name">idx</span> : bitmask) {                                    \
+            *(data + result_offset++) = *(data + start_offset + idx); \
+        }                                                             \
+    }
+            BITMASK_COPY(mask);
+        }
+</pre>
+</div>
+
+<p>
+下面所有的改进都是基于bitmask那个的改进，整个外层框架还是非常好的。
+</p>
+
+<hr />
+
+<p>
+一个实现是branchless. 可以想得到这种实现，如果mask里面bits比较多的话，还是比较合算的。如果bits比较少的话，那么就有许多重复次的拷贝和运算。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-cpp"><span class="org-preprocessor">#define</span> <span class="org-function-name">BRANCHLESS_COPY</span>()                  \
+    {                                      \
+        <span class="org-type">int</span> <span class="org-variable-name">j</span> = start_offset;              \
+        <span class="org-keyword">for</span> (<span class="org-type">int</span> <span class="org-variable-name">i</span> = 0; i &lt; 32; i++) {     \
+            data[result_offset] = data[j]; \
+            result_offset += f_data[j];    \
+            j += 1;                        \
+        }                                  \
+    }
+</pre>
+</div>
+
+<p>
+另外一个实现则需要CPU支持AVX512F特性，具体来说就是用到这个指令：`_mm512_mask_compress_epi32` 和 `_mm512_mask_compress_epi64`.  这两个指令可以支持32bit/64bit的压缩。如果需要支持epi8/epi16压缩的话，那么就需要AVX512_VBMI(icelake)特性，我看了下我们开发机器还不支持。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-cpp"><span class="org-preprocessor">#define</span> <span class="org-function-name">AVX512_COPY</span>(<span class="org-variable-name">SHIFT</span>, <span class="org-variable-name">MASK</span>, <span class="org-variable-name">WIDTH</span>)                                         \
+    {                                                                           \
+        <span class="org-keyword">auto</span> <span class="org-variable-name">m</span> = (mask &gt;&gt; SHIFT) &amp; MASK;                                        \
+        <span class="org-keyword">if</span> (m) {                                                                \
+            <span class="org-type">__m512i</span> <span class="org-variable-name">dst</span>;                                                        \
+            <span class="org-type">__m512i</span> <span class="org-variable-name">src</span> = _mm512_loadu_epi##WIDTH(data + start_offset + SHIFT); \
+            dst = _mm512_mask_compress_epi##WIDTH(dst, m, src);                 \
+            _mm512_storeu_epi##WIDTH(data + result_offset, dst);                \
+            result_offset += __builtin_popcount(m);                             \
+        }                                                                       \
+    }
+</pre>
+</div>
+
+<p>
+如果要使用 intrinsic 的话，那么需要在编译参数里面增加 `-mavx512f`. 但是如果使用这个编译参数，如果代码里面使用了 `__AVX512F__` 的话那么就会生成avx512f代码。但是这里我们想根据运行时动态判断，这样的话可以使用内联汇编来搞，并且外部增加运行时CPU的特性判断。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-cpp"><span class="org-preprocessor">#define</span> <span class="org-function-name">AVX512_ASM_COPY</span>(<span class="org-variable-name">SHIFT</span>, <span class="org-variable-name">MASK</span>, <span class="org-variable-name">WIDTH</span>, <span class="org-variable-name">WIDTHX</span>)               \
+    {                                                             \
+        <span class="org-keyword">auto</span> <span class="org-variable-name">m</span> = (mask &gt;&gt; SHIFT) &amp; MASK;                          \
+        <span class="org-keyword">if</span> (m) {                                                  \
+            <span class="org-type">T</span>* <span class="org-variable-name">src</span> = data + start_offset + SHIFT;                 \
+            <span class="org-type">T</span>* <span class="org-variable-name">dst</span> = data + result_offset;                        \
+            <span class="org-keyword">__asm__</span> <span class="org-keyword">volatile</span>(<span class="org-string">"vmovdqu"</span> #WIDTH                     \
+                             <span class="org-string">" (%[s]), %%zmm1\n"</span>                  \
+                             <span class="org-string">"kmovw %[mask], %%k1\n"</span>              \
+                             <span class="org-string">"vpcompress"</span> #WIDTHX                 \
+                             <span class="org-string">" %%zmm1, %%zmm0%{%%k1%}%{z%}\n"</span>     \
+                             <span class="org-string">"vmovdqu"</span> #WIDTH <span class="org-string">" %%zmm0, (%[d])\n"</span> \
+                             : [ <span class="org-constant">s</span> ] <span class="org-string">"+r"</span>(src), [ <span class="org-constant">d</span> ] <span class="org-string">"+r"</span>(dst)   \
+                             : [ <span class="org-constant">mask</span> ] <span class="org-string">"r"</span>(m)                    \
+                             : <span class="org-string">"zmm0"</span>, <span class="org-string">"zmm1"</span>, <span class="org-string">"memory"</span>);         \
+            result_offset += __builtin_popcount(m);               \
+        }                                                         \
+    }
+</pre>
+</div>
+
+<p>
+运行时CPU特性判断可以参考 [这里](<a href="https://gcc.gnu.org/onlinedocs/gcc/x86-Built-in-Functions.html">https://gcc.gnu.org/onlinedocs/gcc/x86-Built-in-Functions.html</a>) 的 `__builtin_cpu_supports` 函数（注意需要初始化调用 `__builtin_cpu_init`，不过我测试了如果不调用好像也没有问题）
+</p>
+
+<hr />
+
+<p>
+benchmark里面，我根据期望生成了不同的filter. 比如 `branchless/16` 就表示每个32个bit里面平均就有16个bit，想看看在不同的bitmask密度的情况下，各种实现的性能情况。
+</p>
+
+<p>
+在8bit/16bit这个级别上，我对比了bitmask和branchless两个版本，有这个几个发现：
+</p>
+<ul class="org-ul">
+<li>拷贝8bit和16bit上其实性能差别不大，16bit在bitmask版本略微高些，但是branchless差别不大。</li>
+<li>branchless只有在 `bits = 8` 的情况下面比bitmask好一点，在 `bits = 16`的情况下面比bitmask好很多。</li>
+<li>但是如果在这里增加一次判断的话，造成的额外开销会比较大。</li>
+</ul>
+
+
+<div id="org5da0eb5" class="figure">
+<p><img src="../images/filter-range-optimization-0.jpg" alt="filter-range-optimization-0.jpg" />
+</p>
+</div>
+
+<p>
+在32bit/64bit级别上，则对比了3个版本，有这么几个发现：
+</p>
+<ol class="org-ol">
+<li>branchless和bitmask差别和上麦差不多，branchless只有在 `bits=16` 的时候才更好。</li>
+<li>32bit上，似乎只有 `bits=1` 的情况会稍差写，其他情况都比bitmask好。</li>
+<li>64bit上，似乎要满足 `bits&gt;=8` 才会比bitmask好。</li>
+</ol>
+
+
+<div id="orgde8cc38" class="figure">
+<p><img src="../images/filter-range-optimization-1.jpg" alt="filter-range-optimization-1.jpg" />
+</p>
+</div>
+
+
+<div id="org1ac5309" class="figure">
+<p><img src="../images/filter-range-optimization-2.jpg" alt="filter-range-optimization-2.jpg" />
+</p>
+</div>
+</div>
+<div id="content"><!-- DISQUS BEGIN --><div id="disqus_thread"></div><script>/***  RECOMMENDED CONFIGURATION VARIABLES: EDIT AND UNCOMMENT THE SECTION BELOW TO INSERT DYNAMIC VALUES FROM YOUR PLATFORM OR CMS.*  LEARN WHY DEFINING THESE VARIABLES IS IMPORTANT: https://disqus.com/admin/universalcode/#configuration-variables*/var disqus_config = function () {this.page.url = 'https://dirtysalt.github.io/html/filter-range-optimization.html';this.page.identifier = 'filter-range-optimization.html';};(function() {var d = document, s = d.createElement('script');s.src = 'https://dirlt.disqus.com/embed.js';s.setAttribute('data-timestamp', +new Date());(d.head || d.body).appendChild(s);})();</script><noscript>Please enable JavaScript to view the <a href="https://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript><!-- DISQUS END --></div></body>
+</html>

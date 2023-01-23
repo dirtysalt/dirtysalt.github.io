@@ -1,0 +1,38 @@
+#+title: 在AWS EC2上启动Sentry
+
+利用AMI来创建服务是最方面的。AMI和Docker很像，Docker比AMI更加轻量，但是AMI比Docker要更加灵活。
+Sentry是提供SAAS的，但是也有on-premise的open source版本。我看了一下自己搭建所需要的requirements还是比较多的，不如使用AMI在ec2起个服务试试看。
+
+找了一圈发现这个比较靠谱 https://aws.amazon.com/marketplace/pp/B07JJDVVNJ?qid=1551703188272 而且vendor recommended instance是t3.micro，那就非常便宜了。
+我为了保险还是买了一个t3.medium来运行这个ami. 这个AMI上面的nginx只监听一个服务，所以可以使用任意域名进行访问。
+我们可以绑定两个域名，内网域名使用内部IP, 外网域名使用外部IP，这样可以节省一部分流量。用户名是admin, 密码是instance-id. 还算是比较安全的。
+
+上去之后基本上就可以使用了。但是如果需要邀请members以及alert的话，那么还需要配置mail服务。用ami ec2相比docker好处是可以上去修改各种配置，更加符合像我这种喜欢直接上机器修改东西的人的习惯。
+但是上去转了一圈，发现根本没有sentry这个命令(https://docs.sentry.io/cli/) 后来转了半天不知道在哪里在找到命令行和配置: 二进制在/usr/sentry下面，配置文件在 ~/.sentry下面
+
+#+BEGIN_EXAMPLE
+ubuntu@ip-172-31-17-62:/usr/sentry/bin$ ls sentry
+sentry
+
+ubuntu@ip-172-31-17-62:~/.sentry$ ls
+config.yml  nginx.conf  sentry.conf.py  services
+#+END_EXAMPLE
+
+修改了config.yml配置，但是还不知道怎么重启对应的服务。看了一下services下面有这些 web/cron/worker
+
+#+BEGIN_EXAMPLE
+ubuntu@ip-172-31-17-62:~/.sentry$ ls services/
+sentry-cron.service  sentry-web.service  sentry-worker.service
+#+END_EXAMPLE
+
+最后在网上找到这个帖子 https://stackoverflow.com/questions/14617681/how-to-stop-sentry-server 原来这个ami里面的服务使用systemd来管理启动，这个之前还没有接触过。
+可以使用systemctl来进行控制: systemctl可以用来列举所有的服务, systemctl restart可以重启服务
+
+#+BEGIN_EXAMPLE
+ubuntu@ip-172-31-17-62:~/.sentry$ systemctl | grep sentry
+sentry-cron.service                                                     loaded active running   Sentry Beat Service
+sentry-web.service                                                      loaded active running   Sentry Web Service
+sentry-worker.service                                                   loaded active running   Sentry Background Worker
+
+ubuntu@ip-172-31-17-62:~/.sentry$ sudo systemctl restart sentry-worker
+#+END_EXAMPLE

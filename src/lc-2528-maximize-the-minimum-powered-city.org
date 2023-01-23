@@ -1,0 +1,74 @@
+#+title: LC 2528. 最大化城市的最小供电站数目
+
+https://leetcode.cn/problems/maximize-the-minimum-powered-city/
+
+这个题解 https://leetcode.cn/problems/maximize-the-minimum-powered-city/solution/er-fen-da-an-qian-zhui-he-chai-fen-shu-z-jnyv/ 不错，后面说说这个解法。
+
+这题外部框架就是二分法，来测试某个供电站的数量是否满足。然后安排供电站可以使用贪心算法：如果i位置不满足的话，那么我们可以在(i+r)这里安装供电站，这样在(i+r)这里安装的供电站其实可以贡献给 i,i+1,i+2,...i+r-1 这点位置。
+
+----------
+
+一种方法是使用前缀和。比如计算ith的供电大小的话，可以使用 `acc[i+r] - acc[i-r-1]` 来计算。但是前缀和一个问题就是，如果我们更新了 `acc[i]` 的话还要更新后面的前缀和。不过因为我们这个是顺序检查的，其实可以把前缀和更新放在里面，比如下面这样。
+
+#+BEGIN_SRC python
+def test(M, K):
+    n = len(stations)
+    acc = [0] * (n + 1)
+    for i in range(min(n,r+1)):
+        acc[i + 1] = acc[i] + stations[i]
+
+    for i in range(n):
+        begin = max(i - r, 0)
+        end = min(i + r + 1, n)
+        # end maybe has been updated.
+        if end <= n:
+            acc[end] = max(acc[end], acc[end - 1] + stations[end - 1])
+        a = acc[begin]
+        b = acc[end]
+        if b - a < M:
+            extra = M + a - b
+            if extra > K: return False
+            K -= extra
+            acc[end] += extra
+    return True
+#+END_SRC
+
+----------
+
+另一种方法就是上面题解里面说的，我们可以使用差分数组。我其实没有太搞明白差分数组的概念，但是大概明白他的思路：如果我们在i位置上增加m的话，那么需要在 i+r+1 这个位置上取消这个m(因为覆盖范围就是到i+r). 这种差分数组的好处就是不用更新前缀和。这题如果每次计算前缀和，时间大约是9.5s(压线通过），但是如果使用差分数组的话，可以在6.8s左右。
+
+#+BEGIN_SRC python
+class Solution:
+    def maxPower(self, stations: List[int], r: int, k: int) -> int:
+        n = len(stations)
+        acc = [0] * (n + 1)
+        for i in range(n):
+            acc[i + 1] = acc[i] + stations[i]
+
+        def test(M, K):
+            diff = [0] * (n + 1)
+            DIFF = 0
+            for i in range(n):
+                begin = max(i - r, 0)
+                end = min(i + r + 1, n)
+                DIFF += diff[i]
+                SUM = acc[end] - acc[begin] + DIFF
+                if SUM < M:
+                    extra = M - SUM
+                    if extra > K: return False
+                    K -= extra
+                    DIFF += extra
+                    diff[min(i + r + 1 + r, n)] -= extra
+            return True
+
+        INF = k + sum(stations)
+        s, e = 0, INF
+        while s <= e:
+            m = (s + e) // 2
+            if test(m, k):
+                s = m + 1
+            else:
+                e = m - 1
+        ans = e
+        return ans
+#+END_SRC

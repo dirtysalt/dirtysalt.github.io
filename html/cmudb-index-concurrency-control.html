@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>CMU DB Index Concurrency Control</title>
+<meta name="author" content="dirtysalt" />
+<meta name="generator" content="Org Mode" />
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content" class="content">
+<h1 class="title">CMU DB Index Concurrency Control</h1>
+<p>
+Lock &amp; Latch: Lock在DBMS里面特指在事务方面的锁，而Latch则指操作系统层面上的锁比如mutex.
+</p>
+
+<p>
+Latch的几种实现方式：
+</p>
+<ol class="org-ol">
+<li>std::mutex (25ns lock/unlock, 涉及到OS调度)</li>
+<li>std::atomic (TAS: Test-And-Set spin lock)/CAS （快但是可能空转）</li>
+<li>read-write lock 具体来说不断是实现方式，更像是优化读写同时发生的情况</li>
+</ol>
+
+<p>
+在Hash Table上做Latch比较简单尤其是static hash table上，因为结构比较简单，通常使用悲观锁的方式性能就还不错。在BTree上做Latch则更加复杂些，因为结构复杂并且是动态的，有时候需要使用乐观锁来提升并发性能。
+</p>
+
+<p>
+通常访问BTree是top-down的方式，然后不断在在节点上施加读写锁，这个过程肯定不会出现死锁，因为都是top-down的方式，拿不到锁就没有办法访问。可能出现死锁的情况是在leaf-node上的遍历，比如一个向前一个向后，分别需要对方节点的读写锁，才会出现死锁。这个死锁没有办法避免，而且访问者也没有办法感知到对方的存在，上层可能知道，可以abort某个操作，让另外一个操作继续进行。如果上层不做coodinate的话，那么访问者只能是等待一段时间，然后自己abort掉，好让一方可以继续。
+</p>
+
+<p>
+仅仅就top-down方式访问的话，有下面两个优化方法：
+</p>
+
+<p>
+Latch Crabbing/Coulping Protocol. 看名字可能不知道是什么意思。具体思想就是，写入的时候，因为要顺着path不断地拿到write lock. 如果在child节点上可以判断出，自己肯定不会修改parent节点的话，那么其实就可以释放parent以及上层所有的write lock. 比如自己节点空闲slot超过2个这样，那么即使插入也不会overflow到parent节点上。
+</p>
+
+<p>
+Optimistic Latch. 如果写入叶子节点都不会overflow的话，那么我们甚至都不用去对parent节点加write lock. 写入操作很大的并发瓶颈在于，每次都需要对root增加write lock. 如果我们开始不对root增加write lock, 沿着path加read lock. 到了叶子节点之后，再施加write lock. 如果发现会overflow的话，那么在重新对root增加write lock， fallback到最原始的方式。这样的好处是，可以减少对root节点的write lock次数，基于乐观的情况来提高并发。
+</p>
+</div>
+<div id="content"><!-- DISQUS BEGIN --><div id="disqus_thread"></div><script>/***  RECOMMENDED CONFIGURATION VARIABLES: EDIT AND UNCOMMENT THE SECTION BELOW TO INSERT DYNAMIC VALUES FROM YOUR PLATFORM OR CMS.*  LEARN WHY DEFINING THESE VARIABLES IS IMPORTANT: https://disqus.com/admin/universalcode/#configuration-variables*/var disqus_config = function () {this.page.url = 'https://dirtysalt.github.io/html/cmudb-index-concurrency-control.html';this.page.identifier = 'cmudb-index-concurrency-control.html';};(function() {var d = document, s = d.createElement('script');s.src = 'https://dirlt.disqus.com/embed.js';s.setAttribute('data-timestamp', +new Date());(d.head || d.body).appendChild(s);})();</script><noscript>Please enable JavaScript to view the <a href="https://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript><!-- DISQUS END --></div></body>
+</html>

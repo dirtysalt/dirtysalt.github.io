@@ -1,0 +1,132 @@
+#+title: 一些Prolog代码
+
+研究生阶段接触过Prolog编程，写的程序都比较简单。当时它给我留下很深的印象，你只需要描述规则和行为特征，然后再提出问题，它就会帮助你求解。
+当时我对这种东西不以为然，因为这种求解器肯定没有专门的求解器高效，只能当做玩具使用。现在看起来这种观点的确很幼稚。首先自己的实现不一定就有
+Prolog本身实现高效，这点可以参考SQL语句和自己查询DBMS；此外许多实验性质的项目，实验人员需要的是快速实验和得到反馈，他们不在乎速度差个50%或者是200%；
+但是考虑自己实现一个通用的快速的求解器的时候，那么你得到又是一个Prolog实现。
+
+最近看《七周七语言》里面的Prolog章节，又让我重新试试Prolog程序。这次使用的Gnu Prolog，当时使用应该是的是SWI-Prolog，感觉这两个实现上差别函数蛮大的，
+里面的库函数之间的感觉交集也不是很多。编写这些Prolog程序的时候，StackOverflow帮了我不少忙，许多初学者的问题在上面都有直接的答案。
+
+Prolog的求解器本质上是通过DFS来找到解空间的，在搜索期间不是所有的变量都已经绑定值了的，有些变量可能对应的只是一些约束。
+我们可以通过在规则里面增加print语句来调试。print可以打印出在某个步骤的时候变量是什么内容。但是如同上面提到的，这些变量不一定是确切的值，也可能是约束。
+好在即便是约束，Gnu Prolog也可以使用比较human-readbale的方式打印出来，所以调试并不是件特别困难的事情。
+
+#+BEGIN_SRC prolog
+% load file.
+% ['test.prolog']
+
+% 使用 verb(obj1, obj2) 行为来定义规则
+% 小写字母表示符号
+% 大小字母表示变量
+% X is Y 来匹配/合一变量和值
+% X = Y 和上面类似，但是不会对Y求值。
+
+likes(dirlt, cjy2020).
+
+% likes(Who, cjy2020). Who = dirlt
+
+% ==============================
+
+count(0, []).
+count(Value, [_|Tail]) :- count(X, Tail), Value is X + 1.
+
+% Count(X, [1,2,3,4]). X = 4
+
+sum(0, []).
+sum(Value, [Head|Tail]) :- sum(X, Tail), Value is Head + X.
+
+% Sum(X, [1,2,3,4]. X = 10
+
+% ==============================
+% 描述行为特征而不是执行方式
+concat([], List, List).
+concat([Head|Tail1], List, [Head|Tail2]) :- concat(Tail1, List, Tail2).
+
+% concat([1,2,3,4], [5,6], X). x = [1,2,3,4,5,6]
+% concat(X, [5,6], [1,2,3,4,5,6]). X = [1,2,3,4]
+
+% ==============================
+% 求解4x4的数独
+
+sudoku(Puzzle, Solution) :-
+    Solution = Puzzle,
+    Puzzle = [S11, S12, S13, S14,
+              S21, S22, S23, S24,
+              S31, S32, S33, S34,
+              S41, S42, S43, S44],
+    % 值都在1,4范围内
+    fd_domain(Puzzle, 1, 4),
+
+    valid_sudoku(
+        [
+            % 行
+            [S11,S12,S13,S14],
+            [S21,S22,S23,S24],
+            [S31,S32,S33,S34],
+            [S41,S42,S43,S44],
+            % 列
+            [S11,S21,S31,S41],
+            [S12,S22,S32,S42],
+            [S13,S23,S33,S43],
+            [S14,S24,S34,S44],
+            % 区域
+            [S11,S12,S21,S22],
+            [S13,S14,S23,S24],
+            [S31,S32,S41,S42],
+            [S33,S34,S43,S44]
+        ]
+    )
+.
+
+% 每个对象里面的值都不相同
+valid_sudoku([]).
+valid_sudoku([Head|Tail]) :-
+    fd_all_different(Head),
+    valid_sudoku(Tail).
+
+% sudoku([4,1,2,3, _,_,_,_, _,_,_,_, 3,4,_,_], Solution).
+
+% ==============================
+% 求解八皇后问题（实际上运行4皇后，为了计算方便）
+
+% column在1-8之间
+valid_board([]).
+valid_board([(Row, Col) | Tail]) :-
+    % fd_domain是约束列表的
+    % fd_domain(Row, 1, 8),
+    % fd_domain(Col, 1, 8),
+    between(1, 4, Col), between(1, 4, Row),
+    valid_board(Tail).
+
+
+% 用continuation收集结果
+cols([], []).
+cols([(_, Col) | Tail], [Col|Tail1]) :- cols(Tail, Tail1).
+
+diags([], [], []).
+diags([(Row, Col) | Tail], [Diag1 | Tail1], [Diag2 | Tail2]) :-
+    Diag1 is (Row + Col),
+    Diag2 is (Row - Col),
+    diags(Tail, Tail1, Tail2).
+
+eight_queen(Board) :-
+    Board = [(1,_), (2,_), (3,_), (4,_)], % (5,_), (6,_), (7,_), (8,_)],
+    % print(Board),print('\n'),
+    % 先要确保里面填充的是有效数字
+    valid_board(Board),
+
+    % print(Board),print('\n'),
+    cols(Board, Cols),
+    diags(Board, Diags1, Diags2),
+
+    fd_all_different(Cols),
+    fd_all_different(Diags1),
+    fd_all_different(Diags2).
+
+find_eight_queen(Solution) :-
+    eight_queen([(1,A),(2,B),(3,C),(4,D)]), %(5,E),(6,F),(7,G),(8,H)]),
+    Solution = [A,B,C,D]. % E,F,G,H].
+
+% find_eight_queen(Solution).
+#+END_SRC

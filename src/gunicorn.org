@@ -1,0 +1,28 @@
+#+title: gunicorn
+http://docs.gunicorn.org/en/latest/index.html
+
+** Design
+设计上gunicorn和 [[file:nginx.org][nginx]] 很类似，一个master process和多个worker process. master做绑定端口，监控worker的工作，[[http://docs.gunicorn.org/en/latest/signals.html][管理配置和热升级]] 等，worker来接受连接以及处理连接。
+
+worker有下面几种可选实现，不过对于用户来说是完全透明的
+- sync worker # 每个进程同时只处理一个请求
+- thread worker # 通过在一个进程里面开辟多个线程来响应多个请求. 对应gthread.py
+- greenlet worker # 没有使用python原生线程而是使用eventlet或是gevent协程来响应多个请求，对应geventlet.py和ggevent.py
+- tornado worker # [[http://www.tornadoweb.org/en/stable/][tornao]] 提供的asyncio worker, 对应gtornado.py
+- aiohttp # [[https://github.com/KeepSafe/aiohttp][aiohttp]] 提供的asyncio worker, 对应gaiohttp.py
+thread worker处理请求同时受限于thread number以及max connections, 后面几种实现不受限于thread number仅受限于max connections.
+
+不过确切地来说，worker选择也不是对用户完全透明的，因为为了效率用户代码也要考虑在阻塞性上尽量和worker不冲突。比如使用greenlet worker但是用户逻辑里面来个后端服务的阻塞式访问，那么greenlet worker就回退到sync worker/thread worker模型了。从这点上说选择thread worker/greenlet worker对用户代码是最友好的，如果选择thread worker那么访问后端服务可以使用阻塞访问，而如何选择greenlet worker则可以利用内置cooperative thread. 为了获得更好性能，gunicorn官方文档还推荐将gunicorn放在 [[http://docs.gunicorn.org/en/latest/deploy.html#nginx-configuration][buffering proxy server(比如nginx)]] 之后，让nginx解析好请求之后交给gunicorn处理。
+
+** Settings
+设置按照优先级排序分别是：命令行，配置文件(python)，框架本身。大部分 [[http://docs.gunicorn.org/en/latest/settings.html][设置]] 比较常规，下面这些设置有点意思：
+- worker_connections # 单个进程可以同时处理的最大连接数
+- max_requests # 单个进程处理最大请求数，超过就会重启，目的是"This is a simple method to help limit the damage of memory leaks"
+- max_requests_jitter # 在上面基础上加上random(0, max_requests_jitter)偏差，为了避免所有worker同时重启
+- timeout # 单个进程空闲时间超过这个阈值就会重启，可能是为了解决整个worker因为bug挂住导致长时间不响应。
+- preload_app # 在master就加载application. 好处是可以加快worker启动速度，但是坏处就是如果代码升级需要将master也重启。
+- reload # 代码发生变化就会立即reload. 和preload_app选项冲突，推荐只在开发环境下面使用。
+- check_config # 检查配置文件是否正确
+- logger_class # 默认使用gunicorn.glogging.Logger.
+- statsd_host # 可以向 [[https://github.com/etsy/statsd][statsd]] 汇报服务器性能状况. 具体可以看 [[http://docs.gunicorn.org/en/latest/instrumentation.html][这里]]
+- Server Hooks # gunicorn定义了一系列hooks允许在各个阶段添加自己代码

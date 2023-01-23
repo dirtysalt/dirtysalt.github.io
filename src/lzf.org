@@ -1,0 +1,408 @@
+#+title: lzf
+http://oldhome.schmorp.de/marc/liblzf.html
+
+** Overview
+这个压缩库非常轻量
+- lzf.c 程序入口文件
+- lzf.h 接口文件
+- lzfP.h 配置文件
+- lzf_c.c 压缩
+- lzf_d.c 解压缩
+其实主要的就是两个文件lzf_c.c和lzf_d.c
+
+** Compress
+#+BEGIN_EXAMPLE
+/*
+ * Compress in_len bytes stored at the memory block starting at
+ * in_data and write the result to out_data, up to a maximum length
+ * of out_len bytes.
+ *
+ * If the output buffer is not large enough or any error occurs return 0,
+ * otherwise return the number of bytes used, which might be considerably
+ * more than in_len (but less than 104% of the original size), so it
+ * makes sense to always use out_len == in_len - 1), to ensure _some_
+ * compression, and store the data uncompressed otherwise (with a flag, of
+ * course.
+ *
+ * lzf_compress might use different algorithms on different systems and
+ * even different runs, thus might result in different compressed strings
+ * depending on the phase of the moon or similar factors. However, all
+ * these strings are architecture-independent and will result in the
+ * original data when decompressed using lzf_decompress.
+ *
+ * The buffers must not be overlapping.
+ *
+ */
+unsigned int
+lzf_compress (const void *const in_data,  unsigned int in_len,
+              void             *out_data, unsigned int out_len);
+#+END_EXAMPLE
+- in & out的内存区间不能重叠
+- 如果out_len不够的话，返回0；否则返回压缩后大小。所以使用上可以out_len = in_len-1. 如果压缩之后空间变大的话那么直接使用原空间
+- 不同版本lzf压缩同一个数据得到的结果不一定相同，取决于寻找repeatable string方法。但是均可以使用同样的解压缩函数解压。
+
+压缩数据节(data section)有三种标识 a. literal b. short backref c. long backref.
+#+BEGIN_EXAMPLE
+/*
+ * compressed format
+ *
+ * 000LLLLL <L+1>    ; literal, L+1=1..33 octets
+ * LLLooooo oooooooo ; backref L+1=1..7 octets, o+1=1..4096 offset
+ * 111ooooo LLLLLLLL oooooooo ; backref L+8 octets, o+1=1..4096 offset
+ *
+ */
+#+END_EXAMPLE
+
+配置文件中最重要的几个参数有：
+- HLOG # 用于查找repeatable string的hashtable大小. 1 << HLOG
+- VERY_FAST / ULTRA_FAST # 控制查找repeatble string策略
+- LZF_USE_OFFSETS # 决定hashtable存储偏移还是存储pointer. 为了方便阅读代码，这里我们假设存储偏移。
+  - define LZF_HSLOT_BIAS ((const u8 *)in_data)
+  - typedef unsigned int LZF_HSLOT;
+  - typedef LZF_HSLOT LZF_STATE[1 << (HLOG)]; # hashtable定义
+- STRICT_ALIGN # input数据是否对齐
+
+压缩函数其实不长，所以这里我把代码稍作整理全部贴出来，然后附上相关注释
+#+BEGIN_SRC C++
+#ifndef FRST
+# define FRST(p) (((p[0]) << 8) | p[1])
+# define NEXT(v,p) (((v) << 8) | p[2])
+// 区别在于使用hash函数不同. 普通模式下运算量更多但是均匀效果应该会更好
+# if ULTRA_FAST
+#  define IDX(h) ((( h             >> (3*8 - HLOG)) - h  ) & (HSIZE - 1))
+# elif VERY_FAST
+#  define IDX(h) ((( h             >> (3*8 - HLOG)) - h*5) & (HSIZE - 1))
+# else
+#  define IDX(h) ((((h ^ (h << 5)) >> (3*8 - HLOG)) - h*5) & (HSIZE - 1))
+# endif
+#endif
+
+// literal最大长度
+#define        MAX_LIT        (1 <<  5)
+// offset最大长度
+#define        MAX_OFF        (1 << 13)
+// ref最大长度. 看long backref定义是L+8 ocets. 而L最长可以是8bits.
+#define        MAX_REF        ((1 << 8) + (1 << 3))
+
+unsigned int
+lzf_compress (const void *const in_data, unsigned int in_len,
+              void *out_data, unsigned int out_len
+              )
+{
+    LZF_STATE htab;
+    const u8 *ip = (const u8 *)in_data;
+    u8 *op = (u8 *)out_data;
+    const u8 *in_end  = ip + in_len;
+    u8 *out_end = op + out_len;
+    const u8 *ref;
+
+    unsigned long off;
+    unsigned int hval;
+    int lit;
+
+    if (!in_len || !out_len)
+        return 0;
+
+    memset (htab, 0, sizeof (htab)); // 初始化hashtable.
+
+    lit = 0; op++; /* start run */ // 这里空出1字节是为了处理literal.
+
+    hval = FRST (ip);
+    while (ip < in_end - 2)
+    {
+        LZ_HSLOT *hslot;
+
+        hval = NEXT (hval, ip); // 此时hval = (ip[-1] << 24) | (ip[0] << 16) | (ip[1] << 8) | ip[2].
+        hslot = htab + IDX (hval);
+        // 然后查找hashtable是否存在潜在相同的串，记为ref; 同时更新hashtable这个entry为ip.
+        // 这里更新hashtable entry非常重要，因为offset是有限制的。如果不更新的话，那么超过offset长度限制的串
+        // 便不能被匹配以及压缩了。
+        ref = *hslot + LZF_HSLOT_BIAS; *hslot = ip - LZF_HSLOT_BIAS;
+
+        if (1
+            && ref < ip /* the next test will actually take care of this, but this is faster */
+            // 这里真实偏移是(off+1). 但是只存储off.(see backref)
+            && (off = ip - ref - 1) < MAX_OFF
+            && ref > (u8 *)in_data
+            // 检查ref和ip头三个字节是否相同. 至少3个字节才会压缩
+            && ref[2] == ip[2]
+#if STRICT_ALIGN
+            && ((ref[1] << 8) | ref[0]) == ((ip[1] << 8) | ip[0])
+#else
+            && *(u16 *)ref == *(u16 *)ip
+#endif
+            )
+        {
+            /* match found at *ref++ */
+            unsigned int len = 2;
+            unsigned int maxlen = in_end - ip - len;
+            // 最长可以ref多少字节
+            maxlen = maxlen > MAX_REF ? MAX_REF : maxlen;
+
+            // 保守估计至少3个字节(long backref). 这里+1为下一轮查找literal准备
+            if (expect_false (op + 3 + 1 >= out_end)) /* first a faster conservative test */
+                if (op - !lit + 3 + 1 >= out_end) /* second the exact but rare test */
+                    return 0;
+
+            // 将之前的literal flush出来。这个后面会给出解释为什么可以这么做
+            op [- lit - 1] = lit - 1; /* stop run */
+            op -= !lit; /* undo run if length is zero */
+
+            for (;;)
+            {
+                if (expect_true (maxlen > 16))
+                {
+                    len++; if (ref [len] != ip [len]) break;
+                    len++; if (ref [len] != ip [len]) break;
+                    len++; if (ref [len] != ip [len]) break;
+                    len++; if (ref [len] != ip [len]) break;
+
+                    len++; if (ref [len] != ip [len]) break;
+                    len++; if (ref [len] != ip [len]) break;
+                    len++; if (ref [len] != ip [len]) break;
+                    len++; if (ref [len] != ip [len]) break;
+
+                    len++; if (ref [len] != ip [len]) break;
+                    len++; if (ref [len] != ip [len]) break;
+                    len++; if (ref [len] != ip [len]) break;
+                    len++; if (ref [len] != ip [len]) break;
+
+                    len++; if (ref [len] != ip [len]) break;
+                    len++; if (ref [len] != ip [len]) break;
+                    len++; if (ref [len] != ip [len]) break;
+                    len++; if (ref [len] != ip [len]) break;
+                }
+
+                do
+                    len++;
+                while (len < maxlen && ref[len] == ip[len]);
+
+                break;
+            }
+            // ip和ref公共串长度为len - 1.(比较tricky, 需要考虑一下)
+            // 注意这里如果ip和ref存在overlapping也没有任何问题
+
+            len -= 2; /* len is now #octets - 1 */
+            ip++;
+
+            if (len < 7) // short backref
+            {
+                *op++ = (off >> 8) + (len << 5);
+            }
+            else // long backref.
+            {
+                *op++ = (off >> 8) + (  7 << 5);
+                *op++ = len - 7;
+            }
+
+            *op++ = off;
+
+            // 至此一轮repeatable string查找完毕。为下一轮literal准备.
+            lit = 0; op++; /* start run */
+
+            // 输入串向前前进len+1字节
+            ip += len + 1;
+
+            if (expect_false (ip >= in_end - 2))
+                break;
+
+            // 如果是ULTRA_FAST回退一个字节做索引
+            // 如果是VERY FAST回退两个字节
+            // 普通模式的话会对这一个输入串做索引
+#if ULTRA_FAST || VERY_FAST
+            --ip;
+# if VERY_FAST && !ULTRA_FAST
+            --ip;
+# endif
+            hval = FRST (ip);
+
+            hval = NEXT (hval, ip);
+            htab[IDX (hval)] = ip - LZF_HSLOT_BIAS;
+            ip++;
+
+# if VERY_FAST && !ULTRA_FAST
+            hval = NEXT (hval, ip);
+            htab[IDX (hval)] = ip - LZF_HSLOT_BIAS;
+            ip++;
+# endif
+#else
+            ip -= len + 1;
+
+            do
+            {
+                hval = NEXT (hval, ip);
+                htab[IDX (hval)] = ip - LZF_HSLOT_BIAS;
+                ip++;
+            }
+            while (len--);
+#endif
+        }
+        else // 如果没有找到公共串的话那么输出literal.
+        {
+            /* one more literal byte we must copy */
+            if (expect_false (op >= out_end))
+                return 0;
+
+            lit++; *op++ = *ip++;
+
+            // 后面会讲解literal是怎么处理的
+            if (expect_false (lit == MAX_LIT))
+            {
+                op [- lit - 1] = lit - 1; /* stop run */
+                lit = 0; op++; /* start run */
+            }
+        }
+    }
+
+    if (op + 3 > out_end) /* at most 3 bytes can be missing here */
+        return 0;
+
+    // 如果剩余串很短的话那么通用按照literal来处理。
+    while (ip < in_end)
+    {
+        lit++; *op++ = *ip++;
+
+        if (expect_false (lit == MAX_LIT))
+        {
+            op [- lit - 1] = lit - 1; /* stop run */
+            lit = 0; op++; /* start run */
+        }
+    }
+
+    op [- lit - 1] = lit - 1; /* end run */
+    op -= !lit; /* undo run if length is zero */
+
+    return op - (u8 *)out_data;
+}
+#+END_SRC
+
+literal处理比较有趣，大致方式如下
+- "lit = 0; op++". # 因为literal需要一个额外字节，这里op++空出一个字节
+- 可是有时候lit=0就退出了，这个时候op最后一个字节是废弃的，所以有"op -= !lit".
+- 当lit == MAX_LIT的时候或者是flush时候（假设lit!=0. lit=0的情况上面分析过了). 比如lit = 3
+   - "op[-lit-1] = lit-1" 就是 "op[-4] = 2"
+   - op[-4]是literal开头的字节，而2+1则是literal长度
+
+** Decompress
+相对于压缩函数，解压缩函数就没有那么多策略，完全是数据驱动。同样我把代码稍作整理添加少注释
+
+#+BEGIN_SRC C++
+// intel有rep movsb指令用来做memcpy. 之前做过实验发现效果并不理想
+#if USE_REP_MOVSB /* small win on amd, big loss on intel */
+#if (__i386 || __amd64) && __GNUC__ >= 3
+# define lzf_movsb(dst, src, len)               \
+    asm ("rep movsb"                            \
+         : "=D" (dst), "=S" (src), "=c" (len)   \
+         :  "0" (dst),  "1" (src),  "2" (len));
+#endif
+#endif
+
+unsigned int
+lzf_decompress (const void *const in_data,  unsigned int in_len,
+                void             *out_data, unsigned int out_len)
+{
+    u8 const *ip = (const u8 *)in_data;
+    u8       *op = (u8 *)out_data;
+    u8 const *const in_end  = ip + in_len;
+    u8       *const out_end = op + out_len;
+
+    do
+    {
+        unsigned int ctrl = *ip++;
+
+        if (ctrl < (1 << 5)) /* literal run */
+        {
+            ctrl++;
+
+            if (op + ctrl > out_end)
+            {
+                SET_ERRNO (E2BIG);
+                return 0;
+            }
+
+#ifdef lzf_movsb
+            lzf_movsb (op, ip, ctrl);
+#else
+            switch (ctrl)
+            {
+                case 32: *op++ = *ip++; case 31: *op++ = *ip++; case 30: *op++ = *ip++; case 29: *op++ = *ip++;
+                case 28: *op++ = *ip++; case 27: *op++ = *ip++; case 26: *op++ = *ip++; case 25: *op++ = *ip++;
+                case 24: *op++ = *ip++; case 23: *op++ = *ip++; case 22: *op++ = *ip++; case 21: *op++ = *ip++;
+                case 20: *op++ = *ip++; case 19: *op++ = *ip++; case 18: *op++ = *ip++; case 17: *op++ = *ip++;
+                case 16: *op++ = *ip++; case 15: *op++ = *ip++; case 14: *op++ = *ip++; case 13: *op++ = *ip++;
+                case 12: *op++ = *ip++; case 11: *op++ = *ip++; case 10: *op++ = *ip++; case  9: *op++ = *ip++;
+                case  8: *op++ = *ip++; case  7: *op++ = *ip++; case  6: *op++ = *ip++; case  5: *op++ = *ip++;
+                case  4: *op++ = *ip++; case  3: *op++ = *ip++; case  2: *op++ = *ip++; case  1: *op++ = *ip++;
+            }
+#endif
+        }
+        else /* back reference */
+        {
+            unsigned int len = ctrl >> 5;
+
+            u8 *ref = op - ((ctrl & 0x1f) << 8) - 1;
+
+            if (len == 7)
+            {
+                len += *ip++;
+            }
+
+            ref -= *ip++;
+
+            if (op + len + 2 > out_end)
+            {
+                SET_ERRNO (E2BIG);
+                return 0;
+            }
+
+            if (ref < (u8 *)out_data)
+            {
+                SET_ERRNO (EINVAL);
+                return 0;
+            }
+
+#ifdef lzf_movsb
+            len += 2;
+            lzf_movsb (op, ref, len);
+#else
+            switch (len)
+            {
+                default:
+                    len += 2;
+                    // 处理ip和ref公共串存在overlapping的情况
+                    if (op >= ref + len)
+                    {
+                        /* disjunct areas */
+                        memcpy (op, ref, len);
+                        op += len;
+                    }
+                    else
+                    {
+                        /* overlapping, use octte by octte copying */
+                        do
+                            *op++ = *ref++;
+                        while (--len);
+                    }
+
+                    break;
+
+                case 9: *op++ = *ref++;
+                case 8: *op++ = *ref++;
+                case 7: *op++ = *ref++;
+                case 6: *op++ = *ref++;
+                case 5: *op++ = *ref++;
+                case 4: *op++ = *ref++;
+                case 3: *op++ = *ref++;
+                case 2: *op++ = *ref++;
+                case 1: *op++ = *ref++;
+                case 0: *op++ = *ref++; /* two octets more */
+                    *op++ = *ref++;
+            }
+#endif
+        }
+    }
+    while (ip < in_end);
+
+    return op - (u8 *)out_data;
+}
+#+END_SRC

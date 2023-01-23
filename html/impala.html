@@ -1,0 +1,187 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Impala</title>
+<meta name="author" content="dirtysalt" />
+<meta name="generator" content="Org Mode" />
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content" class="content">
+<h1 class="title">Impala</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>Table of Contents</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#orgc464ede">1. Useful Links</a></li>
+<li><a href="#org46d9638">2. Installation</a></li>
+<li><a href="#org62ee8c1">3. Getting Started</a></li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-orgc464ede" class="outline-2">
+<h2 id="orgc464ede"><span class="section-number-2">1.</span> Useful Links</h2>
+<div class="outline-text-2" id="text-1">
+<ul class="org-ul">
+<li><a href="http://github.com/cloudera/impala">http://github.com/cloudera/impala</a></li>
+<li><a href="http://parquet.github.com/">Parquet: Columnar Storage for Hadoop</a></li>
+<li><a href="http://blog.cloudera.com/blog/2013/03/introducing-parquet-columnar-storage-for-apache-hadoop/">Introducing Parquet: Efficient Columnar Storage for Apache Hadoop</a></li>
+<li><a href="http://blog.cloudera.com/blog/2012/11/external-observations-about-cloudera-impala/">External Hands-on Experiences with Cloudera Impala</a></li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-org46d9638" class="outline-2">
+<h2 id="org46d9638"><span class="section-number-2">2.</span> Installation</h2>
+<div class="outline-text-2" id="text-2">
+<p>
+<b>Hardware Requirements</b>
+</p>
+<ul class="org-ul">
+<li>During join operations all data from both data sets is loaded into memory. Data sets can be very large, so ensure your hardware has sufficient memory to accommodate the joins you anticipate completing. #note: join操作都是在全内存完成的</li>
+<li>CPU - Impala uses the SSE4.2 instruction set, which is included in newer processors. Impala can use older processors, but for best performance use:
+<ul class="org-ul">
+<li>Intel - Nehalem (released 2008) or later processors.</li>
+<li>AMD - Bulldozer (released 2011) or later processors.</li>
+</ul></li>
+<li>Memory - 32GB or more. Impala cannot run queries that have a working set greater than the total available ram. Note that the working set is not the size of the input.</li>
+<li>Storage - DataNodes with 10 or more disks each. I/O speeds are often the limiting factor for disk performance with Impala. Ensure you have sufficient disk space to store the data Impala will be querying. #note: 拿内存当磁盘用</li>
+</ul>
+
+<p>
+<b>Prerequsite</b>
+</p>
+
+<p>
+将下面内容添加到apt-get的源中，然后使用apt-get update更新.
+</p>
+<pre class="example" id="org6683b9e">
+deb [arch=amd64] http://archive.cloudera.com/cdh4/ubuntu/precise/amd64/cdh precise-cdh4 contrib
+deb-src http://archive.cloudera.com/cdh4/ubuntu/precise/amd64/cdh precise-cdh4 contrib
+
+deb [arch=amd64] http://beta.cloudera.com/impala/ubuntu/precise/amd64/impala precise-impala0 contrib
+deb-src http://beta.cloudera.com/impala/ubuntu/precise/amd64/impala precise-impala0 contrib
+</pre>
+
+<p>
+然后使用如下步骤安装：
+</p>
+<ul class="org-ul">
+<li>Install CDH4 as described in CDH4 Installation. <a href="https://ccp.cloudera.com/display/CDH4DOC/CDH4+Installation">https://ccp.cloudera.com/display/CDH4DOC/CDH4+Installation</a>
+<ul class="org-ul">
+<li>sudo apt-get install hadoop-0.20-mapreduce-jobtracker</li>
+<li>sudo apt-get install hadoop-hdfs-namenode</li>
+<li>sudo apt-get install hadoop-0.20-mapreduce-tasktracker</li>
+<li>sudo apt-get install hadoop-hdfs-datanode</li>
+<li>sudo apt-get install hadoop-client</li>
+</ul></li>
+<li>Install Hive as described in Hive Installation.
+<ul class="org-ul">
+<li>As part of this process, you must configure Hive to use an external database as a metastore. 必须使用外部数据库来作为metastore</li>
+<li>sudo apt-get install hive</li>
+</ul></li>
+<li>最后安装impala组件
+<ul class="org-ul">
+<li>sudo apt-get install impala</li>
+<li>sudo apt-get install impala-shell</li>
+</ul></li>
+</ul>
+
+<p>
+如果你不使用ubuntu系统的话，那么可以使用tarball来安装，但是相比肯定会更加麻烦。而且impala需要使用hdfs的short-circuit read的特性，这个特性需要有libhadoop.so.但是tarball没有自带native实现
+</p>
+<pre class="example" id="org8b6f463">
+Enabling short-circuit reads allows Impala to read local data directly from the file system. This removes
+the need to communicate through the DataNodes, improving performance. This setting also minimizes
+the number of additional copies of data. Short-circuit reads requires libhadoop.so (the Hadoop
+Native Library) to be accessible to both the server and the client. libhadoop.so is not available if you
+have installed from a tarball. You must install from an .rpm, .deb, or parcel in order to use short-circuit
+local reads.
+</pre>
+
+<p>
+下面是这些tarball地址列表：
+</p>
+<ul class="org-ul">
+<li>hadoop <a href="http://archive.cloudera.com/cdh4/cdh/4/hadoop-2.0.0-cdh4.2.0.tar.gz">http://archive.cloudera.com/cdh4/cdh/4/hadoop-2.0.0-cdh4.2.0.tar.gz</a></li>
+<li>hbase <a href="http://archive.cloudera.com/cdh4/cdh/4/hbase-0.94.2-cdh4.2.0.tar.gz">http://archive.cloudera.com/cdh4/cdh/4/hbase-0.94.2-cdh4.2.0.tar.gz</a></li>
+<li>zookeeper <a href="http://archive.cloudera.com/cdh4/cdh/4/zookeeper-3.4.5-cdh4.2.0.tar.gz">http://archive.cloudera.com/cdh4/cdh/4/zookeeper-3.4.5-cdh4.2.0.tar.gz</a></li>
+<li>hive <a href="http://archive.cloudera.com/cdh4/cdh/4/hive-0.10.0-cdh4.2.0.tar.gz">http://archive.cloudera.com/cdh4/cdh/4/hive-0.10.0-cdh4.2.0.tar.gz</a></li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-org62ee8c1" class="outline-2">
+<h2 id="org62ee8c1"><span class="section-number-2">3.</span> Getting Started</h2>
+<div class="outline-text-2" id="text-3">
+<p>
+按照下面几个步骤进行：
+</p>
+<ul class="org-ul">
+<li>启动hdfs</li>
+<li>无需启动mapreduce/yarn/hbase.</li>
+<li>启动hive metastore</li>
+<li>使用hive创建table并且导入数据</li>
+<li>启动impalad # impala daemon. sudo impalad start</li>
+<li>启动statstored # imapala存储统计数据进行优化. sudo statestored start</li>
+<li>启动impala shell
+<ul class="org-ul">
+<li>connect &lt;host&gt; # 连接到host的impalad. connect localhost</li>
+<li>refresh # 从hive metastore读取meta数据，保存在内存中</li>
+<li>SQL语句</li>
+</ul></li>
+</ul>
+
+<p>
+下面是一个例子，使用Hive和Impala来做SQL查询
+</p>
+<pre class="example" id="org7d2528e">
+➜  lib  impala-shell
+Welcome to the Impala shell. Press TAB twice to see a list of available commands.
+
+Copyright (c) 2012 Cloudera, Inc. All rights reserved.
+
+(Build version: Impala v0.6 (720f93c) built on Sat Feb 23 18:52:43 PST 2013)
+[Not connected] &gt; connect localhost
+Connected to localhost:21000
+[localhost:21000] &gt; refresh
+Successfully refreshed catalog
+[localhost:21000] &gt; select * from kv where k = 400;
+Query: select * from kv where k = 400
+Query finished, fetching results ...
+400	val_400
+Returned 1 row(s) in 0.65s
+[localhost:21000] &gt;
+</pre>
+
+<p>
+如果启动sudo impalad start出现下面错误
+</p>
+<pre class="example" id="org9795130">
+0314 16:41:13.884233 18187 impala-server.cc:573] ERROR: short-circuit local reads is disabled because
+- dfs.client.read.shortcircuit is not enabled.
+E0314 16:41:13.884558 18187 impala-server.cc:575] Impala is aborted due to improper configurations.
+</pre>
+
+<p>
+这个问题原因是因为impala需要使用hdfs的short-circuit功能直接读取本地文件系统，避免从datannode传输。为了使用这个功能需要在hdfs-site.xml加上下面选项
+</p>
+<pre class="example" id="org806bb09">
+&lt;property&gt;
+  &lt;name&gt;dfs.client.read.shortcircuit&lt;/name&gt;
+  &lt;value&gt;true&lt;/value&gt;
+&lt;/property&gt;
+&lt;property&gt;
+  &lt;name&gt;dfs.domain.socket.path&lt;/name&gt;
+  &lt;value&gt;/var/run/hadoop-hdfs/dn._PORT&lt;/value&gt;
+&lt;/property&gt;
+</pre>
+</div>
+</div>
+</div>
+<div id="content"><!-- DISQUS BEGIN --><div id="disqus_thread"></div><script>/***  RECOMMENDED CONFIGURATION VARIABLES: EDIT AND UNCOMMENT THE SECTION BELOW TO INSERT DYNAMIC VALUES FROM YOUR PLATFORM OR CMS.*  LEARN WHY DEFINING THESE VARIABLES IS IMPORTANT: https://disqus.com/admin/universalcode/#configuration-variables*/var disqus_config = function () {this.page.url = 'https://dirtysalt.github.io/html/impala.html';this.page.identifier = 'impala.html';};(function() {var d = document, s = d.createElement('script');s.src = 'https://dirlt.disqus.com/embed.js';s.setAttribute('data-timestamp', +new Date());(d.head || d.body).appendChild(s);})();</script><noscript>Please enable JavaScript to view the <a href="https://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript><!-- DISQUS END --></div></body>
+</html>

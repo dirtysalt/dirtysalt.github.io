@@ -1,0 +1,106 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Scaling to Billions on Top of DigitalOcean</title>
+<meta name="author" content="dirtysalt" />
+<meta name="generator" content="Org Mode" />
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content" class="content">
+<h1 class="title">Scaling to Billions on Top of DigitalOcean</h1>
+<p>
+<a href="https://www.digitalocean.com/customers/io/">https://www.digitalocean.com/customers/io/</a>
+</p>
+
+<p>
+DigitalOcean的广告贴吧，可以了解一下如何在DO上搭建cluster的
+</p>
+
+<p>
+服务的资源和各项指标。机器数量还是蛮多的，而且每天会有2个节点出现比较严重的问题，根据负载情况增加和减少10-20个节点。我怀疑搞不好这种auto-scaling功能还需要编写代码才能完成。
+</p>
+
+
+<div id="org1c793a2" class="figure">
+<p><img src="../images/figures-on-digit-ocean.png" alt="figures-on-digit-ocean.png" />
+</p>
+</div>
+
+<ul class="org-ul">
+<li>400+ nodes</li>
+<li>From 0 to 700 million requests a day in 6 months</li>
+<li>20 billion events collected daily</li>
+<li>10 - 20 nodes are added or removed every day</li>
+<li>2 nodes experience critical issues every day</li>
+<li>Technologies: Nginx, Nodejs, Python, PHP, R, Mysql, Redis, Memcache</li>
+</ul>
+
+<hr />
+<p>
+看起来这波人喜欢手撸，喜欢自己做一些工具来处理failover。
+</p>
+<blockquote>
+<p>
+We knew that we would face scalability issues very soon, so we decided to build a growth focused system from the start. What it meant for us:
+</p>
+
+<ul class="org-ul">
+<li>No powerful server configurations. We use techniques like database sharding even for micro-nodes.</li>
+<li>All nodes should have at least one backup. If one goes down, the other is still up.</li>
+<li>We should be able to add nodes very fast. Sometimes every minute counts.</li>
+</ul>
+
+<p>
+Our expenses could be reduced by 30% if we were to switch to powerful dedicated servers. But in this case we would have to pay for hardware failures and hire a system administrator (yes, we do not have one right now!) to deal with all this stuff.
+</p>
+</blockquote>
+
+<hr />
+<p>
+为什么选择DO而不是AWS呢？好处有下面几个：
+</p>
+<ul class="org-ul">
+<li>功能简单，并且有非常简单的API。相比aws ec2确实比较繁琐，但是强大。</li>
+<li>低配置机器的开销非常少。同等低配置的机器费用，AWS是DO的3倍</li>
+<li>费用计算方式简单。AWS计费方式尤其是S3的，基本上没有人搞得懂。</li>
+</ul>
+<p>
+不过他们也使用了一些AWS服务比如Route53.
+</p>
+
+<hr />
+<p>
+DO上如何选择机器配置呢？开始他们选择的是0.5GB-1core plan, 但是发现OS占用了很多内存，留给DB/MySQL的就很少了，所以最终选择1GB-1core plan给DB.
+</p>
+<blockquote>
+<ul class="org-ul">
+<li>Frontends — 2GB x 2-core</li>
+<li>Data storages — 1GB x 1-core</li>
+<li>AI nodes (r and python – anomaly detection subsystem) — 2GB x 2-core</li>
+</ul>
+</blockquote>
+
+<p>
+默认是关闭SWAP的，所以需要非常注意内存使用情况避免OOM。节点之间通信使用private networking，这样可以避免外网流量。为了减少frontend高并发对DB的压力，DB前面做了一个proxy/aggregator， 我觉得可以认为是用来做保护的。
+</p>
+
+<p>
+failover是如何来完成的呢？通过monitor监控所有节点的状态，来调用DO API来上线和下线。
+</p>
+
+
+<div id="org91094b2" class="figure">
+<p><img src="../images/failover-on-digital-ocean.png" alt="failover-on-digital-ocean.png" />
+</p>
+</div>
+
+<p>
+对于Shared Resources来说， <a href="https://www.datadoghq.com/blog/understanding-aws-stolen-cpu-and-how-it-affects-your-apps/">Stolen CPU</a> 是非常重要的指标。如何这个指标很高的话，说明资源共享做的不太好。
+</p>
+</div>
+<div id="content"><!-- DISQUS BEGIN --><div id="disqus_thread"></div><script>/***  RECOMMENDED CONFIGURATION VARIABLES: EDIT AND UNCOMMENT THE SECTION BELOW TO INSERT DYNAMIC VALUES FROM YOUR PLATFORM OR CMS.*  LEARN WHY DEFINING THESE VARIABLES IS IMPORTANT: https://disqus.com/admin/universalcode/#configuration-variables*/var disqus_config = function () {this.page.url = 'https://dirtysalt.github.io/html/scaling-to-billions-on-top-of-digital-ocean.html';this.page.identifier = 'scaling-to-billions-on-top-of-digital-ocean.html';};(function() {var d = document, s = d.createElement('script');s.src = 'https://dirlt.disqus.com/embed.js';s.setAttribute('data-timestamp', +new Date());(d.head || d.body).appendChild(s);})();</script><noscript>Please enable JavaScript to view the <a href="https://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript><!-- DISQUS END --></div></body>
+</html>

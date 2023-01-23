@@ -1,0 +1,72 @@
+#+title: LC 1915. 最美子字符串的数目
+
+https://leetcode-cn.com/contest/weekly-contest-247/problems/number-of-wonderful-substrings/
+
+最开始使用动态规划的思路，但是超时了。从计算规模上看，也可能看出是要超时的（10^7）。
+
+关于这个动态规划的状态可以看注释，几个问题：
+1. 大量不必要的data movement. 比如 `for s in range(1024)` 这个循环估计里面有不少是0
+2. 最主要的问题是，其实我们不关心字符串结尾是在具体哪个位置上。而为了维护这个具体位置，我们需要额外的工作来维护这个结构
+
+#+BEGIN_SRC python
+#!/usr/bin/env python
+# coding:utf-8
+# Copyright (C) dirlt
+
+from typing import List
+from collections import Counter, defaultdict, deque
+from functools import lru_cache
+import heapq
+
+
+class Solution:
+    def wonderfulSubstrings(self, word: str) -> int:
+        dp = [[0] * 1024 for _ in range(2)]
+        now = 0
+        ans = 0
+        # dp[i][st] 截止到ith这个字符串上，以ith为结尾，各个state的分布情况
+        for i, w in enumerate(word):
+            t = ord(w) - ord('a')
+            for s in range(1024):
+                dp[1 - now][s ^ (1 << t)] = dp[now][s]
+            dp[1 - now][1 << t] += 1
+            now = 1 - now
+            ans += dp[now][0]
+            for j in range(10):
+                ans += dp[now][1 << j]
+        return ans
+#+END_SRC
+
+下面这个实现是通过的实现，每次处理一个字符的时候，只关心之前有多少种符合条件的状态，而不关心这些状态的结束位置。
+这个状态维护还比较难写对，我总结一下这个模式：
+1. 首先假设 `w` 已经进来了，所以acc更新为了 `acc ^ (1 << t)`. 但是实际没有更新到表里面
+2. 然后按照 `acc` 这个状态去查找，所以肯定不会找到空串。
+3. 整个过程结束之后，最后更新表结构中 `cnt[acc]+=1`.
+
+#+BEGIN_SRC python
+class Solution:
+    def wonderfulSubstrings(self, word: str) -> int:
+        from collections import Counter
+        cnt = Counter()
+        acc = 0
+        ans = 0
+
+        cnt[0] = 1
+        for i, w in enumerate(word):
+            t = ord(w) - ord('a')
+            acc = acc ^ (1 << t)
+            # xor([...i]) = acc
+            # xor([..j]) = acc
+            # then xor(j+1..i) = 0
+            ans += cnt[acc]
+
+            # xor([..i]) =acc
+            # xor(..j]) = acc ^(1 << x)
+            # then xor(j+1..) = (1<<x)
+            for j in range(10):
+                exp = acc ^ (1 << j)
+                ans += cnt[exp]
+
+            cnt[acc] += 1
+        return ans
+#+END_SRC

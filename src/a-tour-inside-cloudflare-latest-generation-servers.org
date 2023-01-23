@@ -1,0 +1,56 @@
+#+title: A Tour Inside CloudFlare's Latest Generation Servers
+
+http://blog.cloudflare.com/a-tour-inside-cloudflares-latest-generation-servers
+
+** Introduction
+- CloudFlare operates at a significant scale, handling more than a trillion requests through our network every month. To ensure this is as efficient as possible, we own and operate all the equipment in our 23 locations around the world in order to process the volume of traffic that flows through our network.（cloudflare主要是做CDN）
+- We spend a significant amount of time specing and, in some cases, designing the hardware that makes up our network. At the edge of CloudFlare's network we run three main components: routers, switches, and servers.（自己做路由器，交换机和服务器）
+- On regular intervals, we will take everything we've learned about a last generation of hardware and refresh each component with a next generation.（不断迭代改善自己的服务器组件）
+- For servers, we are on our fourth generation (G4) of servers.
+  - Our first generation (G1) servers were stock Dell PowerEdge servers. We deployed these in early 2010 while we were building the beta of CloudFlare.
+  -  We learned quickly from that experience and then worked with a company called ZT Systems to build our G2 servers, which we deployed just before our public launch in September 2010.
+  - In 2011, we worked with HP to build our G3 servers. We deployed that generation through mid 2012, forming the core of our current network of 23 data centers worldwide. In the Fall of 2012 we started working with vendors to take everything we'd learned about running a network to date and roll out newest generation of servers.
+
+** Generation 3
+Before looking at G4 it's important to understand what we learned about our previous generation of servers.
+
+|              | G3                                                                                 | G4                          |
+|--------------+------------------------------------------------------------------------------------+-----------------------------|
+| vendor       | HP                                                                                 |                             |
+| size         | 2U                                                                                 |                             |
+| cpu          | Intel Xeon E5645 (Westmere variant) CPUs running at 2.4GHz * 2                     | Intel Xeon 2630L 2.0GHz * 2 |
+| storage      | Intel SSDs * 25                                                                    |                             |
+| ram          | 48GB                                                                               | 128GB                       |
+| network      | 1Gbps Intel-based network interfaces (2 on the motherboard and four on a PCI card) | 10Gbps Solarflare           |
+| power supply | Platinum                                                                           |                             |
+
+We liked the build quality and reliability of the HP gear and it continues to power a significant amount of traffic across our network. When we went to design our G4 servers we looked at the bottlenecks we faced with G3 and sought new hardware designed specifically to solve them.
+
+** Storage
+CloudFlare uses SSDs exclusively at the edge of our network. SSDs give us three advantages. (SSD优势）
+- First, they tend to fail gradually over time rather than catastrophically, which allows us to predictably schedule their replacement and not keep staff on hand at all our locations around the world.（故障率可预测）
+- Second, SSDs consume significantly less power than spinning HDDs. Less power means we can put more equipment less expensively in the data centers where we are located. （功耗更小）
+- Finally, SSDs have faster random seek and write performance, which is important given the nature of our traffic.（性能更好）
+
+We went through a number of different models of SSDs over the life of our G3 hardware. The best price performance we found were the *240GB Intel 520 SSD drives* , which is what we are using in the first shipments of the new G4 servers. Intel reports that the 520-series drives have a *mean time between failure (MTBF) of 1,200,000 hours (about 137 years).* While we haven't been running enough of the drives long enough to confirm that MTBF, we have been pleased with their low failure rate in our production environment.
+
+One thing we pulled out of our G4 setup was a RAID card. We'd experimented with hardware RAID but found we got more performance addressing each disk individually and using consistent hashing in the algorithm to spread files across disks. Specifically, we saw a 50% performance benefit addressing disks directly rather than going through the G3 hardware RAID. The additional reliability of RAID isn't as important for our application as we can always go fetch a copy of the original object from our customer's origin server if necessary.（因为场景是CDN如果丢失数据的话可以从origin server获取，所以没有必要做RAID，使用一致性hash来决定写入哪个盘，效率提高了50%）
+
+While disk performance is important, in the case of frequently requested files it's even better if we can pull them straight from RAM. With RAM prices falling dramatically, we increased the amount of RAM in our G4 servers to 128GB. This allows us to hold more cache objects in RAM and hit the disk less frequently. Specifically, 128GB vs 48GB, allows us to have 100GB of in-memory file cache versus 20GB. That's 5x the memory file cache, which means we don't have to go to disk for the most popular resources. This gives us a 50% memory cache hit rate vs 25% on G3 servers.（更大容量的内存可以做更多的cache工作提高性能）
+
+** CPU
+With our G3 equipment we were not CPU bound under normal circumstances. When we mitigate large Layer 4 DDoS attacks (e.g., SYN floods) our CPUs would, from time to time, become overwhelmed with excessive processor interrupts. In our tests, increasing or decreasing the clockspeed of the CPU did little to change this problem. Adding more cores to a CPU did help mitigate this and we tested some of the high core count AMD CPUs, but ultimately decided against going that direction.（通常情况下面CPU并不是bound, 但是在DDoS情况下面会出现非常多的CPU中断。改善CPU时钟频率并且添加core虽然有作用但是却不大。可以从下面的Network这节看到他们从kernel处理层面改善interrupt这个问题）
+
+While top clockspeed was not our priority, our product roadmap includes more CPU-heavy features. These include image optimization (e.g., Mirage and Polish), high volumes of SSL/TLS connections, and extremely fast pattern expression matching (e.g., PCRE tests for our WAF). These CPU-heavy operations can, in most cases, take advantage of special vector processing instruction sets on post-Westmere Intel chips. This made Intel's newest generation Sandybridge chipset attractive.（但是确实存在许多CPU计算工作，可以通过SIMD来做优化）
+
+We were willing to sacrifice a bit of clockspeed and spend a bit more on chips to save power. We tend to put our equipment in data centers that have high network density. We settled on our G4 servers having two [[http://ark.intel.com/products/64586/][Intel Xeon 2630L]] CPUs (a low power chip in the Sandybridge family) running at 2.0GHz. This gives us 12 physical cores (and 24 virtual cores with hyperthreading) per server. The power savings per chip (60 watts vs. 95 watts) is sufficient to allow us at least one more server per rack than we'd be able to get if we went with the non-low power version.（最终在选择上决定使用相对低频CPU来节省功耗，而注重提高网络容量）
+
+** Network
+This biggest change from our G3 to G4 servers was the jump from 1Gbps to 10Gbps network interfaces. With our G3 servers, we would sometimes max out the 6Gbps of network capacity per server when under certain high-volume Layer 7 attacks. We knew we wanted to jump to 10Gbps on each server, but we also wanted to pick the right network controller card. We ended up testing a very wide range of network cards, spending more time optimizing this component in the servers than any other. In the end, we settled on the network cards from a company called [[http://solarflare.com/][Solarflare]]. (It didn't hurt that their name was similar to ours.) (升级到了万兆网卡)
+
+Solarflare has traditionally focused on supplying extremely performant network cards for the high frequency trading industry. What we found was that their cards ran circles around everything else in the market: handling up to 16 million packets per second in our tests (at 60 bytes per packet, the typical size of a SYN packet in a SYN-flood attack), compared with the next best alternative topping out around 9M PPS. We ended up using the Solarflare SFC9020 in our G4 servers. Part of the explanation for the performance benefit is that Solarflare includes a comparatively large network buffer on their cards (16MB versus 512KB or less in most the other cards we tested), minimizing the chance of network congestion leading to packet loss. This is good under normal operations but is particularly helpful when there is a DDoS attack.（每秒处理16M packets，一方面原因是因为有更大的网络缓存）
+
+Beyond the hardware, we're working with Solarflare to take advantage of some of the software which allows us to streamline network performance. In particular, we've begun to test their OpenOnload kernel bypass technology. This allows network requests to be handled directly by userspace without creating a CPU interrupt. Beyond reducing interrupts during attacks, if you remove the latency of going through the kernel stack and directly into application stack then you can process a higher number of packets in the same amount of time, which increases overall performance. On average you save 100μs (100 microseconds, or 1/10th of a millisecond) each time you bypass the kernel stack. While that may not seem like a lot, it translates into a 20% transaction latency savings for us. If you control sender/receiver — which we do, for example, when fetching cached objects intra-network — that benefit is doubled.（放在用户态来处理中断，减少20%的延迟出现）
+
+** Designed to Our Unique Needs
+While we talked to these OEMs in the bakeoff we ran to select the vendor for our G4 servers, in the end we chose to work with what is known as an original design manufacturer (ODM) that built the servers exactly to our spec. We choose a Taiwanese company called [[http://www.quantatw.com/Quanta/english/Default.aspx][Quanta]] which has built custom designed servers for companies like Facebook and Rackspace.

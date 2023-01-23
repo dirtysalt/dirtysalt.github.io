@@ -1,0 +1,35 @@
+#+title: 利用WiFi热点来定位
+
+前几天看到一个项目很有意思 [[https://github.com/kootenpv/whereami][whereami]] "Uses WiFi signals and machine learning to predict where you are"
+
+在没有看这个项目代码之前，我一直很好奇，WiFI signals里面蕴含了什么信息可以用来进行定位呢？至于prediction, 我反而不是特别好奇，无非是一些ML方面的东西。
+
+获取WiFi signals，作者使用的是自己的一个项目 [[https://github.com/kootenpv/access_points][access points]]. 可以扫描WiFI或许身边的所有的APs, 以及记录这些APs的信号强度。看上去使用起来看简单
+#+BEGIN_SRC Python
+from access_points import get_scanner
+wifi_scanner = get_scanner()
+wifi_scanner.get_access_points()
+#+END_SRC
+阅读代码之后可以发现，实现上会区分各种平台包括Linux, Mac, Windows，不同平台有不同的命令来获取APs, 这里仅列举Linux和Mac.
+
+粗看下面，Linux下面使用的命令是"nmcli -t -f ssid,bssid,signal,security device wifi list", 而MacOS X使用的是 "/System/Library/PrivateFrameworks/Apple80211.framework/Versions/Current/Resources/airport -s". 执行这条命令输出样式是
+#+BEGIN_EXAMPLE
+➜  repo /System/Library/PrivateFrameworks/Apple80211.framework/Versions/Current/Resources/airport -s
+                            SSID BSSID             RSSI CHANNEL HT CC SECURITY (auth/unicast/group)
+                     NETGEAR-LEO a0:21:b7:aa:4d:1a -62  11      Y  -- WPA(PSK/AES,TKIP/TKIP) WPA2(PSK/AES,TKIP/TKIP)
+                         CU_YVVq bc:9c:31:d1:e5:fc -94  10      Y  CN WPA(PSK/TKIP,AES/TKIP) WPA2(PSK/TKIP,AES/TKIP)
+                  Netcore_866E6A 08:10:79:86:6e:6a -91  6,+1    Y  -- WPA(PSK/TKIP,AES/TKIP) WPA2(PSK/TKIP,AES/TKIP)
+               TP-LINK_418AC8xsj 20:dc:e6:41:8a:c8 -95  6,+1    Y  US WPA(PSK/AES/AES) WPA2(PSK/AES/AES)
+                        FAST_201 bc:d1:77:bd:d5:5a -66  6,+1    Y  -- WPA(PSK/AES/AES) WPA2(PSK/AES/AES)
+                    TP-LINK_F785 34:96:72:c5:f7:85 -90  1,+1    Y  -- WPA(PSK/AES/AES) WPA2(PSK/AES/AES)
+                         CU_9Y9D 9c:7d:a3:6e:51:90 -19  1       Y  CN WPA(PSK/TKIP,AES/TKIP) WPA2(PSK/TKIP,AES/TKIP)
+#+END_EXAMPLE
+其中RSSI数值可以通过公式2 * (rssi + 100) 转为quality（我不太理解为什么是这么计算，不过看上去RSSI和连接质量呈线性关系）
+
+
+whereami的工作则是来训练APs和具体location的模型，为了获取训练数据，你需要在一个地点比如厨房或者是卧室带上一阵子，然后标记说这段时间我是在厨房或者是卧室。训练数据最后会转换成为
+#+BEGIN_EXAMPLE
+[ {'ssid-bssid': quality}, {'ssid-bssid': quality }] => kitchen
+[ {'ssid-bssid': quality}, {'ssid-bssid': quality }] => bedroom
+#+END_EXAMPLE
+这样的形式，里面这些字典通过DictVectorizer做成向量形成Feature. 我觉得这个训练效果应该是会非常的好。看这个项目的描述 "Uses WiFi signals and machine learning (sklearn's RandomForest) to predict where you are. Even works for small distances like 2-10 meters." 精度在2-10m左右，所以我猜想这个作者的房子应该是很大地：)

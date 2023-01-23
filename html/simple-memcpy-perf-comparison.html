@@ -1,0 +1,905 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>一个简单的几种memcpy实现的性能测试对比</title>
+<meta name="author" content="dirtysalt" />
+<meta name="generator" content="Org Mode" />
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content" class="content">
+<h1 class="title">一个简单的几种memcpy实现的性能测试对比</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>Table of Contents</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#orgb35510d">1. 测试代码</a></li>
+<li><a href="#org3b0e003">2. 初步测试结果</a>
+<ul>
+<li><a href="#orgf1b3e43">2.1. 超小尺寸</a></li>
+<li><a href="#org5df412d">2.2. 小尺寸</a></li>
+<li><a href="#org204f2c5">2.3. 中尺寸</a></li>
+<li><a href="#org04ce8c1">2.4. 大尺寸</a></li>
+<li><a href="#org447ee3a">2.5. 初步总结</a></li>
+</ul>
+</li>
+<li><a href="#orgecec22b">3. 实现分析</a>
+<ul>
+<li><a href="#org9c46703">3.1. memcpy_erms</a></li>
+<li><a href="#orgc8553bc">3.2. memcpy_AVX2</a></li>
+<li><a href="#orgbbb634e">3.3. memcpy_tiny</a></li>
+<li><a href="#orgd3e06fa">3.4. memcpy_my/my2</a>
+<ul>
+<li><a href="#orgf8ada3d">3.4.1. 16字节以内</a></li>
+<li><a href="#org6171c04">3.4.2. 32字节以内</a></li>
+<li><a href="#org521518c">3.4.3. 128/256字节以内</a></li>
+<li><a href="#orgfad0a73">3.4.4. 128/256字节以外</a></li>
+</ul>
+</li>
+<li><a href="#orge193844">3.5. CK版本注释</a></li>
+</ul>
+</li>
+<li><a href="#org247fc8a">4. FIX `memcpy_my`</a></li>
+<li><a href="#org83505c2">5. 改进方案设计</a></li>
+<li><a href="#orgdb429bf">6. 细粒度分析</a>
+<ul>
+<li><a href="#org116375c">6.1. 1KB~64KB</a></li>
+<li><a href="#org5c26bea">6.2. 32KB~2MB</a></li>
+<li><a href="#org6d83c20">6.3. 2MB~64MB</a></li>
+</ul>
+</li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-orgb35510d" class="outline-2">
+<h2 id="orgb35510d"><span class="section-number-2">1.</span> 测试代码</h2>
+<div class="outline-text-2" id="text-1">
+<p>
+测试代码是在Clickhouse memcpy-bench基础上改造过来的  [ClickHouse/utils/memcpy-bench at master · ClickHouse/ClickHouse](<a href="https://github.com/ClickHouse/ClickHouse/tree/master/utils/memcpy-bench">https://github.com/ClickHouse/ClickHouse/tree/master/utils/memcpy-bench</a>)
+</p>
+
+<p>
+不过我们这里没有使用clickhouse的统计方式，而是使用google benchmark驱动。代码放在了这里 [codes/cc/sr-test/memcpy-bench at master · dirtysalt/codes](<a href="https://github.com/dirtysalt/codes/tree/master/cc/sr-test/memcpy-bench">https://github.com/dirtysalt/codes/tree/master/cc/sr-test/memcpy-bench</a>)
+</p>
+
+<p>
+这个测试相比CK测试会简化一些，只关注单线程上的memcpy性能，然后选择了几种尺寸进行测试，并且在每种尺寸上做了微调确保没有完全对齐。 UPDATE: 后面增加了多线程场景下的比较。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-cpp"><span class="org-preprocessor">#define</span> <span class="org-function-name">BM</span>(<span class="org-variable-name">IMPL</span>)                                                                                \
+    <span class="org-type">void</span> <span class="org-variable-name">BM</span>**IMPL(<span class="org-constant">benchmark</span>::<span class="org-type">State</span>&amp; <span class="org-variable-name">state</span>) {                                                    \
+        <span class="org-type">size_t</span> <span class="org-variable-name">size</span> = state.range(0);                                                           \
+        <span class="org-constant">std</span>::<span class="org-type">vector</span>&lt;<span class="org-type">uint8_t</span>&gt; <span class="org-variable-name">vec_dst</span>(size), <span class="org-variable-name">vec_src</span>(size);                                      \
+        <span class="org-type">uint8_t</span>* <span class="org-variable-name">dst</span> = vec_dst.data();                                                          \
+        <span class="org-type">uint8_t</span>* <span class="org-variable-name">src</span> = vec_src.data();                                                          \
+        memset(src, 0x3f, size);                                                                \
+        <span class="org-constant">std</span>::<span class="org-type">mt19937</span> <span class="org-variable-name">gen32</span>(0);                                                                  \
+        <span class="org-keyword">for</span> (<span class="org-keyword">auto</span> <span class="org-variable-name">_</span> : state) {                                                                  \
+            <span class="org-comment-delimiter">/* </span><span class="org-comment">(1-(x)/2048) * size. x in [0, 256]</span><span class="org-comment-delimiter"> */</span>                                            \
+            <span class="org-type">size_t</span> <span class="org-variable-name">copy_size</span> = (1 - (gen32() &amp; 0x0ff) * 0.000488281) * size;                    \
+            IMPL(dst, src, size);                                                               \
+            <span class="org-comment-delimiter">/* </span><span class="org-comment">/// Execute at least one SSE instruction as a penalty after running AVX code.</span><span class="org-comment-delimiter"> */</span> \
+            <span class="org-keyword">__asm__</span> __volatile__(<span class="org-string">"pxor %%xmm15, %%xmm15"</span> ::: <span class="org-string">"xmm15"</span>);                          \
+        }                                                                                       \
+    }
+
+<span class="org-keyword">static</span> <span class="org-keyword">constexpr</span> <span class="org-type">size_t</span> <span class="org-variable-name">N</span> = 1000000;
+<span class="org-keyword">static</span> <span class="org-keyword">constexpr</span> <span class="org-type">size_t</span> <span class="org-variable-name">KB</span> = 1024;
+<span class="org-keyword">static</span> <span class="org-keyword">constexpr</span> <span class="org-type">size_t</span> <span class="org-variable-name">MB</span> = 1024 * 1024;
+<span class="org-preprocessor">#define</span> <span class="org-function-name">VARIANT</span>(<span class="org-variable-name">N</span>, <span class="org-variable-name">NAME</span>) \
+    BM(NAME)             \
+    BENCHMARK(BM**NAME)-&gt;Name(#NAME)-&gt;RangeMultiplier(4)-&gt;Range(16, 128 * MB)-&gt;Threads(1)-&gt;Threads(8);
+</pre>
+</div>
+
+<p>
+其中有好几个版本是glibc自带的，后面就不分析了，他们都是汇编实现，比较难看懂。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-cpp">VARIANT(21, __memcpy_erms)
+VARIANT(22, __memcpy_sse2_unaligned)
+VARIANT(23, __memcpy_ssse3)
+VARIANT(24, __memcpy_ssse3_back)
+VARIANT(25, __memcpy_avx_unaligned)
+VARIANT(26, __memcpy_avx_unaligned_erms)
+VARIANT(5, memcpy_jart)
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org3b0e003" class="outline-2">
+<h2 id="org3b0e003"><span class="section-number-2">2.</span> 初步测试结果</h2>
+<div class="outline-text-2" id="text-2">
+</div>
+<div id="outline-container-orgf1b3e43" class="outline-3">
+<h3 id="orgf1b3e43"><span class="section-number-3">2.1.</span> 超小尺寸</h3>
+<div class="outline-text-3" id="text-2-1">
+<p>
+超小尺寸包含下面几个尺寸：16, 64, 256, 1024.
+</p>
+
+<p>
+比较好的实现有：
+</p>
+<ul class="org-ul">
+<li>memcpy_my</li>
+<li>avx_unaligned</li>
+<li>avx_unaligned_erms</li>
+</ul>
+
+
+<div id="org312ed25" class="figure">
+<p><img src="../images/media/16684889455769/memcpy_size_16.png" alt="memcpy_size_16.png" />
+</p>
+</div>
+
+
+<div id="orgee45a60" class="figure">
+<p><img src="../images/media/16684889455769/memcpy_size_64.png" alt="memcpy_size_64.png" />
+</p>
+</div>
+
+
+<div id="orgf981ef3" class="figure">
+<p><img src="../images/media/16684889455769/memcpy_size_256.png" alt="memcpy_size_256.png" />
+</p>
+</div>
+
+
+<div id="org9893f4e" class="figure">
+<p><img src="../images/media/16684889455769/memcpy_size_1024.png" alt="memcpy_size_1024.png" />
+</p>
+</div>
+</div>
+</div>
+
+
+<div id="outline-container-org5df412d" class="outline-3">
+<h3 id="org5df412d"><span class="section-number-3">2.2.</span> 小尺寸</h3>
+<div class="outline-text-3" id="text-2-2">
+<p>
+小尺寸包含下面几个尺寸：4K, 16K, 64K
+</p>
+
+<p>
+比较好的实现有：
+</p>
+<ul class="org-ul">
+<li>4K和16K上, erms版本最好，my/avx_unaligned表现也不错。</li>
+<li>64K上，my/my2/avx_unaligned/AVX2表现都不错</li>
+</ul>
+
+
+
+<div id="orga66e495" class="figure">
+<p><img src="../images/media/16684889455769/memcpy_size_4096.png" alt="memcpy_size_4096.png" />
+</p>
+</div>
+
+
+<div id="orgc8b747d" class="figure">
+<p><img src="../images/media/16684889455769/memcpy_size_16384.png" alt="memcpy_size_16384.png" />
+</p>
+</div>
+
+
+<div id="org77c69a5" class="figure">
+<p><img src="../images/media/16684889455769/memcpy_size_65536.png" alt="memcpy_size_65536.png" />
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org204f2c5" class="outline-3">
+<h3 id="org204f2c5"><span class="section-number-3">2.3.</span> 中尺寸</h3>
+<div class="outline-text-3" id="text-2-3">
+<p>
+中尺寸包含下面几个尺寸：256K, 1MB, 4MB
+</p>
+
+<p>
+比较好的实现有：
+</p>
+<ul class="org-ul">
+<li>256K上 my/my2/AVX2/erms/avx_unaligned 表现都可以</li>
+<li>1MB上 erms/avx_unaligned_erms 最好，my版本表现也可以</li>
+<li>4MB上 my/my2/AVX2/avx_unaligned 表现都可以</li>
+</ul>
+
+
+<div id="org9e66b9d" class="figure">
+<p><img src="../images/media/16684889455769/memcpy_size_262144.png" alt="memcpy_size_262144.png" />
+</p>
+</div>
+
+
+<div id="org9b38c74" class="figure">
+<p><img src="../images/media/16684889455769/memcpy_size_1048576.png" alt="memcpy_size_1048576.png" />
+</p>
+</div>
+
+
+<div id="org4358b29" class="figure">
+<p><img src="../images/media/16684889455769/memcpy_size_4194304.png" alt="memcpy_size_4194304.png" />
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org04ce8c1" class="outline-3">
+<h3 id="org04ce8c1"><span class="section-number-3">2.4.</span> 大尺寸</h3>
+<div class="outline-text-3" id="text-2-4">
+<p>
+大尺寸包含下面几个尺寸：16MB, 32MB, 128MB
+</p>
+
+<p>
+在这个尺寸上的拷贝，单线程和多线程的排名差异非常大。
+</p>
+<ul class="org-ul">
+<li>单线程上 my/my2/AVX2 似乎实现比较好</li>
+<li>多线程上 avx_unaligned/erms 似乎比较好</li>
+</ul>
+
+
+<div id="org2e385e0" class="figure">
+<p><img src="../images/media/16684889455769/memcpy_size_16777216.png" alt="memcpy_size_16777216.png" />
+</p>
+</div>
+
+
+<div id="orge99aa00" class="figure">
+<p><img src="../images/media/16684889455769/memcpy_size_67108864.png" alt="memcpy_size_67108864.png" />
+</p>
+</div>
+
+
+<div id="orgcee8da5" class="figure">
+<p><img src="../images/media/16684889455769/memcpy_size_134217728.png" alt="memcpy_size_134217728.png" />
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org447ee3a" class="outline-3">
+<h3 id="org447ee3a"><span class="section-number-3">2.5.</span> 初步总结</h3>
+<div class="outline-text-3" id="text-2-5">
+<p>
+总结如下：
+</p>
+<ul class="org-ul">
+<li>超小尺寸上：my/my2/avx_unaligned 不错</li>
+<li>小尺寸上: my/my2/avx_unaligned/AVX2 不错</li>
+<li>中尺寸上：my/my2/avx_unaligned/AVX2 不错</li>
+<li>大尺寸上：
+<ul class="org-ul">
+<li>单线程： my/my2/AVX2</li>
+<li>多线程：avx_unaligned/erms</li>
+</ul></li>
+<li>在某些大小上，erms效果会特别好。</li>
+</ul>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgecec22b" class="outline-2">
+<h2 id="orgecec22b"><span class="section-number-2">3.</span> 实现分析</h2>
+<div class="outline-text-2" id="text-3">
+</div>
+<div id="outline-container-org9c46703" class="outline-3">
+<h3 id="org9c46703"><span class="section-number-3">3.1.</span> memcpy_erms</h3>
+<div class="outline-text-3" id="text-3-1">
+<p>
+这个实现比较简单，不过只是对于x86有效
+</p>
+
+<div class="org-src-container">
+<pre class="src src-cpp"><span class="org-keyword">static</span> <span class="org-type">void</span>* <span class="org-function-name">memcpy_erms</span>(<span class="org-type">void</span>* <span class="org-variable-name">dst</span>, <span class="org-keyword">const</span> <span class="org-type">void</span>* <span class="org-variable-name">src</span>, <span class="org-type">size_t</span> <span class="org-variable-name">size</span>) {
+    <span class="org-keyword">asm</span> <span class="org-keyword">volatile</span>(<span class="org-string">"rep movsb"</span> : <span class="org-string">"=D"</span>(dst), <span class="org-string">"=S"</span>(src), <span class="org-string">"=c"</span>(size) : <span class="org-string">"0"</span>(dst), <span class="org-string">"1"</span>(src), <span class="org-string">"2"</span>(size) : <span class="org-string">"memory"</span>);
+    <span class="org-keyword">return</span> dst;
+}
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgc8553bc" class="outline-3">
+<h3 id="orgc8553bc"><span class="section-number-3">3.2.</span> memcpy_AVX2</h3>
+<div class="outline-text-3" id="text-3-2">
+<p>
+这个实现大致分为几个部分：
+</p>
+<ul class="org-ul">
+<li>小内存(&lt;=32)拷贝走 `memcpy_tiny`</li>
+<li>按照32字节对齐，然后每次拷贝32字节</li>
+<li>对最后尾部继续使用 `memcpy_tiny` 进行拷贝</li>
+</ul>
+
+<div class="org-src-container">
+<pre class="src src-cpp"><span class="org-keyword">static</span> <span class="org-type">void</span>* <span class="org-function-name">memcpyAVX2</span>(<span class="org-type">void</span>* <span class="org-variable-name">__restrict</span> destination, <span class="org-keyword">const</span> <span class="org-type">void</span>* <span class="org-variable-name">__restrict</span> source, <span class="org-type">size_t</span> <span class="org-variable-name">size</span>) {
+    <span class="org-type">unsigned</span> <span class="org-type">char</span>* <span class="org-variable-name">dst</span> = <span class="org-keyword">reinterpret_cast</span>&lt;<span class="org-type">unsigned</span> <span class="org-type">char</span>*&gt;(destination);
+    <span class="org-keyword">const</span> <span class="org-type">unsigned</span> <span class="org-type">char</span>* <span class="org-variable-name">src</span> = <span class="org-keyword">reinterpret_cast</span>&lt;<span class="org-keyword">const</span> <span class="org-type">unsigned</span> <span class="org-type">char</span>*&gt;(source);
+    <span class="org-type">size_t</span> <span class="org-variable-name">padding</span>;
+
+    <span class="org-comment-delimiter">// </span><span class="org-comment">small memory copy</span>
+    <span class="org-keyword">if</span> (size &lt;= 32) <span class="org-keyword">return</span> memcpy_tiny(dst, src, size);
+
+    <span class="org-comment-delimiter">// </span><span class="org-comment">align destination to 16 bytes boundary</span>
+    padding = (32 - (<span class="org-keyword">reinterpret_cast</span>&lt;<span class="org-type">size_t</span>&gt;(dst) &amp; 31)) &amp; 31;
+
+    <span class="org-keyword">if</span> (padding &gt; 0) {
+        <span class="org-type">__m256i</span> <span class="org-variable-name">head</span> = _mm256_loadu_si256(<span class="org-keyword">reinterpret_cast</span>&lt;<span class="org-keyword">const</span> <span class="org-type">__m256i</span>*&gt;(src));
+        _mm256_storeu_si256(<span class="org-keyword">reinterpret_cast</span>&lt;<span class="org-type">__m256i</span>*&gt;(dst), head);
+        dst += padding;
+        src += padding;
+        size -= padding;
+    }
+
+    <span class="org-comment-delimiter">// </span><span class="org-comment">medium size copy</span>
+    <span class="org-type">__m256i</span> <span class="org-variable-name">c0</span>;
+
+    <span class="org-keyword">for</span> (; size &gt;= 32; size -= 32) {
+        c0 = _mm256_loadu_si256(<span class="org-keyword">reinterpret_cast</span>&lt;<span class="org-keyword">const</span> <span class="org-type">__m256i</span>*&gt;(src));
+        src += 32;
+        _mm256_store_si256((<span class="org-keyword">reinterpret_cast</span>&lt;<span class="org-type">__m256i</span>*&gt;(dst)), c0);
+        dst += 32;
+    }
+
+    memcpy_tiny(dst, src, size);
+    <span class="org-keyword">return</span> destination;
+}
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgbbb634e" class="outline-3">
+<h3 id="orgbbb634e"><span class="section-number-3">3.3.</span> memcpy_tiny</h3>
+<div class="outline-text-3" id="text-3-3">
+<p>
+这个函数其实是来自于 <a href="https://github.com/skywind3000/FastMemcpy">https://github.com/skywind3000/FastMemcpy</a>. 针对的1-128字节所有的可能，
+</p>
+<ul class="org-ul">
+<li>各种大小进行了配对，比如65和1。 因为65拷贝前面64个字节，然后1字节拷贝的部分可以共享。</li>
+<li>对于2,4,8字节分别使用uint16_t, uint32_t, uint64_t 进行拷贝</li>
+<li>对于16,32,64字节则使用sse2_16,sse2_32,sse2_64函数来拷贝</li>
+<li>这种实现问题在于展开text段会比较大，对于icache不是特别好。</li>
+</ul>
+
+<div class="org-src-container">
+<pre class="src src-cpp"><span class="org-comment-delimiter">//</span><span class="org-comment">---------------------------------------------------------------------</span>
+<span class="org-comment-delimiter">// </span><span class="org-comment">tiny memory copy with jump table optimized</span>
+<span class="org-comment-delimiter">//</span><span class="org-comment">---------------------------------------------------------------------</span>
+<span class="org-comment-delimiter">/// </span><span class="org-comment">Attribute is used to avoid an error with undefined behaviour sanitizer</span>
+<span class="org-comment-delimiter">/// </span><span class="org-comment">../contrib/FastMemcpy/FastMemcpy.h:91:56: runtime error: applying zero offset to null pointer</span>
+<span class="org-comment-delimiter">/// </span><span class="org-comment">Found by 01307_orc_output_format.sh, cause - ORCBlockInputFormat and external ORC library.</span>
+<span class="org-keyword">__attribute__</span>((__no_sanitize__(<span class="org-string">"undefined"</span>))) <span class="org-keyword">inline</span> <span class="org-type">void</span>* <span class="org-function-name">memcpy_tiny</span>(<span class="org-type">void</span>* <span class="org-variable-name">__restrict</span> dst, <span class="org-keyword">const</span> <span class="org-type">void</span>* <span class="org-variable-name">__restrict</span> src,
+                                                                       <span class="org-type">size_t</span> <span class="org-variable-name">size</span>) {
+    <span class="org-type">unsigned</span> <span class="org-type">char</span>* <span class="org-variable-name">dd</span> = ((<span class="org-type">unsigned</span> <span class="org-type">char</span>*)dst) + size;
+    <span class="org-keyword">const</span> <span class="org-type">unsigned</span> <span class="org-type">char</span>* <span class="org-variable-name">ss</span> = ((<span class="org-keyword">const</span> <span class="org-type">unsigned</span> <span class="org-type">char</span>*)src) + size;
+
+    <span class="org-keyword">switch</span> (size) {
+    <span class="org-keyword">case</span> 64:
+        memcpy_sse2_64(dd - 64, ss - 64);
+        [[fallthrough]];
+    <span class="org-keyword">case</span> 0:
+        <span class="org-keyword">break</span>;
+
+    <span class="org-keyword">case</span> 65:
+        memcpy_sse2_64(dd - 65, ss - 65);
+        [[fallthrough]];
+    <span class="org-keyword">case</span> 1:
+        dd[-1] = ss[-1];
+        <span class="org-keyword">break</span>;
+    <span class="org-keyword">case</span> 66:
+        memcpy_sse2_64(dd - 66, ss - 66);
+        [[fallthrough]];
+    <span class="org-keyword">case</span> 2:
+        *((<span class="org-type">uint16_unaligned_t</span>*)(dd - 2)) = *((<span class="org-keyword">const</span> <span class="org-type">uint16_unaligned_t</span>*)(ss - 2));
+        <span class="org-keyword">break</span>;
+
+    <span class="org-keyword">case</span> 67:
+        memcpy_sse2_64(dd - 67, ss - 67);
+        [[fallthrough]];
+    <span class="org-keyword">case</span> 3:
+        *((<span class="org-type">uint16_unaligned_t</span>*)(dd - 3)) = *((<span class="org-keyword">const</span> <span class="org-type">uint16_unaligned_t</span>*)(ss - 3));
+        dd[-1] = ss[-1];
+        <span class="org-keyword">break</span>;
+
+    <span class="org-keyword">case</span> 68:
+        memcpy_sse2_64(dd - 68, ss - 68);
+        [[fallthrough]];
+    <span class="org-keyword">case</span> 4:
+        *((<span class="org-type">uint32_unaligned_t</span>*)(dd - 4)) = *((<span class="org-keyword">const</span> <span class="org-type">uint32_unaligned_t</span>*)(ss - 4));
+        <span class="org-keyword">break</span>;
+    ...
+}
+
+<span class="org-keyword">static</span> INLINE <span class="org-type">void</span> <span class="org-variable-name">memcpy_sse2_16</span>(<span class="org-type">void</span>* __restrict dst, <span class="org-keyword">const</span> <span class="org-type">void</span>* __restrict src) {
+    <span class="org-type">__m128i</span> <span class="org-variable-name">m0</span> = _mm_loadu_si128((<span class="org-keyword">reinterpret_cast</span>&lt;<span class="org-keyword">const</span> <span class="org-type">__m128i</span>*&gt;(src)) + 0);
+    _mm_storeu_si128((<span class="org-keyword">reinterpret_cast</span>&lt;<span class="org-type">__m128i</span>*&gt;(dst)) + 0, m0);
+}
+
+<span class="org-keyword">static</span> INLINE <span class="org-type">void</span> <span class="org-variable-name">memcpy_sse2_32</span>(<span class="org-type">void</span>* __restrict dst, <span class="org-keyword">const</span> <span class="org-type">void</span>* __restrict src) {
+    <span class="org-type">__m128i</span> <span class="org-variable-name">m0</span> = _mm_loadu_si128((<span class="org-keyword">reinterpret_cast</span>&lt;<span class="org-keyword">const</span> <span class="org-type">__m128i</span>*&gt;(src)) + 0);
+    <span class="org-type">__m128i</span> <span class="org-variable-name">m1</span> = _mm_loadu_si128((<span class="org-keyword">reinterpret_cast</span>&lt;<span class="org-keyword">const</span> <span class="org-type">__m128i</span>*&gt;(src)) + 1);
+    _mm_storeu_si128((<span class="org-keyword">reinterpret_cast</span>&lt;<span class="org-type">__m128i</span>*&gt;(dst)) + 0, m0);
+    _mm_storeu_si128((<span class="org-keyword">reinterpret_cast</span>&lt;<span class="org-type">__m128i</span>*&gt;(dst)) + 1, m1);
+}
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgd3e06fa" class="outline-3">
+<h3 id="orgd3e06fa"><span class="section-number-3">3.4.</span> memcpy_my/my2</h3>
+<div class="outline-text-3" id="text-3-4">
+<p>
+代码比较长，完整代码可以看这里 <a href="https://github.com/dirtysalt/codes/blob/master/cc/sr-test/memcpy-bench/memcpy-impl.h#L308">https://github.com/dirtysalt/codes/blob/master/cc/sr-test/memcpy-bench/memcpy-impl.h#L308</a>. 两者实现逻辑非常接近，差别在于`memcpy_my2` 版本在
+</p>
+<ul class="org-ul">
+<li>`if (size &lt; 30000 || !have_avx)` 条件下面使用128字节sse2版本，因为使用avx指令会有额外开销。</li>
+<li>对于大块内存拷贝，不会再使用 `goto tail` 来单独处理尾部的字符串，而是直接使用重复拷贝来避开tail bytes的处理。</li>
+</ul>
+
+<p>
+另外 `memcpy_my` 的 avx版本似乎是有点问题（看上去汇编代码没有问题，但是测试不能通过），所以这里只能测试它的sse2版本。
+</p>
+</div>
+
+<div id="outline-container-orgf8ada3d" class="outline-4">
+<h4 id="orgf8ada3d"><span class="section-number-4">3.4.1.</span> 16字节以内</h4>
+<div class="outline-text-4" id="text-3-4-1">
+<p>
+16字节以内走下面这个逻辑，使用的是 `__builtin_memcpy` 感觉这个部分应该是足够高效了。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-cpp"><span class="org-constant">tail</span>:
+    <span class="org-keyword">if</span> (size &lt;= 16) {
+        <span class="org-keyword">if</span> (size &gt;= 8) {
+            __builtin_memcpy(dst + size - 8, src + size - 8, 8);
+            __builtin_memcpy(dst, src, 8);
+        } <span class="org-keyword">else</span> <span class="org-keyword">if</span> (size &gt;= 4) {
+            __builtin_memcpy(dst + size - 4, src + size - 4, 4);
+            __builtin_memcpy(dst, src, 4);
+        } <span class="org-keyword">else</span> <span class="org-keyword">if</span> (size &gt;= 2) {
+            __builtin_memcpy(dst + size - 2, src + size - 2, 2);
+            __builtin_memcpy(dst, src, 2);
+        } <span class="org-keyword">else</span> <span class="org-keyword">if</span> (size &gt;= 1) {
+            *dst = *src;
+        }
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org6171c04" class="outline-4">
+<h4 id="org6171c04"><span class="section-number-4">3.4.2.</span> 32字节以内</h4>
+<div class="outline-text-4" id="text-3-4-2">
+<p>
+32字节以内先拷贝16字节，然后走上面的小于16字节的逻辑。但是这个部分并没有使用sse(m128i)
+</p>
+
+<div class="org-src-container">
+<pre class="src src-cpp"><span class="org-keyword">if</span> (size &lt;= 32) {
+    __builtin_memcpy(dst, src, 8);
+    __builtin_memcpy(dst + 8, src + 8, 8);
+
+    dst += 16;
+    src += 16;
+    size -= 16;
+
+    <span class="org-keyword">goto</span> <span class="org-constant">tail</span>;
+}
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org521518c" class="outline-4">
+<h4 id="org521518c"><span class="section-number-4">3.4.3.</span> 128/256字节以内</h4>
+<div class="outline-text-4" id="text-3-4-3">
+<p>
+avx版本是先对 `dst+size-32` 和 `src+size-32` 进行单独处理，然后分别按照32字节进行拷贝，这样会出现重复拷贝，但是没有tail bytes判断情况。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-cpp"><span class="org-keyword">if</span> (size &lt;= 256) {
+    <span class="org-keyword">__asm__</span>(<span class="org-string">"vmovups    -0x20(%[s],%[size],1), %%ymm0\n"</span>
+            <span class="org-string">"vmovups    %%ymm0, -0x20(%[d],%[size],1)\n"</span>
+            : [<span class="org-constant">d</span>] <span class="org-string">"+r"</span>(dst), [<span class="org-constant">s</span>] <span class="org-string">"+r"</span>(src)
+            : [<span class="org-constant">size</span>] <span class="org-string">"r"</span>(size)
+            : <span class="org-string">"ymm0"</span>, <span class="org-string">"memory"</span>);
+
+    <span class="org-keyword">while</span> (size &gt; 32) {
+        <span class="org-keyword">__asm__</span>(<span class="org-string">"vmovups    (%[s]), %%ymm0\n"</span>
+                <span class="org-string">"vmovups    %%ymm0, (%[d])\n"</span>
+                : [<span class="org-constant">d</span>] <span class="org-string">"+r"</span>(dst), [<span class="org-constant">s</span>] <span class="org-string">"+r"</span>(src)
+                :
+                : <span class="org-string">"ymm0"</span>, <span class="org-string">"memory"</span>);
+
+        dst += 32;
+        src += 32;
+        size -= 32;
+    }
+}
+</pre>
+</div>
+
+<p>
+sse2版本和avx版本其实是差不过的，只不过按照16字节进行拷贝，同样不会有tail bytes的情况。
+</p>
+<div class="org-src-container">
+<pre class="src src-cpp"><span class="org-keyword">if</span> (size &lt;= 128) {
+    _mm_storeu_si128(<span class="org-keyword">reinterpret_cast</span>&lt;<span class="org-type">__m128i</span>*&gt;(dst + size - 16),
+                     _mm_loadu_si128(<span class="org-keyword">reinterpret_cast</span>&lt;<span class="org-keyword">const</span> <span class="org-type">__m128i</span>*&gt;(src + size - 16)));
+
+    <span class="org-keyword">while</span> (size &gt; 16) {
+        _mm_storeu_si128(<span class="org-keyword">reinterpret_cast</span>&lt;<span class="org-type">__m128i</span>*&gt;(dst),
+                         _mm_loadu_si128(<span class="org-keyword">reinterpret_cast</span>&lt;<span class="org-keyword">const</span> <span class="org-type">__m128i</span>*&gt;(src)));
+        dst += 16;
+        src += 16;
+        size -= 16;
+    }
+}
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgfad0a73" class="outline-4">
+<h4 id="orgfad0a73"><span class="section-number-4">3.4.4.</span> 128/256字节以外</h4>
+<div class="outline-text-4" id="text-3-4-4">
+<p>
+这里就不粘贴avx版本了，大部分都是汇编代码，但是道理和sse2版本是差不多的:
+</p>
+<ul class="org-ul">
+<li>先对dst进行对齐处理，对齐部分使用 `storeu` 版本</li>
+<li>然后每次拷贝128字节，并且使用循环展开的方式</li>
+<li>对于之后剩余的字节，使用 `goto tail` 进行单独处理。</li>
+</ul>
+
+<div class="org-src-container">
+<pre class="src src-cpp"><span class="org-comment-delimiter">/// </span><span class="org-comment">Align destination to 16 bytes boundary.</span>
+<span class="org-type">size_t</span> <span class="org-variable-name">padding</span> = (16 - (<span class="org-keyword">reinterpret_cast</span>&lt;<span class="org-type">size_t</span>&gt;(dst) &amp; 15)) &amp; 15;
+
+<span class="org-keyword">if</span> (padding &gt; 0) {
+    <span class="org-type">__m128i</span> <span class="org-variable-name">head</span> = _mm_loadu_si128(<span class="org-keyword">reinterpret_cast</span>&lt;<span class="org-keyword">const</span> <span class="org-type">__m128i</span>*&gt;(src));
+    _mm_storeu_si128(<span class="org-keyword">reinterpret_cast</span>&lt;<span class="org-type">__m128i</span>*&gt;(dst), head);
+    dst += padding;
+    src += padding;
+    size -= padding;
+}
+
+<span class="org-comment-delimiter">/// </span><span class="org-comment">Aligned unrolled copy.</span>
+<span class="org-type">__m128i</span> <span class="org-variable-name">c0</span>, <span class="org-variable-name">c1</span>, <span class="org-variable-name">c2</span>, <span class="org-variable-name">c3</span>, <span class="org-variable-name">c4</span>, <span class="org-variable-name">c5</span>, <span class="org-variable-name">c6</span>, <span class="org-variable-name">c7</span>;
+
+<span class="org-keyword">while</span> (size &gt;= 128) {
+    c0 = _mm_loadu_si128(<span class="org-keyword">reinterpret_cast</span>&lt;<span class="org-keyword">const</span> <span class="org-type">__m128i</span>*&gt;(src) + 0);
+    c1 = _mm_loadu_si128(<span class="org-keyword">reinterpret_cast</span>&lt;<span class="org-keyword">const</span> <span class="org-type">__m128i</span>*&gt;(src) + 1);
+    c2 = _mm_loadu_si128(<span class="org-keyword">reinterpret_cast</span>&lt;<span class="org-keyword">const</span> <span class="org-type">__m128i</span>*&gt;(src) + 2);
+    c3 = _mm_loadu_si128(<span class="org-keyword">reinterpret_cast</span>&lt;<span class="org-keyword">const</span> <span class="org-type">__m128i</span>*&gt;(src) + 3);
+    c4 = _mm_loadu_si128(<span class="org-keyword">reinterpret_cast</span>&lt;<span class="org-keyword">const</span> <span class="org-type">__m128i</span>*&gt;(src) + 4);
+    c5 = _mm_loadu_si128(<span class="org-keyword">reinterpret_cast</span>&lt;<span class="org-keyword">const</span> <span class="org-type">__m128i</span>*&gt;(src) + 5);
+    c6 = _mm_loadu_si128(<span class="org-keyword">reinterpret_cast</span>&lt;<span class="org-keyword">const</span> <span class="org-type">__m128i</span>*&gt;(src) + 6);
+    c7 = _mm_loadu_si128(<span class="org-keyword">reinterpret_cast</span>&lt;<span class="org-keyword">const</span> <span class="org-type">__m128i</span>*&gt;(src) + 7);
+    src += 128;
+    _mm_store_si128((<span class="org-keyword">reinterpret_cast</span>&lt;<span class="org-type">__m128i</span>*&gt;(dst) + 0), c0);
+    _mm_store_si128((<span class="org-keyword">reinterpret_cast</span>&lt;<span class="org-type">__m128i</span>*&gt;(dst) + 1), c1);
+    _mm_store_si128((<span class="org-keyword">reinterpret_cast</span>&lt;<span class="org-type">__m128i</span>*&gt;(dst) + 2), c2);
+    _mm_store_si128((<span class="org-keyword">reinterpret_cast</span>&lt;<span class="org-type">__m128i</span>*&gt;(dst) + 3), c3);
+    _mm_store_si128((<span class="org-keyword">reinterpret_cast</span>&lt;<span class="org-type">__m128i</span>*&gt;(dst) + 4), c4);
+    _mm_store_si128((<span class="org-keyword">reinterpret_cast</span>&lt;<span class="org-type">__m128i</span>*&gt;(dst) + 5), c5);
+    _mm_store_si128((<span class="org-keyword">reinterpret_cast</span>&lt;<span class="org-type">__m128i</span>*&gt;(dst) + 6), c6);
+    _mm_store_si128((<span class="org-keyword">reinterpret_cast</span>&lt;<span class="org-type">__m128i</span>*&gt;(dst) + 7), c7);
+    dst += 128;
+
+    size -= 128;
+}
+
+<span class="org-keyword">goto</span> <span class="org-constant">tail</span>;
+</pre>
+</div>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orge193844" class="outline-3">
+<h3 id="orge193844"><span class="section-number-3">3.5.</span> CK版本注释</h3>
+<div class="outline-text-3" id="text-3-5">
+<p>
+目前CK版本看上去像是 `memcpy_my` 这个版本，但是没有开启avx开关。 <a href="https://clickhouse.com/codebrowser/ClickHouse/base/glibc-compatibility/memcpy/memcpy.h.html">https://clickhouse.com/codebrowser/ClickHouse/base/glibc-compatibility/memcpy/memcpy.h.html</a>
+</p>
+
+<p>
+自己编写memcpy的好处有
+</p>
+<ol class="org-ol">
+<li>独立于glibc, 不过如果我们静态链接glibc就没有问题了。</li>
+<li>避开动态链接库里面的PLT开销</li>
+<li>能有有助于内敛以及做IPA</li>
+<li>提升整体查询性能</li>
+</ol>
+
+<pre class="example" id="org61476a8">
+* It has the following benefits over using glibc's implementation:
+* 1. Avoiding dependency on specific version of glibc's symbol, like memcpy@@GLIBC_2.14 for portability.
+* 2. Avoiding indirect call via PLT due to shared linking, that can be less efficient.
+* 3. It's possible to include this header and call inline_memcpy directly for better inlining or interprocedural analysis.
+* 4. Better results on our performance tests on current CPUs: up to 25% on some queries and up to 0.7%..1% in average across all queries.
+</pre>
+
+
+<p>
+但是自己编写memcpy并不容易：CPU型号，size, 并行度等等，并且想要做到全面/正确的microbenchmark不容易。
+</p>
+
+<pre class="example" id="orgd00e88e">
+* Writing our own memcpy is extremely difficult for the following reasons:
+* 1. The optimal variant depends on the specific CPU model.
+* 2. The optimal variant depends on the distribution of size arguments.
+* 3. It depends on the number of threads copying data concurrently.
+* 4. It also depends on how the calling code is using the copied data and how the different memcpy calls are related to each other.
+* Due to vast range of scenarios it makes proper testing especially difficult.
+* When writing our own memcpy there is a risk to overoptimize it
+* on non-representative microbenchmarks while making real-world use cases actually worse.
+
+*
+* Most of the benchmarks for memcpy on the internet are wrong.
+*
+</pre>
+
+
+<p>
+实现上有下面这些注意点：
+</p>
+<ul class="org-ul">
+<li>对于小尺寸分支重要（减少分支或者是变成jmp table/switch)</li>
+<li>处理非对齐尺寸(1,3,5,7字节），通常使用重叠move</li>
+<li>对于大尺寸可以使用sse/avx或者是rep movsb.（看上去大尺寸rep movsb比sse/avx要差点）</li>
+<li>avx-512会造成CPU降频, 混合sse/avx使用会有开销（但是好像最新的CPU是没有这个问题了的) <a href="https://www.zhihu.com/question/37230675/answer/273654228">https://www.zhihu.com/question/37230675/answer/273654228</a></li>
+<li>循环展开最多8次，使用寄存器xmm0-xmm7或者是ymm0-ymm7（其实也有ymm8-ymm15). 但是这个也不是最优解。</li>
+<li>使用unaligned load和aligned store (但是好像其实两者差别不是很大）</li>
+<li>使用好prefetch以及non-temporal store比较困难。</li>
+</ul>
+
+<pre class="example" id="orgceaaff2">
+* Let's look at the details:
+*
+* For small size, the order of branches in code is important.
+* There are variants with specific order of branches (like here or in glibc)
+* or with jump table (in asm code see example from Cosmopolitan libc:
+* https://github.com/jart/cosmopolitan/blob/de09bec215675e9b0beb722df89c6f794da74f3f/libc/nexgen32e/memcpy.S#L61)
+* or with Duff device in C (see https://github.com/skywind3000/FastMemcpy/)
+*
+* It's also important how to copy uneven sizes.
+* Almost every implementation, including this, is using two overlapping movs.
+*
+* It is important to disable -ftree-loop-distribute-patterns when compiling memcpy implementation,
+* otherwise the compiler can replace internal loops to a call to memcpy that will lead to infinite recursion.
+*
+* For larger sizes it's important to choose the instructions used:
+* - SSE or AVX or AVX-512;
+* - rep movsb;
+* Performance will depend on the size threshold, on the CPU model, on the "erms" flag
+* ("Enhansed Rep MovS" - it indicates that performance of "rep movsb" is decent for large sizes)
+* https://stackoverflow.com/questions/43343231/enhanced-rep-movsb-for-memcpy
+*
+* Using AVX-512 can be bad due to throttling.
+* Using AVX can be bad if most code is using SSE due to switching penalty
+* (it also depends on the usage of "vzeroupper" instruction).
+* But in some cases AVX gives a win.
+*
+* It also depends on how many times the loop will be unrolled.
+* We are unrolling the loop 8 times (by the number of available registers), but it not always the best.
+*
+* It also depends on the usage of aligned or unaligned loads/stores.
+* We are using unaligned loads and aligned stores.
+*
+* It also depends on the usage of prefetch instructions. It makes sense on some Intel CPUs but can slow down performance on AMD.
+* Setting up correct offset for prefetching is non-obvious.
+*
+* Non-temporary (cache bypassing) stores can be used for very large sizes (more than a half of L3 cache).
+* But the exact threshold is unclear - when doing memcpy from multiple threads the optimal threshold can be lower,
+* because L3 cache is shared (and L2 cache is partially shared).
+*
+* Very large size of memcpy typically indicates suboptimal (not cache friendly) algorithms in code or unrealistic scenarios,
+* so we don't pay attention to using non-temporary stores.
+*
+* On recent Intel CPUs, the presence of "erms" makes "rep movsb" the most benefitial,
+* even comparing to non-temporary aligned unrolled stores even with the most wide registers.
+</pre>
+
+<p>
+关于memcpy使用asm写好还是C/C++写好
+</p>
+
+<pre class="example" id="orgf030f4f">
+* memcpy can be written in asm, C or C++. The latter can also use inline asm.
+* The asm implementation can be better to make sure that compiler won't make the code worse,
+* to ensure the order of branches, the code layout, the usage of all required registers.
+* But if it is located in separate translation unit, inlining will not be possible
+* (inline asm can be used to overcome this limitation).
+* Sometimes C or C++ code can be further optimized by compiler.
+* For example, clang is capable replacing SSE intrinsics to AVX code if -mavx is used.
+*
+* Please note that compiler can replace plain code to memcpy and vice versa.
+* - memcpy with compile-time known small size is replaced to simple instructions without a call to memcpy;
+*   it is controlled by -fbuiltin-memcpy and can be manually ensured by calling __builtin_memcpy.
+*   This is often used to implement unaligned load/store without undefined behaviour in C++.
+* - a loop with copying bytes can be recognized and replaced by a call to memcpy;
+*   it is controlled by -ftree-loop-distribute-patterns.
+* - also note that a loop with copying bytes can be unrolled, peeled and vectorized that will give you
+*   inline code somewhat similar to a decent implementation of memcpy.
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org247fc8a" class="outline-2">
+<h2 id="org247fc8a"><span class="section-number-2">4.</span> FIX `memcpy_my`</h2>
+<div class="outline-text-2" id="text-4">
+<p>
+测试的时候发现 `memcpy_my` 的AVX版本有正确行问题，问题在下面这段代码上
+</p>
+
+<div class="org-src-container">
+<pre class="src src-cpp"><span class="org-keyword">if</span> (size &lt;= 256) {
+    <span class="org-keyword">__asm__</span>(<span class="org-string">"vmovups    -0x20(%[s],%[size],1), %%ymm0\n"</span>
+            <span class="org-string">"vmovups    %%ymm0, -0x20(%[d],%[size],1)\n"</span>
+            : [<span class="org-constant">d</span>] <span class="org-string">"+r"</span>(dst), [<span class="org-constant">s</span>] <span class="org-string">"+r"</span>(src)
+            : [<span class="org-constant">size</span>] <span class="org-string">"r"</span>(size)
+            : <span class="org-string">"ymm0"</span>, <span class="org-string">"memory"</span>);
+
+    <span class="org-keyword">while</span> (size &gt; 32) {
+        <span class="org-keyword">__asm__</span>(<span class="org-string">"vmovups    (%[s]), %%ymm0\n"</span>
+                <span class="org-string">"vmovups    %%ymm0, (%[d])\n"</span>
+                : [<span class="org-constant">d</span>] <span class="org-string">"+r"</span>(dst), [<span class="org-constant">s</span>] <span class="org-string">"+r"</span>(src)
+                :
+                : <span class="org-string">"ymm0"</span>, <span class="org-string">"memory"</span>);
+
+        dst += 32;
+        src += 32;
+        size -= 32;
+    }
+</pre>
+</div>
+
+<p>
+如果放在 <a href="https://gcc.godbolt.org/">https://gcc.godbolt.org/</a> 里面编译会发现，这个编译结果是有问题的。汇编代码的40行，如果&lt;=256那么进入L7, 但是L7直接就ret了。说明这个部分其实是没有做任何处理的。如果在 asm 关键字后面加上 volatile 关键字则没有问题。
+</p>
+
+
+<div id="orgff1d88c" class="figure">
+<p><img src="../images/media/16684889455769/16685679306882.jpg" alt="16685679306882.jpg" />
+</p>
+</div>
+
+<p>
+增加了volatile关键字之后就没有问题
+</p>
+
+
+<div id="org88f4e9c" class="figure">
+<p><img src="../images/media/16684889455769/16685680484758.jpg" alt="16685680484758.jpg" />
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org83505c2" class="outline-2">
+<h2 id="org83505c2"><span class="section-number-2">5.</span> 改进方案设计</h2>
+<div class="outline-text-2" id="text-5">
+<p>
+个人觉得可以根据 `memcpy_my` 这个版本 ~~，然后在某些区间上使用erms特性来做改善~~。
+</p>
+
+<p>
+实现放在了这个PR里面 [[Enhancement] improve performance of `inline_memcpy` by dirtysalt · Pull Request #13330 · StarRocks/starrocks](<a href="https://github.com/StarRocks/starrocks/pull/13330">https://github.com/StarRocks/starrocks/pull/13330</a>)
+</p>
+
+<p>
+下图分别几种尺寸下面及几个版本的对比：
+</p>
+<ul class="org-ul">
+<li>memcpy_gutil 当前SR使用的版本</li>
+<li>memcpy_my(noavx) 当前CK使用的版本</li>
+<li>memcpy_sr PR里面提交的版本</li>
+</ul>
+
+<p>
+<img src="../images/media/16684889455769/16686035679546.jpg" alt="16686035679546.jpg" />
+<img src="../images/media/16684889455769/16686035738395.jpg" alt="16686035738395.jpg" />
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgdb429bf" class="outline-2">
+<h2 id="orgdb429bf"><span class="section-number-2">6.</span> 细粒度分析</h2>
+<div class="outline-text-2" id="text-6">
+<p>
+我针对下面几个实现做了细粒度的分析：
+</p>
+<ul class="org-ul">
+<li>avx_unaligned</li>
+<li>memcpy_my</li>
+<li>memcpy_erms</li>
+<li>memcpy_gutil</li>
+<li>memcpy_sr</li>
+</ul>
+</div>
+
+<div id="outline-container-org116375c" class="outline-3">
+<h3 id="org116375c"><span class="section-number-3">6.1.</span> 1KB~64KB</h3>
+<div class="outline-text-3" id="text-6-1">
+<p>
+从1KB到64KB，按照1KB进行步长做分析，有这么几个发现：
+</p>
+<ul class="org-ul">
+<li>erms 在某个很小的范围有优势，其他范围则没有什么优势</li>
+<li>memcpy_my 有个问题就是4KB左右会存在一定的波动</li>
+<li>memcpy_sr 相对比较平稳，总体比memcpy_my(avx)版本差些，但是没有尖峰出现</li>
+</ul>
+
+
+<div id="org59b69fe" class="figure">
+<p><img src="../images/media/16684889455769/16686528258206.jpg" alt="16686528258206.jpg" />
+</p>
+</div>
+
+
+<div id="orgbe3f443" class="figure">
+<p><img src="../images/media/16684889455769/16686528488477.jpg" alt="16686528488477.jpg" />
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org5c26bea" class="outline-3">
+<h3 id="org5c26bea"><span class="section-number-3">6.2.</span> 32KB~2MB</h3>
+<div class="outline-text-3" id="text-6-2">
+<p>
+从32KB到2MB，按照32KB进行步长分析，有这么几个发现：
+</p>
+<ul class="org-ul">
+<li>因为 memcpy_gutil 差距比较大，所以就删除了这个</li>
+<li>从512KB到2MB区间内，erms版本不不管是单线程还是多线程都好。</li>
+</ul>
+
+<p>
+<img src="../images/media/16684889455769/16686546607635.jpg" alt="16686546607635.jpg" />
+<img src="../images/media/16684889455769/16686546707508.jpg" alt="16686546707508.jpg" />
+</p>
+</div>
+</div>
+
+<div id="outline-container-org6d83c20" class="outline-3">
+<h3 id="org6d83c20"><span class="section-number-3">6.3.</span> 2MB~64MB</h3>
+<div class="outline-text-3" id="text-6-3">
+<p>
+从2MB到64MB，按照1MB进行步长分析，有这么几个发现：
+</p>
+<ul class="org-ul">
+<li>单线程上面 my/sr 版本更好些</li>
+<li>多线程版本 avx_unaligned和erms版本更好些</li>
+<li>很难选择一个比较general的版本</li>
+</ul>
+
+<p>
+<img src="../images/media/16684889455769/16686553116226.jpg" alt="16686553116226.jpg" />
+<img src="../images/media/16684889455769/16686553169239.jpg" alt="16686553169239.jpg" />
+</p>
+</div>
+</div>
+</div>
+</div>
+<div id="content"><!-- DISQUS BEGIN --><div id="disqus_thread"></div><script>/***  RECOMMENDED CONFIGURATION VARIABLES: EDIT AND UNCOMMENT THE SECTION BELOW TO INSERT DYNAMIC VALUES FROM YOUR PLATFORM OR CMS.*  LEARN WHY DEFINING THESE VARIABLES IS IMPORTANT: https://disqus.com/admin/universalcode/#configuration-variables*/var disqus_config = function () {this.page.url = 'https://dirtysalt.github.io/html/simple-memcpy-perf-comparison.html';this.page.identifier = 'simple-memcpy-perf-comparison.html';};(function() {var d = document, s = d.createElement('script');s.src = 'https://dirlt.disqus.com/embed.js';s.setAttribute('data-timestamp', +new Date());(d.head || d.body).appendChild(s);})();</script><noscript>Please enable JavaScript to view the <a href="https://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript><!-- DISQUS END --></div></body>
+</html>

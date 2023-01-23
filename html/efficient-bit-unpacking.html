@@ -1,0 +1,177 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>有效地进行bit-unpacking</title>
+<meta name="author" content="dirtysalt" />
+<meta name="generator" content="Org Mode" />
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content" class="content">
+<h1 class="title">有效地进行bit-unpacking</h1>
+<p>
+ORC文件使用了bit-packing技术来对整数进行编码 <a href="https://orc.apache.org/specification/ORCv1/">https://orc.apache.org/specification/ORCv1/</a>
+</p>
+<ol class="org-ol">
+<li>假设所有的数范围都在[0,31]之间的话，那么就可以使用5bit表示每个int</li>
+<li>在packing的过程中，可以尽量先塞入低bit（impala的做法），也可以尽量先塞入高bit（ORC的做法）</li>
+<li>最后可能会多出来一个字节需要flush下去。</li>
+</ol>
+<p>
+关于这个packing实现，我之前用 <a href="https://github.com/dirtysalt/codes/tree/master/misc/random/orc_encoding.py">python</a> 写过一个版本，效率就不说了。
+</p>
+
+<p>
+如果使用c++来编写unpacking的话，大致是这样的:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-c++"><span class="org-comment-delimiter">// </span><span class="org-comment">in: input</span>
+<span class="org-comment-delimiter">// </span><span class="org-comment">fb: fixed bit</span>
+<span class="org-comment-delimiter">// </span><span class="org-comment">data: output</span>
+<span class="org-comment-delimiter">// </span><span class="org-comment">nums: how many values to be unpacked.</span>
+<span class="org-type">void</span> <span class="org-function-name">bit_unpack_tail</span>(<span class="org-keyword">const</span> <span class="org-type">uint8_t</span>* <span class="org-variable-name">in</span>, <span class="org-type">int</span> <span class="org-variable-name">fb</span>, <span class="org-type">int64_t</span>* <span class="org-variable-name">data</span>, <span class="org-type">int</span> <span class="org-variable-name">nums</span>) {
+    <span class="org-keyword">if</span> (nums == 0) <span class="org-keyword">return</span>;
+    <span class="org-type">int64_t</span> <span class="org-variable-name">t</span> = 0;
+    <span class="org-type">uint8_t</span> <span class="org-variable-name">c</span> = 0;
+    <span class="org-type">int</span> <span class="org-variable-name">cb</span> = 0;
+    <span class="org-keyword">for</span> (<span class="org-type">int</span> <span class="org-variable-name">i</span> = 0; i &lt; nums; i++) {
+        <span class="org-type">int</span> <span class="org-variable-name">bits</span> = fb;
+        t = 0;
+        <span class="org-keyword">while</span> (bits) {
+            <span class="org-keyword">if</span> (cb == 0) {
+                c = (*in++);
+                cb = 8;
+            }
+            <span class="org-type">int</span> <span class="org-variable-name">lb</span> = <span class="org-constant">std</span>::min(cb, bits);
+            t = (t &lt;&lt; lb) | ((c &gt;&gt; (cb - lb)) &amp; ((1 &lt;&lt; lb) - 1));
+            bits -= lb;
+            cb -= lb;
+        }
+        *data = t;
+        data++;
+    }
+}
+</pre>
+</div>
+
+<p>
+但是这个实现效率不高，原因就是里面有太多变量计算了。如果我们一旦知道fb的具体值的话，许多流程其实是可以固定的，唯一一个变量就是 nums.
+如果我们可以把nums也固定住的话，那么完全可以使用codegen的方式来生成efficient code. 最开始我一直纠结如何可以固定这个nums, 觉得这个情况太多了，
+直到看到了这篇文章： <a href="https://lemire.me/blog/2012/03/06/how-fast-is-bit-packing/">How fast is bit packing? – Daniel Lemire's blog</a>. 这篇文章是将nums固定成为32，而ORC的fixed bit最大可以到64, 所以我们也可以
+将nums固定成为64. 每64个元素作为一个chunk进行解压，然后不断地循环，对于最后剩余的元素用 bit_unpack_tail 这个函数解压。作者也有个实现 <a href="https://github.com/lemire/FastPFor">lemire/FastPFor: The FastPFOR C++ library: Fast integer compression</a>
+后面有时间可以看看，我按照作者的思路自己走了个实现。
+</p>
+
+<p>
+我编写了脚本用来生成各种fixed bit下64个元素的解压函数，这个过程不难，其实就是 bit_unpack_tail 函数的动态执行版本。具体带可以看 <a href="https://github.com/dirtysalt/codes/tree/master/cc/misc/gen-bit-pack.py">gen-bit-pack.py</a>
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-py-variable-name">fbs</span> = [<span class="org-py-number">1</span>, <span class="org-py-number">2</span>, <span class="org-py-number">3</span>, <span class="org-py-number">4</span>, <span class="org-py-number">5</span>, <span class="org-py-number">6</span>, <span class="org-py-number">7</span>, <span class="org-py-number">8</span>, <span class="org-py-number">9</span>, <span class="org-py-number">10</span>, <span class="org-py-number">11</span>,
+       <span class="org-py-number">12</span>, <span class="org-py-number">13</span>, <span class="org-py-number">14</span>, <span class="org-py-number">15</span>, <span class="org-py-number">16</span>, <span class="org-py-number">17</span>, <span class="org-py-number">18</span>, <span class="org-py-number">19</span>, <span class="org-py-number">20</span>, <span class="org-py-number">21</span>, <span class="org-py-number">22</span>,
+       <span class="org-py-number">23</span>, <span class="org-py-number">24</span>, <span class="org-py-number">26</span>, <span class="org-py-number">28</span>, <span class="org-py-number">30</span>, <span class="org-py-number">32</span>, <span class="org-py-number">40</span>, <span class="org-py-number">48</span>, <span class="org-py-number">56</span>, <span class="org-py-number">64</span>]
+
+<span class="org-py-def-class">def</span> <span class="org-function-name">gen_unpack_bit</span>(fb):
+    <span class="org-py-variable-name">oss</span> = MyStringIO()
+    oss.emit(<span class="org-string">'const uint8_t* _unpack64_{fb}(const uint8_t *__restrict__ in, int64_t *__restrict__ out)'</span>.format(
+        <span class="org-py-variable-name">fb</span>=fb))
+    oss.emit(<span class="org-string">'{'</span>)
+    oss.emit(<span class="org-string">'int64_t t = 0;'</span>)
+    oss.emit(<span class="org-string">'uint8_t c = 0;'</span>)
+    <span class="org-comment"># how many bits in cb</span>
+    <span class="org-py-variable-name">cb</span> = <span class="org-py-number">0</span>
+
+    <span class="org-keyword">for</span> i <span class="org-keyword">in</span> <span class="org-py-builtins">range</span>(<span class="org-py-number">64</span>):
+        oss.emit(<span class="org-string">'t = 0;'</span>)
+        <span class="org-py-variable-name">exp</span> = fb
+        <span class="org-keyword">while</span> exp:
+            <span class="org-keyword">if</span> <span class="org-py-variable-name">cb</span> == <span class="org-py-number">0</span>:
+                oss.emit(<span class="org-string">'c = (*in++);'</span>)
+                <span class="org-py-variable-name">cb</span> = <span class="org-py-number">8</span>
+
+            <span class="org-py-variable-name">lb</span> = <span class="org-py-builtins">min</span>(exp, cb)
+            oss.emit(<span class="org-string">'t = (t &lt;&lt; {lb}) | ((c &gt;&gt; {x}) &amp; ((1 &lt;&lt; {lb}) - 1));'</span>.format(<span class="org-py-variable-name">lb</span>=lb, <span class="org-py-variable-name">x</span>=cb - lb))
+            <span class="org-py-variable-name">exp</span> -= lb
+            <span class="org-py-variable-name">cb</span> -= lb
+
+        oss.emit(<span class="org-string">'*out = t;'</span>)
+        oss.emit(<span class="org-string">'out++;'</span>)
+    oss.emit(<span class="org-string">'return in;'</span>)
+    oss.emit(<span class="org-string">'}'</span>)
+    <span class="org-keyword">return</span> oss.get()
+
+
+<span class="org-py-def-class">def</span> <span class="org-function-name">gen_unpack_driver</span>():
+    <span class="org-py-variable-name">oss</span> = MyStringIO()
+    <span class="org-keyword">for</span> fb <span class="org-keyword">in</span> fbs:
+        oss.emit(<span class="org-string">'void bit_unpack64_{fb}(const uint8_t* __restrict in, int64_t* __restrict__ out, int nums)'</span>.format(
+            <span class="org-py-variable-name">fb</span>=fb))
+        oss.emit(<span class="org-string">"""{{</span>
+<span class="org-string">        int run = nums / 64;</span>
+<span class="org-string">        for(int i=0;i&lt;run;i++) {{</span>
+<span class="org-string">        in = _unpack64_{fb}(in, out);</span>
+<span class="org-string">        out += 64;</span>
+<span class="org-string">        }}</span>
+<span class="org-string">        bit_unpack_tail(in, {fb}, out, nums % 64);</span>
+<span class="org-string">        }}"""</span>.format(<span class="org-py-variable-name">fb</span>=fb))
+
+    oss.emit(<span class="org-string">'void bit_unpack(const uint8_t* in, int fb, int64_t* data, int nums) {'</span>)
+    oss.emit(<span class="org-string">'switch (fb) {'</span>)
+    <span class="org-keyword">for</span> fb <span class="org-keyword">in</span> fbs:
+        oss.emit(<span class="org-string">'case {fb}:'</span>.format(<span class="org-py-variable-name">fb</span>=fb))
+        oss.emit(<span class="org-string">'return bit_unpack64_{fb}(in, data, nums);'</span>.format(<span class="org-py-variable-name">fb</span>=fb))
+    oss.emit(<span class="org-string">'}'</span>)
+    oss.emit(<span class="org-string">'}'</span>)
+    <span class="org-keyword">return</span> oss.get()
+
+
+</pre>
+</div>
+
+<p>
+为了对比这个版本和原始 bit_unpack_tail 版本的性能，我做了测试对1MB个元素在各种fixed bit下面的性能表现，
+这个测试甚者几乎不用准备任何数据，具体代码可以看 <a href="https://github.com/dirtysalt/codes/tree/master/cc/misc/TestBitUnpacking.cpp">TestBitUnpacking.cpp</a>. 测试下来发现最低可以提升5倍，最高可以提升10倍左右，
+当然某些case可以继续手工优化。
+</p>
+
+<pre class="example" id="orgfe0128b">
+unpack fb: 1. fast = 63 ms, avg = 0.600815 ns. tail = 329 ms, avg = 3.13759 ns. speedup = 5.22222
+unpack fb: 2. fast = 63 ms, avg = 0.600815 ns. tail = 329 ms, avg = 3.13759 ns. speedup = 5.22222
+unpack fb: 3. fast = 55 ms, avg = 0.524521 ns. tail = 403 ms, avg = 3.84331 ns. speedup = 7.32727
+unpack fb: 4. fast = 53 ms, avg = 0.505447 ns. tail = 329 ms, avg = 3.13759 ns. speedup = 6.20755
+unpack fb: 5. fast = 54 ms, avg = 0.514984 ns. tail = 479 ms, avg = 4.5681 ns. speedup = 8.87037
+unpack fb: 6. fast = 55 ms, avg = 0.524521 ns. tail = 477 ms, avg = 4.54903 ns. speedup = 8.67273
+unpack fb: 7. fast = 60 ms, avg = 0.572205 ns. tail = 551 ms, avg = 5.25475 ns. speedup = 9.18333
+unpack fb: 8. fast = 46 ms, avg = 0.43869 ns. tail = 329 ms, avg = 3.13759 ns. speedup = 7.15217
+unpack fb: 9. fast = 65 ms, avg = 0.619888 ns. tail = 626 ms, avg = 5.97 ns. speedup = 9.63077
+unpack fb: 10. fast = 62 ms, avg = 0.591278 ns. tail = 626 ms, avg = 5.97 ns. speedup = 10.0968
+unpack fb: 11. fast = 71 ms, avg = 0.677109 ns. tail = 701 ms, avg = 6.68526 ns. speedup = 9.87324
+unpack fb: 12. fast = 58 ms, avg = 0.553131 ns. tail = 625 ms, avg = 5.96046 ns. speedup = 10.7759
+unpack fb: 13. fast = 77 ms, avg = 0.734329 ns. tail = 772 ms, avg = 7.36237 ns. speedup = 10.026
+unpack fb: 14. fast = 74 ms, avg = 0.705719 ns. tail = 774 ms, avg = 7.38144 ns. speedup = 10.4595
+unpack fb: 15. fast = 83 ms, avg = 0.79155 ns. tail = 848 ms, avg = 8.08716 ns. speedup = 10.2169
+unpack fb: 16. fast = 50 ms, avg = 0.476837 ns. tail = 625 ms, avg = 5.96046 ns. speedup = 12.5
+unpack fb: 17. fast = 89 ms, avg = 0.84877 ns. tail = 917 ms, avg = 8.74519 ns. speedup = 10.3034
+unpack fb: 18. fast = 86 ms, avg = 0.82016 ns. tail = 923 ms, avg = 8.80241 ns. speedup = 10.7326
+unpack fb: 19. fast = 95 ms, avg = 0.905991 ns. tail = 992 ms, avg = 9.46045 ns. speedup = 10.4421
+unpack fb: 20. fast = 80 ms, avg = 0.762939 ns. tail = 920 ms, avg = 8.7738 ns. speedup = 11.5
+unpack fb: 21. fast = 102 ms, avg = 0.972748 ns. tail = 1069 ms, avg = 10.1948 ns. speedup = 10.4804
+unpack fb: 22. fast = 99 ms, avg = 0.944138 ns. tail = 1069 ms, avg = 10.1948 ns. speedup = 10.798
+unpack fb: 23. fast = 115 ms, avg = 1.09673 ns. tail = 1146 ms, avg = 10.9291 ns. speedup = 9.96522
+unpack fb: 24. fast = 69 ms, avg = 0.658035 ns. tail = 918 ms, avg = 8.75473 ns. speedup = 13.3043
+unpack fb: 26. fast = 111 ms, avg = 1.05858 ns. tail = 1215 ms, avg = 11.5871 ns. speedup = 10.9459
+unpack fb: 28. fast = 106 ms, avg = 1.01089 ns. tail = 1219 ms, avg = 11.6253 ns. speedup = 11.5
+unpack fb: 30. fast = 134 ms, avg = 1.27792 ns. tail = 1370 ms, avg = 13.0653 ns. speedup = 10.2239
+unpack fb: 32. fast = 96 ms, avg = 0.915527 ns. tail = 1219 ms, avg = 11.6253 ns. speedup = 12.6979
+unpack fb: 40. fast = 130 ms, avg = 1.23978 ns. tail = 1496 ms, avg = 14.267 ns. speedup = 11.5077
+unpack fb: 48. fast = 161 ms, avg = 1.53542 ns. tail = 1814 ms, avg = 17.2997 ns. speedup = 11.2671
+unpack fb: 56. fast = 187 ms, avg = 1.78337 ns. tail = 2010 ms, avg = 19.1689 ns. speedup = 10.7487
+unpack fb: 64. fast = 212 ms, avg = 2.02179 ns. tail = 2407 ms, avg = 22.9549 ns. speedup = 11.353
+</pre>
+</div>
+<div id="content"><!-- DISQUS BEGIN --><div id="disqus_thread"></div><script>/***  RECOMMENDED CONFIGURATION VARIABLES: EDIT AND UNCOMMENT THE SECTION BELOW TO INSERT DYNAMIC VALUES FROM YOUR PLATFORM OR CMS.*  LEARN WHY DEFINING THESE VARIABLES IS IMPORTANT: https://disqus.com/admin/universalcode/#configuration-variables*/var disqus_config = function () {this.page.url = 'https://dirtysalt.github.io/html/efficient-bit-unpacking.html';this.page.identifier = 'efficient-bit-unpacking.html';};(function() {var d = document, s = d.createElement('script');s.src = 'https://dirlt.disqus.com/embed.js';s.setAttribute('data-timestamp', +new Date());(d.head || d.body).appendChild(s);})();</script><noscript>Please enable JavaScript to view the <a href="https://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript><!-- DISQUS END --></div></body>
+</html>

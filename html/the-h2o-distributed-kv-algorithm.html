@@ -1,0 +1,91 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>The H2O distributed K/V algorithm by Cliff Click</title>
+<meta name="author" content="dirtysalt" />
+<meta name="generator" content="Org Mode" />
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content" class="content">
+<h1 class="title">The H2O distributed K/V algorithm by Cliff Click</h1>
+<p>
+<a href="https://www.youtube.com/watch?v=kTMQCEkf_AA">https://www.youtube.com/watch?v=kTMQCEkf_AA</a>
+</p>
+
+<p>
+H2O是一个机器训练平台，用户只需要编写基本的Java代码（可能增加某些注解吧？）就可以让自己的代码分布式地运行在H2O平台上面，H2O自动并行化，并且管理好内存中的数据，这个对于机器学习训练模型来说非常容易。
+</p>
+
+
+<div id="org148f564" class="figure">
+<p><img src="../images/the-h2o-distributed-kv-algorithm-0.png" alt="the-h2o-distributed-kv-algorithm-0.png" />
+</p>
+</div>
+
+
+<div id="orgdeba848" class="figure">
+<p><img src="../images/the-h2o-distributed-kv-algorithm-1.png" alt="the-h2o-distributed-kv-algorithm-1.png" />
+</p>
+</div>
+
+
+<p>
+这个视频里面讲到的就是如何管理内存中的数据（模型数据），对外界面是一个KV全内存存储系统，和其他存储系统差别就是，它的一致性模型是分布式JMM模型：如果某个字段是volatile，那么语义就和JMM定义的一致，我理解就是线性模型吧？使用distributed JMM模型好处就是，这个东西对于程序员来说好理解，因为即便是对于分布式专家来说，写好分布式代码也是很难的。
+</p>
+
+
+<div id="org49cdd00" class="figure">
+<p><img src="../images/the-h2o-distributed-kv-algorithm-2.png" alt="the-h2o-distributed-kv-algorithm-2.png" />
+</p>
+</div>
+
+
+<div id="org63879a9" class="figure">
+<p><img src="../images/the-h2o-distributed-kv-algorithm-3.png" alt="the-h2o-distributed-kv-algorithm-3.png" />
+</p>
+</div>
+
+
+<div id="orgde5a080" class="figure">
+<p><img src="../images/the-h2o-distributed-kv-algorithm-4.png" alt="the-h2o-distributed-kv-algorithm-4.png" />
+</p>
+</div>
+
+<p>
+为了简化系统的设计，H2O放弃了P。这个和我在 Heidi Howard — Liberating distributed consensus - YouTube <a href="https://www.youtube.com/watch?v=l4hxsYq9zUc&amp;list=WL">https://www.youtube.com/watch?v=l4hxsYq9zUc&amp;list=WL</a> 里面假设的差不多，她认为实际情况下面server failure并不是特别常见。尤其是对于机器学习这种大量计算的应用，如果为了做fault-tolerant而实现持久化的话，那么可能性能就上不来。此外重启整个平台其实也是非常快，考虑到使用的还是Java代码，也不太可能出现崩溃情况。
+</p>
+
+
+<div id="org9f55ca2" class="figure">
+<p><img src="../images/the-h2o-distributed-kv-algorithm-5.png" alt="the-h2o-distributed-kv-algorithm-5.png" />
+</p>
+</div>
+
+<p>
+实现上其实也没有太神秘的地方（但是这个东西做好的确是很难的）。所有的东西都是为了速度，所以GET几乎都是从本地cache来的，PUT着重优化吞吐而不是延迟情况。 每个Key都有一个home node, 认为这个东西就是source of truth. 而Value里面会追踪这个哪些节点在使用它。这个coherency非常重要，是因为如果某个key对应的value发生了修改的话，那么之前old-value的nodes需要被通知到(invalidated). Value里面还有read/write lock 以及in-flight rpc count，这个有点偏细节了，我也不是特别清楚。可以看到对于volatile key的PUT延迟是会比较高的，而volatile key的GET访问如果没有在local cache的话会存在一次RTT.
+</p>
+
+
+<div id="orgd4053c3" class="figure">
+<p><img src="../images/the-h2o-distributed-kv-algorithm-6.png" alt="the-h2o-distributed-kv-algorithm-6.png" />
+</p>
+</div>
+
+
+<div id="org4ef06c9" class="figure">
+<p><img src="../images/the-h2o-distributed-kv-algorithm-7.png" alt="the-h2o-distributed-kv-algorithm-7.png" />
+</p>
+</div>
+
+
+<div id="orge53dd9b" class="figure">
+<p><img src="../images/the-h2o-distributed-kv-algorithm-8.png" alt="the-h2o-distributed-kv-algorithm-8.png" />
+</p>
+</div>
+</div>
+<div id="content"><!-- DISQUS BEGIN --><div id="disqus_thread"></div><script>/***  RECOMMENDED CONFIGURATION VARIABLES: EDIT AND UNCOMMENT THE SECTION BELOW TO INSERT DYNAMIC VALUES FROM YOUR PLATFORM OR CMS.*  LEARN WHY DEFINING THESE VARIABLES IS IMPORTANT: https://disqus.com/admin/universalcode/#configuration-variables*/var disqus_config = function () {this.page.url = 'https://dirtysalt.github.io/html/the-h2o-distributed-kv-algorithm.html';this.page.identifier = 'the-h2o-distributed-kv-algorithm.html';};(function() {var d = document, s = d.createElement('script');s.src = 'https://dirlt.disqus.com/embed.js';s.setAttribute('data-timestamp', +new Date());(d.head || d.body).appendChild(s);})();</script><noscript>Please enable JavaScript to view the <a href="https://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript><!-- DISQUS END --></div></body>
+</html>

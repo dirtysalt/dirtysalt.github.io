@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Push vs. Pull-Based Loop Fusion in Query Engines</title>
+<meta name="author" content="dirtysalt" />
+<meta name="generator" content="Org Mode" />
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content" class="content">
+<h1 class="title">Push vs. Pull-Based Loop Fusion in Query Engines</h1>
+<p>
+参考文章： <a href="http://justinjaffray.com/query-engines-push-vs.-pull/">http://justinjaffray.com/query-engines-push-vs.-pull/</a>
+</p>
+
+<p>
+这篇文章主要就是解释，其实push/pull在实现上其实是完全等价的。许多人认为push based query engine比较好做loop fusion（循环合并），其实pull based也完全有这个能力。两者都可以生成compiled code, 但是如果可以实现loop fusion的话，运行效率会提高很多。
+</p>
+
+<p>
+文章里面花费了很大的篇幅在解释，pull/push是完全等价的，并且可以通过PL上的某种变化做到loop fusion. 反正我看的是云里雾里，尤其是用Scala写的代码，函数签名完全是看不懂啊。 此外感觉文章中的push/pull似乎是某种纯粹的定义，里面不加载任何break/continue这样的分支跳转语句，这也可能是我没有完全看懂的原因。
+</p>
+
+<p>
+我不太清楚论文最后实现的方式。按照的理解，loop-fusion目标应该是，尽可能地将pull based的operators组成一个大的function. 这个function可以是compiled的，然后外层包一个pull loop. 从这个function看来，这个function其实就是push-based的了。可能pull based的最大问题就是没有办法很好地实现CTE.
+</p>
+
+<p>
+这里粘贴一下论文的几个结论：
+</p>
+
+<p>
+pull和push based，排除compiled code, 效率上没有很大差别。
+</p>
+
+<blockquote>
+<p>
+We show that for realistic analytical workloads, there is no considerable advantage for either form of pipelined query engine, as opposed to what recent research suggests. Also, by using microbenchmarks we show that our proposed engine dominates the existing engines by combining the benefits of both.
+</p>
+
+<p>
+One of the main contributions of this paper is to debunk this myth. As we show, if compared fairly, push and pull based engines have very similar performance, with individual strengths and weaknesses, and neither is a clear winner. Push engines have in essence only been considered in the context of query compilation, conflating the potential advantages of the push paradigm with those of code inlining. To compare them fairly, one has to decouple these aspects.
+</p>
+</blockquote>
+
+<p>
+loop fusion的好处：循环更加紧凑，cache利用率也更高。
+</p>
+
+<blockquote>
+<p>
+Computing (“materialising”) the result of a first operator before passing it to a second operator can be very expensive, particularly if the intermediate result is large and needs to be pushed down the memory hierarchy. The same observation has been made by the programming languages and compilers community and has led to work on loop fusion and deforestation (the elimination of data structure construction and destruction for intermediate results).
+</p>
+</blockquote>
+
+<p>
+pull-based query engine的两个问题：没有生成compiled code的话会有虚函数开销，以及太多的分支判断。
+</p>
+
+<blockquote>
+<p>
+There are two main issues with a pull-based query engine. First, the next function invocations are implemented as virtual functions – operators with different implementations of next have to be chained together. There are many invocations of these functions, and each of invocation requires looking up a virtual table, which leads to bad instruction locality. Query compilation solves this issue by inlining these virtual function calls, which is explained in Section 2.3.
+</p>
+
+<p>
+Second, although a pull engine pipelines the data through pipelining operators, in practice, selection operators are problematic. When the next method of a selection operator is invoked, the destination operator should wait until the selection operator returns the next data tuple satisfying its predicate. This makes the control flow of the query engine more complicated by introducing more loops and branches, which is demonstrated in Figure 3c. This complicated control flow graph degrades branch prediction. Intuitively, this is because there is no construct for skipping the irrelevant results (such as the continue construct). This problem is solved in push-based query engines.
+</p>
+
+<p>
+Push engines solve the problem pull engines have with selection operators. This is achieved by ignoring the produced data if it does not satisfy the given predicate by using a construct which allows to skip the current iteration of the loop (e.g., using continue). This simplifies the control flow and improves branch prediction in the case of selection operators. This is in contrast with pull-engines in which the destination operator should have waited for the source operator to serve the request.
+</p>
+</blockquote>
+
+<p>
+关于compiled engine在过去没有太收到重视的原因，是因为bottleneck在如何有效地访问磁盘数据上。而随着in-memory dbms的出现，瓶颈逐渐出现在memory access以及cpu instruction上。
+</p>
+
+<blockquote>
+<p>
+In disk-based DBMSes, the dominating cost is usually the data transfer from/to the secondary stor- age. Hence, as long as the pipelining algorithm does not break the pipeline, there is no difference between pull engines and push engines. As a result, the practical problem with selections in pull engines (c.f. Section 2.1) is obscured by data transfer costs. With the advent of in-memory DBMSes, the code layout of the instructions becomes a very important factor. As a result, query compilation uses code generation and compilation techniques in order to inline virtual functions and further specialize the code to improve cache locality [20, 2, 32, 35, 42, 33, 34, 30, 53, 12, 41, 29, 3, 48, 28]. As a result of that, the code pattern used in each pipelining algorithm really matters. Hence, it is important to inves- tigate the performance of each pipelining algorithm for different workloads.
+</p>
+</blockquote>
+</div>
+<div id="content"><!-- DISQUS BEGIN --><div id="disqus_thread"></div><script>/***  RECOMMENDED CONFIGURATION VARIABLES: EDIT AND UNCOMMENT THE SECTION BELOW TO INSERT DYNAMIC VALUES FROM YOUR PLATFORM OR CMS.*  LEARN WHY DEFINING THESE VARIABLES IS IMPORTANT: https://disqus.com/admin/universalcode/#configuration-variables*/var disqus_config = function () {this.page.url = 'https://dirtysalt.github.io/html/push-vs-pull-based-loop-fusion-in-query-engines.html';this.page.identifier = 'push-vs-pull-based-loop-fusion-in-query-engines.html';};(function() {var d = document, s = d.createElement('script');s.src = 'https://dirlt.disqus.com/embed.js';s.setAttribute('data-timestamp', +new Date());(d.head || d.body).appendChild(s);})();</script><noscript>Please enable JavaScript to view the <a href="https://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript><!-- DISQUS END --></div></body>
+</html>

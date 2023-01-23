@@ -1,0 +1,130 @@
+#+title: Boyer–Moore majority vote algorithm
+
+https://en.wikipedia.org/wiki/Boyer%E2%80%93Moore_majority_vote_algorithm
+
+https://leetcode.com/problems/online-majority-element-in-subarray/
+
+这个算法是用来选择“一个序列中超过一半的元素”. 这个算法我很早在一本数据结构和算法的书中就学习到过，
+但是作者给出的算法和BM算法真的一点都不像。所以我当时只是记住了怎么使用，但是没有深入理解这个算法有什么变形。
+
+----------
+
+当时作者给出的算法是这样的：不断地消解两个连续的元素，如果他们一致就保留两个，否则全部丢弃。但是这个算法会对数组修改。
+
+#+BEGIN_SRC python
+def majority_vote(a):
+    while len(a) != 1:
+        k = 0
+        for i in range(len(a), 2):
+            if a[i] == a[i+1]:
+                a[k] = a[i]
+                k += 1
+        if len(a) % 2 != 0:
+            a[k] = a[-1]
+            k += 1
+        if k == 0:
+            return None
+        a = a[:k]
+    return a[0]
+
+print(majority_vote([1,2,1,1,2]))
+print(majority_vote([1,2,1,1,2,2]))
+
+#+END_SRC
+
+而wiki给出的BM算法更加简单，只需要维护几个变量就可以了。
+- 假设我们先持有一个maj元素(P=None)和这个maj元素出现次数(C=0)
+- 遍历整个序列（并且这个序列可以是streaming的)，假设当前元素是x
+- 如果 C==0, 说明当前没有可选值，C=1, P=x.
+- 如果 x==P, 那么 C++. 如果 x!=P, 那么 C--.
+- 在结尾时，如果C>0的话，那么说明P就是majority元素.
+
+#+BEGIN_SRC
+def majority_vote(a):
+    p, c = None, 0
+    for x in a:
+        if c == 0:
+            p = x
+            c = 1
+        elif x == p:
+            c += 1
+        else:
+            c -= 1
+    if c == 0: return None
+    return p
+
+print(majority_vote([1,2,1,1,2]))
+print(majority_vote([1,2,1,1,2,2]))
+
+#+END_SRC
+
+--------------------
+如果如果对第一个算法稍加改动，结合BM算法思想的话，就可以对任意区间求解majority.
+
+我们将区间用区间树来表示，节点有两个值 `freq`（表示值出现频次）和 `value` （表示具体什么值). 我们在处理节点a, b的时候
+- a.val == b.val => Tree(a.val, a.freq + b.freq)
+- a.freq > b.freq => Tree(a.val, a.freq - b.freq)
+- a.freq < b.freq => Tree(b.val, b.freq - a.freq)
+只有当freq>0的话，val才是majority元素.
+
+#+BEGIN_SRC python
+class SegTree:
+    def __init__(self):
+        self.val = self.freq = 0
+        self.left = self.right = None
+        self.start = self.end = 0
+
+
+def bm_vote(a: SegTree, b: SegTree, c: SegTree):
+    if a.val == b.val:
+        c.val = a.val
+        c.freq = a.freq + b.freq
+        return
+
+    if b.freq < a.freq:
+        a, b = b, a
+
+    c.val = b.val
+    c.freq = b.freq - a.freq
+    return
+
+
+def build_seg_tree(arr, s, e):
+    if s > e:
+        return None
+    if s == e:
+        t = SegTree()
+        t.val = arr[s]
+        t.freq = 1
+        t.start = s
+        t.end = e
+        return t
+
+    m = (s + e) // 2
+    left = build_seg_tree(arr, s, m)
+    right = build_seg_tree(arr, m + 1, e)
+    t = SegTree()
+    t.start = s
+    t.end = e
+    t.left = left
+    t.right = right
+    bm_vote(left, right, t)
+    return t
+
+
+def query_seg_tree(t, s, e):
+    if s <= t.start and t.end <= e:
+        return t
+    m = (t.start + t.end) // 2
+    if (m + 1) > e:
+        # 只搜索左边
+        x = query_seg_tree(t.left, s, e)
+    elif m < s:
+        x = query_seg_tree(t.right, s, e)
+    else:
+        a = query_seg_tree(t.left, s, m)
+        b = query_seg_tree(t.right, m + 1, e)
+        x = SegTree()
+        bm_vote(a, b, x)
+    return x
+#+END_SRC

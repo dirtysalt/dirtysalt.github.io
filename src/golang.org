@@ -1,0 +1,77 @@
+#+title: Go
+
+-----
+
+- [[http://golang.org/][The Go Programming Language]]
+- [[http://mmcgrana.github.com/2012/10/introducing-go-by-example.html][Introducing Go by Example]]
+- [[https://golang.org/doc/faq][Frequently Asked Questions (FAQ)]]
+
+-----
+编译器会自动选择在栈上还是在堆上分配局部变量的存储空间，但可能令人惊讶的是，这个
+选择并不是由用var还是new声明变量的方式决定的。
+
+#+BEGIN_SRC Go
+var global *int
+func f() {
+  var x int
+  x = 1
+  global = &x
+}
+func g() {
+  y := new(int)
+  *y = 1
+}
+#+END_SRC
+
+f函数里的x变量必须在堆上分配，因为它在函数退出后依然可以通过包一级的global变量找
+到，虽然它是在函数内部定义的；用Go语言的术语说，这个x局部变量从函数f中逃逸了。相
+反，当g函数返回时，变量 *y 将是不可达的，也就是说可以马上被回收的。因此， *y 并没
+有从函数g中逃逸，编译器可以选择在栈上分配 *y 的存储空间（译注：也可以选择在堆上分
+配，然后由Go语言的GC回收这个变量的内存空间），虽然这里用的是new方式。其实在任何
+时候，你并不需为了编写正确的代码而要考虑变量的逃逸行为，要记住的是，逃逸的变量需
+要额外分配内存，同时对性能的优化可能会产生细微的影响。
+
+Go语言的自动垃圾收集器对编写正确的代码是一个巨大的帮助，但也并不是说你完全不用考
+虑内存了。你虽然不需要显式地分配和释放内存，但是要编写高效的程序你依然需要了解变
+量的生命周期。例如，如果将指向短生命周期对象的指针保存到具有长生命周期的对象中，
+特别是保存到全局变量时，会阻止对短生命周期对象的垃圾回收（从而可能影响程序的性
+能）。
+
+在Go语言中，返回函数中局部变量的地址也是安全的。例如下面的代码，调用f函数时创建局
+部变量v，在局部变量地址被返回之后依然有效，因为指针p依然引用这个变量。
+
+#+BEGIN_SRC Go
+var p = f()
+func f() *int {
+  v := 1
+  return &v
+}
+#+END_SRC
+
+----------
+
+关于Go的内存模型
+
+https://golang.org/ref/mem
+
+关于happens-before的定义非常直接。在一个goroutine里面里面，happens-before是根据程序书写定义的。而在一个goroutine里面指令可能是会被reorder的，所以多个goroutine对于变量读写顺序其实就是未定义的，除非使用synchronization.
+
+#+BEGIN_QUOTE
+To specify the requirements of reads and writes, we define happens before, a partial order on the execution of memory operations in a Go program. If event e1 happens before event e2, then we say that e2 happens after e1. Also, if e1 does not happen before e2 and does not happen after e2, then we say that e1 and e2 happen concurrently.
+
+Within a single goroutine, the happens-before order is the order expressed by the program.
+
+A read r of a variable v is allowed to observe a write w to v if both of the following hold:
+- r does not happen before w.
+- There is no other write w' to v that happens after w but before r.
+
+To guarantee that a read r of a variable v observes a particular write w to v, ensure that w is the only write r is allowed to observe. That is, r is guaranteed to observe w if both of the following hold:
+- w happens before r.
+- Any other write to the shared variable v either happens before w or after r.
+
+This pair of conditions is stronger than the first pair; it requires that there are no other writes happening concurrently with w or r.
+
+Within a single goroutine, there is no concurrency, so the two definitions are equivalent: a read r observes the value written by the most recent write w to v. When multiple goroutines access a shared variable v, they must use synchronization events to establish happens-before conditions that ensure reads observe the desired writes.
+#+END_QUOTE
+
+然后文章的后面就是各种synchronization定义出来的变量读写顺序，包括goroutine creation/destruction, package initialization, channel等等。

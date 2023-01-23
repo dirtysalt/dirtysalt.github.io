@@ -1,0 +1,365 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>随机数的随机性(randomness of random number)</title>
+<meta name="author" content="dirtysalt" />
+<meta name="generator" content="Org Mode" />
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content" class="content">
+<h1 class="title">随机数的随机性(randomness of random number)</h1>
+<p>
+云风有两篇关于随机性的文章，我觉得挺有意思的：
+</p>
+<ul class="org-ul">
+<li><a href="https://blog.codingnow.com/2007/11/random.html">云风的 BLOG: 随机数有多随机？</a></li>
+<li><a href="https://blog.codingnow.com/2008/04/quasi-random_sequences.html">云风的 BLOG: 不那么随机的随机数列</a></li>
+<li><a href="https://coolshell.cn/articles/8593.html">如何测试洗牌程序 | | 酷 壳 - CoolShell</a></li>
+</ul>
+
+<p>
+coolshell里面提到的 `fisher_yates` 算法，让我想起了 <a href="https://www.geeksforgeeks.org/reservoir-sampling/">`reservior sampling`</a> 算法，都是一遍下来和交换N-1次，我隐隐地感觉两者之间是有联系的。
+</p>
+
+<p>
+先说下第二篇文章里面的一个问题，在N次实验中，连续出现5次正面的概率多大，云风在最后面给了解法：
+</p>
+<ul class="org-ul">
+<li>f(N) = f(N-1) * 2 + 2^(N-6) - f(N-6)</li>
+<li>f(N-1) 表示前面N-1次已经出现了5次正面</li>
+<li>剩余的情况就是最近一次出现正面，那么就要求最近4次必须是正面，最近第5次是反面</li>
+<li>对于之前的N-6次情况，只要排除不出现连续5次即可，就是2^(N-6) - f(N-6).</li>
+</ul>
+
+<p>
+然后是关于文章里面可视化随机性的程序，可以在wiki上参考 <a href="https://zh.wikipedia.org/wiki/PBM%E6%A0%BC%E5%BC%8F">PBM文件格式</a>, 它同时支持ASCII和二进制，还支持位图/灰度/彩色(RGB)三种格式。
+</p>
+
+<p>
+python下面有个 <a href="https://github.com/fmder/ghalton">fmder/ghalton: Quasi Random Number Generator</a> 准随机数生成器，我对比了一下这个生成器和numpy.random的随机性差异。
+</p>
+
+<p>
+这里面有个很小的问题，是如何将(0,1)的浮点数映射成为整数。我没有特别好的办法，采用最简单的概率映射：
+</p>
+<ul class="org-ul">
+<li>假设(0,1)的生成浮点数是概率p</li>
+<li>将整数范围[a,b)映射成为(b-a)等分，每一等分的概率是1/(b-a)</li>
+<li>然后查找概率p对应的整数</li>
+</ul>
+<p>
+这个查找可以做成二分，但是如果范围比较小的话，就直接搜索吧。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-py-def-class">def</span> <span class="org-function-name">gen_halton_random</span>(low, high, size):
+    <span class="org-py-variable-name">unit</span> = <span class="org-py-number">1</span> / (high - low)
+    <span class="org-py-variable-name">pvts</span> = [i * unit <span class="org-keyword">for</span> i <span class="org-keyword">in</span> <span class="org-py-builtins">range</span>(<span class="org-py-number">1</span>, high - low + <span class="org-py-number">1</span>)]
+    <span class="org-py-variable-name">pvts</span>[-<span class="org-py-number">1</span>] = <span class="org-py-number">1</span>
+
+    <span class="org-py-def-class">def</span> <span class="org-function-name">to_int</span>(p):
+        <span class="org-keyword">for</span> i <span class="org-keyword">in</span> <span class="org-py-builtins">range</span>(len(pvts)):
+            <span class="org-keyword">if</span> p &lt;= pvts[i]:
+                <span class="org-keyword">return</span> i
+
+    <span class="org-py-variable-name">xs</span> = gahlton_gen.get(size)
+    <span class="org-py-variable-name">ys</span> = [to_int(p[<span class="org-py-number">0</span>]) <span class="org-keyword">for</span> p <span class="org-keyword">in</span> xs]
+    <span class="org-keyword">return</span> ys
+
+</pre>
+</div>
+
+<hr />
+
+<p>
+第一个实现是可视化这两个随机数生成器的随机性 <a href="https://github.com/dirtysalt/codes/tree/master/misc/random/random_graph.py">代码</a>
+</p>
+
+<p>
+第一张图是numpy产生的，第二张图是halton产生的，差异还是蛮明显的
+</p>
+
+<p>
+<img src="../images/numpy_random.jpg" alt="numpy_random.jpg" /> <img src="../images/halton_random.jpg" alt="halton_random.jpg" />
+</p>
+
+<p>
+为了更好地产生随机数，ghalton可以指定dimension, 因为我们要产生二维图像所以inDim=2.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-py-variable-name">ghalton_gen</span> = ghalton.Halton(<span class="org-py-variable-name">inDim</span>=<span class="org-py-number">2</span>)
+
+
+<span class="org-py-def-class">def</span> <span class="org-function-name">to_int</span>(ps, n):
+    <span class="org-py-variable-name">unit</span> = <span class="org-py-number">1</span> / n
+    <span class="org-py-variable-name">pvts</span> = [i * unit <span class="org-keyword">for</span> i <span class="org-keyword">in</span> <span class="org-py-builtins">range</span>(<span class="org-py-number">1</span>, n)]
+    <span class="org-py-variable-name">pvts</span>[-<span class="org-py-number">1</span>] = <span class="org-py-number">1</span>
+
+    <span class="org-py-def-class">def</span> <span class="org-function-name">fx</span>(p):
+        <span class="org-keyword">for</span> i <span class="org-keyword">in</span> <span class="org-py-builtins">range</span>(len(pvts)):
+            <span class="org-keyword">if</span> p &lt;= pvts[i]:
+                <span class="org-keyword">return</span> i
+
+    <span class="org-keyword">return</span> [fx(p) <span class="org-keyword">for</span> p <span class="org-keyword">in</span> ps]
+
+
+<span class="org-py-def-class">def</span> <span class="org-function-name">gen_halton_random</span>(n, m, size):
+    <span class="org-py-variable-name">zs</span> = ghalton_gen.get(size)
+    <span class="org-py-variable-name">xs</span> = to_int([p[<span class="org-py-number">0</span>] <span class="org-keyword">for</span> p <span class="org-keyword">in</span> zs], n)
+    <span class="org-py-variable-name">ys</span> = to_int([p[<span class="org-py-number">1</span>] <span class="org-keyword">for</span> p <span class="org-keyword">in</span> zs], m)
+    <span class="org-keyword">return</span> <span class="org-py-builtins">zip</span>(xs, ys)
+</pre>
+</div>
+
+<hr />
+
+<p>
+第二个实现是对两个随机数分布做卡方检验 <a href="https://github.com/dirtysalt/codes/tree/master/misc/random/random_chisqaure.py">代码</a>
+</p>
+<ul class="org-ul">
+<li><a href="https://zh.wikipedia.org/wiki/%E5%8D%A1%E6%96%B9%E6%A3%80%E9%AA%8C">卡方检验 - 维基百科，自由的百科全书</a></li>
+<li><a href="https://zh.wikipedia.org/wiki/%E5%8D%A1%E6%96%B9%E5%88%86%E4%BD%88">卡方分佈 - 维基百科，自由的百科全书</a></li>
+</ul>
+
+<p>
+下面函数是计算卡方值，deg是自由度
+</p>
+<div class="org-src-container">
+<pre class="src src-python">
+<span class="org-py-def-class">def</span> <span class="org-function-name">compute_x2</span>(fn, deg, size):
+    <span class="org-py-variable-name">n</span> = deg + <span class="org-py-number">1</span>
+    <span class="org-py-variable-name">xs</span> = fn(<span class="org-py-number">0</span>, n, size)
+    <span class="org-py-variable-name">counter</span> = Counter(xs)
+    <span class="org-py-variable-name">res</span> = <span class="org-py-number">0</span>
+    <span class="org-keyword">for</span> k <span class="org-keyword">in</span> <span class="org-py-builtins">range</span>(n):
+        <span class="org-py-variable-name">v</span> = counter[k]
+        <span class="org-py-variable-name">res</span> += v * v
+    <span class="org-keyword">return</span> res * n / size - size
+</pre>
+</div>
+
+<p>
+两个随机数生成器得到的卡方值差别也蛮大的，这个准随机数生成器效果就是好。
+</p>
+
+<pre class="example" id="orgff6d42f">
+degree = 5, size = 4000
+===== numpy random =====
+[2.378, 2.891, 3.587, 4.142, 4.97, 6.086, 6.743, 8.852, 11.216, 12.473]
+===== halton random =====
+[0.002, 0.002, 0.002, 0.002, 0.002, 0.002, 0.002, 0.008, 0.008, 0.008]
+</pre>
+
+<p>
+卡方分布表可以在wiki里面找到
+</p>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-right" />
+
+<col  class="org-right" />
+
+<col  class="org-right" />
+
+<col  class="org-right" />
+
+<col  class="org-right" />
+
+<col  class="org-right" />
+
+<col  class="org-right" />
+
+<col  class="org-right" />
+
+<col  class="org-right" />
+
+<col  class="org-right" />
+
+<col  class="org-right" />
+
+<col  class="org-right" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-right">自由度k \ p-value</th>
+<th scope="col" class="org-right">0.95</th>
+<th scope="col" class="org-right">0.90</th>
+<th scope="col" class="org-right">0.80</th>
+<th scope="col" class="org-right">0.70</th>
+<th scope="col" class="org-right">0.50</th>
+<th scope="col" class="org-right">0.30</th>
+<th scope="col" class="org-right">0.20</th>
+<th scope="col" class="org-right">0.10</th>
+<th scope="col" class="org-right">0.05</th>
+<th scope="col" class="org-right">0.01</th>
+<th scope="col" class="org-right">0.001</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-right">1</td>
+<td class="org-right">0.004</td>
+<td class="org-right">0.02</td>
+<td class="org-right">0.06</td>
+<td class="org-right">0.15</td>
+<td class="org-right">0.46</td>
+<td class="org-right">1.07</td>
+<td class="org-right">1.64</td>
+<td class="org-right">2.71</td>
+<td class="org-right">3.84</td>
+<td class="org-right">6.64</td>
+<td class="org-right">10.83</td>
+</tr>
+
+<tr>
+<td class="org-right">2</td>
+<td class="org-right">0.10</td>
+<td class="org-right">0.21</td>
+<td class="org-right">0.45</td>
+<td class="org-right">0.71</td>
+<td class="org-right">1.39</td>
+<td class="org-right">2.41</td>
+<td class="org-right">3.22</td>
+<td class="org-right">4.60</td>
+<td class="org-right">5.99</td>
+<td class="org-right">9.21</td>
+<td class="org-right">13.82</td>
+</tr>
+
+<tr>
+<td class="org-right">3</td>
+<td class="org-right">0.35</td>
+<td class="org-right">0.58</td>
+<td class="org-right">1.01</td>
+<td class="org-right">1.42</td>
+<td class="org-right">2.37</td>
+<td class="org-right">3.66</td>
+<td class="org-right">4.64</td>
+<td class="org-right">6.25</td>
+<td class="org-right">7.82</td>
+<td class="org-right">11.34</td>
+<td class="org-right">16.27</td>
+</tr>
+
+<tr>
+<td class="org-right">4</td>
+<td class="org-right">0.71</td>
+<td class="org-right">1.06</td>
+<td class="org-right">1.65</td>
+<td class="org-right">2.20</td>
+<td class="org-right">3.36</td>
+<td class="org-right">4.88</td>
+<td class="org-right">5.99</td>
+<td class="org-right">7.78</td>
+<td class="org-right">9.49</td>
+<td class="org-right">13.28</td>
+<td class="org-right">18.47</td>
+</tr>
+
+<tr>
+<td class="org-right">5</td>
+<td class="org-right">1.14</td>
+<td class="org-right">1.61</td>
+<td class="org-right">2.34</td>
+<td class="org-right">3.00</td>
+<td class="org-right">4.35</td>
+<td class="org-right">6.06</td>
+<td class="org-right">7.29</td>
+<td class="org-right">9.24</td>
+<td class="org-right">11.07</td>
+<td class="org-right">15.09</td>
+<td class="org-right">20.52</td>
+</tr>
+
+<tr>
+<td class="org-right">6</td>
+<td class="org-right">1.63</td>
+<td class="org-right">2.20</td>
+<td class="org-right">3.07</td>
+<td class="org-right">3.83</td>
+<td class="org-right">5.35</td>
+<td class="org-right">7.23</td>
+<td class="org-right">8.56</td>
+<td class="org-right">10.64</td>
+<td class="org-right">12.59</td>
+<td class="org-right">16.81</td>
+<td class="org-right">22.46</td>
+</tr>
+
+<tr>
+<td class="org-right">7</td>
+<td class="org-right">2.17</td>
+<td class="org-right">2.83</td>
+<td class="org-right">3.82</td>
+<td class="org-right">4.67</td>
+<td class="org-right">6.35</td>
+<td class="org-right">8.38</td>
+<td class="org-right">9.80</td>
+<td class="org-right">12.02</td>
+<td class="org-right">14.07</td>
+<td class="org-right">18.48</td>
+<td class="org-right">24.32</td>
+</tr>
+
+<tr>
+<td class="org-right">8</td>
+<td class="org-right">2.73</td>
+<td class="org-right">3.49</td>
+<td class="org-right">4.59</td>
+<td class="org-right">5.53</td>
+<td class="org-right">7.34</td>
+<td class="org-right">9.52</td>
+<td class="org-right">11.03</td>
+<td class="org-right">13.36</td>
+<td class="org-right">15.51</td>
+<td class="org-right">20.09</td>
+<td class="org-right">26.12</td>
+</tr>
+
+<tr>
+<td class="org-right">9</td>
+<td class="org-right">3.32</td>
+<td class="org-right">4.17</td>
+<td class="org-right">5.38</td>
+<td class="org-right">6.39</td>
+<td class="org-right">8.34</td>
+<td class="org-right">10.66</td>
+<td class="org-right">12.24</td>
+<td class="org-right">14.68</td>
+<td class="org-right">16.92</td>
+<td class="org-right">21.67</td>
+<td class="org-right">27.88</td>
+</tr>
+
+<tr>
+<td class="org-right">10</td>
+<td class="org-right">3.94</td>
+<td class="org-right">4.86</td>
+<td class="org-right">6.18</td>
+<td class="org-right">7.27</td>
+<td class="org-right">9.34</td>
+<td class="org-right">11.78</td>
+<td class="org-right">13.44</td>
+<td class="org-right">15.99</td>
+<td class="org-right">18.31</td>
+<td class="org-right">23.21</td>
+<td class="org-right">29.59</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+对于自由度k=5来说，只有值不大于11.07才能在p&lt;0.05置信区间中（这个置信区间应该是单向的）。也就是说，多次试验当中，
+如果卡方值如果出现大于11.07的话，那么说明每个变量并不是相互独立的，反过来说明随机数并不随机。
+</p>
+</div>
+<div id="content"><!-- DISQUS BEGIN --><div id="disqus_thread"></div><script>/***  RECOMMENDED CONFIGURATION VARIABLES: EDIT AND UNCOMMENT THE SECTION BELOW TO INSERT DYNAMIC VALUES FROM YOUR PLATFORM OR CMS.*  LEARN WHY DEFINING THESE VARIABLES IS IMPORTANT: https://disqus.com/admin/universalcode/#configuration-variables*/var disqus_config = function () {this.page.url = 'https://dirtysalt.github.io/html/randomness-of-random-number.html';this.page.identifier = 'randomness-of-random-number.html';};(function() {var d = document, s = d.createElement('script');s.src = 'https://dirlt.disqus.com/embed.js';s.setAttribute('data-timestamp', +new Date());(d.head || d.body).appendChild(s);})();</script><noscript>Please enable JavaScript to view the <a href="https://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript><!-- DISQUS END --></div></body>
+</html>

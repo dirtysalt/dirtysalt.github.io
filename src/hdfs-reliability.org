@@ -1,0 +1,80 @@
+#+title: HDFS Reliability
+http://blog.cloudera.com/wp-content/uploads/2010/03/HDFS_Reliability.pdf @ 2008
+
+** Overview of HDFS
+- The mapping between blocks and the data nodes they reside on is not stored persistently. Instead, it is stored in the name node's memory, and is built up from the periodic block reports that data nodes send to the name node. One of the first things that a data node does on start up is send a block report to the name node, and this allows the name node to rapidly form a picture of the block distribution across the cluster.（block和node之间的映射并没有物化下来，只是存放在内存里面，通过nn和dn之间的心跳不断调整对应关系）
+- Functioning data nodes send heartbeats to the name node every 3 seconds. This mechanism forms the communication channel between data node and name node: occasionally, the name node will piggyback a command to a data node on the heartbeat response. An example of a command might be "send a copy of block b to data node d".（dn每隔3s发送心跳信息，这个时候nn可以通过piggyback来携带一些指令信息）
+
+*** Block replicas
+The rack placement policy1 is managed by the name node, and replicas are placed as follows:
+   1. The first replica is placed on a random node in the cluster, unless the write originates from within the cluster, in which case it goes to the local node.
+   2. The second replica is written to a different rack from the first, chosen at random.
+   3. The third replica is written to the same rack as the second replica, but on a different node.
+   4. Fourth and subsequent replicas are placed on random nodes, although racks with many replicas are biased against, so replicas are spread out across the cluster.
+Currently the policy is fixed, however there is a proposal to make it pluggable. See https://issues.apache.org/jira/browse/HADOOP-3799
+
+If a data node fails while the block is being written, it is removed from the pipeline. When the current block has been written, the name node will re-replicate it to make up for the missing replica due to the failed data node. Subsequent blocks will be written using a new pipeline with the required number of data nodes.（如果在pipeline上面有一个dn没有写成功的话是否直接返回，然后通过re-replicate的机制来善后。剩余的blocks还是按照新的逻辑走，和上一个block的pipeline没有关系）
+
+*** Clients
+*** Secondary Name Node
+*** Safe mode
+When the name node starts it enters a state where the filesystem is read only, and no blocks are replicated or deleted. This is called "safe mode". Safe mode is needed to allow the name node to do two things: 在safemode下面所有数据只是只读的，在这期间完成两件事情
+1. Reconstruct the state of the filesystem by loading the image file into memory and replaying the edit log. 恢复NN状态。
+2. Generate the mapping between blocks and data nodes by waiting for enough of the data nodes to check in. 等待足够数量的dn checkin之后，重构block和node之间的映射关系。
+  1. If the name node didn't wait for the data nodes to check in, it would think that blocks were under-replicated and start re-replicating blocks across the cluster.
+  2. Instead, the name node waits until enough data nodes check in to account for a configurable percentage of blocks (99.9% by default), which satisfy the minimum replication level (1 by default). （等待足够数量的block都出现并且满足一定的备份数目）
+  3. The name node then waits a further fixed amount of time (30 seconds by default) to allow the cluster to settle down before exiting safe mode.（然后等待30s离开safe mode)
+
+*** Tools
+*** Snapshots
+** Types of failure
+Data loss can occur for the following reasons:
+   1. Hardware failure or malfunction. A failure of one or more hardware components causes data to be lost.
+   2. Software error. A bug in the software causes data to be lost.
+   3. Human error. For example, a human operator inadvertently deletes the whole filesystem by typing: hadoop fs -rmr /
+
+*** Hardware failures
+How does Hadoop detect hardware failures?
+- The name node would notice that the data node is not sending heartbeats, then after a certain time period (10 minutes by default) it considers the node as dead, at which point it will re-replicate the blocks that were on the failed data node using replicas stored on other nodes of the cluster.(dn故障检测通过心跳完成）
+- Detecting corrupt data requires a different approach. The principal technique is to use checksums to check for corruption.（通过校验来检测数据损坏）
+  - Corruption may occur during transmission of the block over the network, or when it is written to or read from disk. In Hadoop, the data nodes verify checksums on receipt of the block. If any checksum is invalid the data node will complain and the block will be resent. A block's checksums are stored along with the block data, to allow further integrity checks.（传输出现损坏的话那么需要进行重传，然后checksum也会被保存下来用于后续检查）
+  - This is not sufficient to ensure that the data will be successfully read from disk in an uncorrupted state, so all reads from HDFS verify the block checksums too. Failures are reported to the name node, which organizes re-replication of the healthy replicas.（后续读取数据的时候也会进行检查）
+  - Because HDFS is often used to store data that isn't read very often, detecting corrupt data when it is read is undesirable: the failure may go undetected for a long period, during which other replicas may have failed. To remedy this, each data node runs a background thread to check block integrity. If it finds a corrupt block, it informs the name node which replicates the block from its uncorrupted replicas, and arranges for the corrupt block to be deleted. Blocks are re-verified every three weeks to protect against disk errors over time.（部分数据可能很少会被读取，因此在读取的时候检查坏块就不太现实。所以在每个dn上面都会存在一个后台线程定期检查所有的块看是否损坏。如果损坏的话那么需要重新做replication. 通常这个线程是每3周启动一次）
+
+*** Software errors
+
+** Best Practices
+*** Use a common configuration
+*** Use three or more replicas
+*** Protect the name node
+To avoid this catastrophic scenario the name node should have special treatment:
+   1. The name node should write its persistent metadata to multiple local disks. If one physical disk fails then there is a backup of the data on another disk. RAID can be used in this case too.(用RAID来提高可靠性）
+   2. The name node should write its persistent metadata to a remote NFS mount. If the name node fails, then there is a backup of the data on NFS.（用NFS来做提高可靠性）
+   3. The secondary name node should run on a separate node to the primary. In the case of losing all of the primary's data (local disks and NFS), the secondary can provide a stale copy of the metadata. Since it is stale, there will be some data loss, but it will be a known amount of data loss, since the secondary makes periodic backups of the metadata on a configurable schedule（secondary nn和nn分开部署）
+   4. Make backups of the name node's persistent metadata. You should keep multiple copies of different ages (1 day, 1 week, 1 month) to allow recovery in the case of corruption. A convenient way to do this is to use the checkpoints on the secondary as the source of the backup. These backups should be verified; at present the only way to do this is to start a new name node (on a separate, unreachable network to the production cluster) to visually check that it can reconstruct the filesystem metadata.（定期备份并且进行校验，一个简单的校验方法就是用这个image去启动一个namenode）
+   5. Use directory quotas to set a maximum number of files that may live in the filesystem namespace. This measure prevents the destablizing effect of the name node running out of memory due to too many files being created in the system.（提高文件数量上限）
+
+*** Employ monitoring
+- JMX/Nagios/Ganglia
+- fsck
+- block scanner report http://dp3:50075/blockScannerReport
+
+*** Define backup and upgrade procedures
+In these cases, extra care is needed when performing an upgrade of Hadoop, since there is potential for data loss due to software errors. There are several precautions that are recommended:
+- Do a dry run on a small cluster.（在测试集群上实验）
+- Document the upgrade procedure for your cluster. There are upgrade instructions on the [[http://wiki.apache.org/hadoop/Hadoop%2520Upgrade][Hadoop Wiki]], but having a custom set of instructions for your particular set up, incorporating lessons learned from a dry run, is invaluable when it needs to be repeated in the future.（记录下升级步骤等）
+- Always make multiple off-site backups of the name node's metadata.（备份NN数据）
+- If the on-disk data layout has changed (stored on the data node), consider making a backup of the cluster, or at least of the most important files on the cluster. While all data layout upgrades have a facility to rollback to a previous format version (by keeping a copy of the data in the old layout), making backups is always recommended if possible. Using the distcp tool over hftp to backup data to a second HDFS cluster is a good way to make backups.（可以的话备份全量数据，并且考虑如何做rollback）
+
+** Human error
+*** Trash facility
+*** Permissions
+
+** Summary of HDFS Reliability Best Practices
+  1. Use a common HDFS configuration.
+  2. Use replication level of 3 (as a minimum), or more for critical (or widely-used) data.
+  3. Configure the name node to write to multiple local disks and NFS. Run the secondary on a separate node. Make multiple, periodic backups of name node persistent state.
+  4. Actively monitor your HDFS cluster.
+  5. Define backup and upgrade procedures.
+  6. Enable HDFS trash, and avoid programmatic deletes - prefer the trash facility.
+  7. Devise a set of users and permissions for your workflow.

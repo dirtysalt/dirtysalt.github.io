@@ -1,0 +1,112 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>编译和安装bcc/bpftrace</title>
+<meta name="author" content="dirtysalt" />
+<meta name="generator" content="Org Mode" />
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content" class="content">
+<h1 class="title">编译和安装bcc/bpftrace</h1>
+<p>
+在centos上最简单的办法就是找找yum有没有源，没有源的话可以使用snap这个东西。这个东西我不知道是怎么搞的，感觉像是基于docker或者是容器化技术搞的。
+</p>
+
+<hr />
+
+<p>
+用snap安装bpftrace可以在这里找到安装办法 <a href="https://snapcraft.io/install/bpftrace/centos">https://snapcraft.io/install/bpftrace/centos</a> ，记住使用之前执行下面命令
+</p>
+
+<blockquote>
+<p>
+sudo snap connect bpftrace:system-trace
+</p>
+</blockquote>
+
+<p>
+如果要让sudo可以执行bpftrace，需要更新 `/etc/sudoers` (下面也将bcc-tools加入到了sudo路径下面）
+</p>
+
+<blockquote>
+<p>
+Defaults    secure_path = /sbin:/bin:/usr/sbin:/usr/bin:/usr/share/bcc/tools:/var/lib/snapd/snap/bin
+</p>
+</blockquote>
+
+<p>
+但是用这个binary执行 `ustack` 函数感觉特别慢。我google了一下这个问题，大部分都是来自brendan gregg的blog, 但是几乎没有人遇到过ustack执行慢的问题。
+</p>
+
+<p>
+我怀疑是不是因为这个版本没有做编译优化，因为我用的是snap安装的binary, 估计大部分人不是使用这个途径安装的，这也是我后面想试试自己编译的动机。
+</p>
+
+<p>
+不过事实证明我错了，最后我发现就是address到symbol解析比较慢，使用 `BPFTRACE_CACHE_USER_SYMBOLS=1` 变量就好了，并且这个设置必须写在sudo之后。
+</p>
+
+<hr />
+
+<p>
+编译过程是非常痛苦的，bcc/bpf大部分编译组件可以使用yum安装，但是llvm/clang通常还需要自定义的安装，编译llvm/clang这个慢啊。而且中间还猜过不少坑，
+</p>
+
+<p>
+因为bcc/bpf需要llvm使用某些编译参数才能进行联编，这么往返折腾了估计有3-4次吧，每次在我们104vCPU的机器上编译还需要花费差不多10-20分钟。
+</p>
+
+<p>
+这里记录一些编译参数，如果有人恰好需要自己编译bcc/bpftrace, 而且不知道怎么设置参数的话，希望对你有帮助。
+</p>
+
+<p>
+下面 `doris-cmake` 其实是这个缩写，没有什么特殊的东西：加符号的优化编译，以及指定安装位置
+</p>
+
+<blockquote>
+<p>
+alias doris-cmake="cmake -DCMAKE_INSTALL_PREFIX=$HOME/installed -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_BUILD_TYPE=RelWithDebInfo $@"
+</p>
+</blockquote>
+
+<p>
+<b>编译llvm project(llvm-project-13.0.0)</b>
+</p>
+
+<blockquote>
+<p>
+cmake -S llvm -B build -G "Unix Makefiles" -DCMAKE_INSTALL_PREFIX=$HOME/installed -DCMAKE_BUILD_TYPE=RelWithDebInfo -DLLVM_ENABLE_PROJECTS="clang" -DLLVM_ENABLE_RUNTIMES="libcxx;libcxxabi"  -DCMAKE_INSTALL_LIBDIR=lib -DLLVM_ENABLE_RTTI=ON -DLLVM_INCLUDE_EXAMPLES=OFF -DCLANG_BUILD_EXAMPLES=OFF -DLLVM_BUILD_LLVM_DYLIB=ON -DLLVM_LINK_LLVM_DYLIB=ON -DLLVM_INCLUDE_TESTS=OFF
+</p>
+</blockquote>
+
+<p>
+<b>编译bcc(github master)</b>
+</p>
+
+<blockquote>
+<p>
+doris-cmake -DENABLE_EXAMPLES=OFF -DENABLE_LLVM_SHARED=ON -DENABLE_TESTS=OFF  ../
+</p>
+</blockquote>
+
+<p>
+<b>编译bpftrace(0.14.1)</b>
+</p>
+
+<p>
+需要修改一些代码，我记得是在 `attach_uprobe.cpp` 某个地方，强制enable `LIBBCC_ATTACH_UPROBE_SEVEN_ARGS_SIGNATURE` 这个宏
+</p>
+
+<blockquote>
+<p>
+doris-cmake -DBUILD_TESTING=OFF ../
+</p>
+</blockquote>
+</div>
+<div id="content"><!-- DISQUS BEGIN --><div id="disqus_thread"></div><script>/***  RECOMMENDED CONFIGURATION VARIABLES: EDIT AND UNCOMMENT THE SECTION BELOW TO INSERT DYNAMIC VALUES FROM YOUR PLATFORM OR CMS.*  LEARN WHY DEFINING THESE VARIABLES IS IMPORTANT: https://disqus.com/admin/universalcode/#configuration-variables*/var disqus_config = function () {this.page.url = 'https://dirtysalt.github.io/html/install-compiled-bcc-bpftrace.html';this.page.identifier = 'install-compiled-bcc-bpftrace.html';};(function() {var d = document, s = d.createElement('script');s.src = 'https://dirlt.disqus.com/embed.js';s.setAttribute('data-timestamp', +new Date());(d.head || d.body).appendChild(s);})();</script><noscript>Please enable JavaScript to view the <a href="https://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript><!-- DISQUS END --></div></body>
+</html>

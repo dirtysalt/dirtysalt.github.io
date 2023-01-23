@@ -1,0 +1,143 @@
+#+title: Algorithmica Compilation & Profiling
+
+----------
+
+https://en.algorithmica.org/hpc/compilation/flags/
+
+可以在源代码内部加上编译选项，好处是可以是针对某个文件进行特殊优化。
+
+#+BEGIN_EXAMPLE
+#pragma GCC optimize("O3")
+#pragma GCC target("avx2")
+#+END_EXAMPLE
+
+可以针对不用的target做不同的实现，如果使用 `-mpopcnt` 的话那么就会使用下面那个版本。
+
+#+BEGIN_SRC cpp
+__attribute__(( target("default") )) // fallback implementation
+int popcnt(int x) {
+    int s = 0;
+    for (int i = 0; i < 32; i++)
+        s += (x>>i&1);
+    return s;
+}
+
+__attribute__(( target("popcnt") )) // used if popcnt flag is enabled
+int popcnt(int x) {
+    return __builtin_popcount(x);
+}
+#+END_SRC
+
+https://en.algorithmica.org/hpc/compilation/situational/
+
+某些优化是需要在特定场景下面才有效的，这类优化在-O2/-O3的时候都不会开启，除非显示指定。
+1. loop unrolling (-funroll-loops)
+2. function inlining (always_inline, -finline-limit=n)
+3. likely/unlikely
+4. PGO. 按照作者的说法对于大项目可以有10~20%的性能提升
+
+----------
+
+https://en.algorithmica.org/hpc/profiling/
+
+Profiling和现代物理学研究非常类似，观察不同尺度的物质需要使用对应尺度的观测工具，观察不同软件行为需要不同层次的profiling工具。
+
+在现代计算机上设计算法有点类似于经验学科，需要通过实验来进行验证，因为现代计算机是在是太复杂了。像Intel这样的东西都没有办法确定x86指令的latency和throughput, 还需要通过别人的逆向工程来搞定。 https://arxiv.org/pdf/1810.04610.pdf
+
+#+BEGIN_QUOTE
+There are many different types of profilers. I like to think about them by analogy of how physicists and other natural scientists approach studying small things, picking the right tool depending on the required level of precision:
+- When objects are on a micrometer scale, they use optical microscopes.
+- When objects are on a nanometer scale, and light no longer interacts with them, they use electron microscopes.
+- When objects are smaller than that (e. g. the insides of an atom), they resort to theories and assumptions about how things work (and test these assumptions using intricate and indirect experiments).
+
+Similarly, there are three main profiling techniques, each operating by its own principles, having distinct areas of applicability, and allowing for different levels of precision:
+- Instrumentation lets you time the program as a whole or by parts and count specific events you are interested in.
+- Statistical profiling lets you go down to the assembly level and track various hardware events such as branch mispredictions or cache misses, which are critical for performance.
+- Program simulation lets you go down to the individual cycle level and look into what is happening inside the CPU on each cycle when it is executing a small assembly snippet.
+
+Practical algorithm design can be very much considered an empirical field too. We largely rely on the same experimental methods, although this is not because we don’t know some of the fundamental secrets of nature but mostly because modern computers are just too complex to analyze — besides, this is also true that we, regular software engineers, can’t know some of the details because of IP protection from hardware companies (in fact, considering that the most accurate x86 instruction tables are reverse-engineered, there is a reason to believe that Intel doesn’t know these details themselves).
+#+END_QUOTE
+
+https://en.algorithmica.org/hpc/profiling/mca/
+
+MCA(machine code analyzer) llvm-mca 这个工具可以分析到指令级别的CPU延迟/吞吐情况
+
+https://godbolt.org/ 可以在线进行分析
+
+#+BEGIN_EXAMPLE
+// 代码整体执行情况，Insts, Cycles, IPC
+Iterations: 100
+Instructions: 8600
+Total Cycles: 1861
+Total uOps: 9900
+
+
+Dispatch Width: 6
+uOps Per Cycle: 5.32
+IPC: 4.62
+Block RThroughput: 16.5
+
+// 每条指令情况
+
+Instruction Info:
+[1]: #uOps
+[2]: Latency
+[3]: RThroughput
+[4]: MayLoad
+[5]: MayStore
+[6]: HasSideEffects (U)
+
+
+[1] [2] [3] [4] [5] [6] Instructions:
+1 1 0.25 test rsi, rsi
+
+// 每条指令的对资源占用情况
+Resources:
+[0] - SKXDivider
+[1] - SKXFPDivider
+[2] - SKXPort0
+[3] - SKXPort1
+[4] - SKXPort2
+[5] - SKXPort3
+[6] - SKXPort4
+[7] - SKXPort5
+[8] - SKXPort6
+[9] - SKXPort7
+
+
+Resource pressure per iteration:
+[0] [1] [2] [3] [4] [5] [6] [7] [8] [9]
+- - 18.50 18.49 7.49 7.52 9.00 18.50 18.51 6.99
+
+
+Resource pressure by instruction:
+[0] [1] [2] [3] [4] [5] [6] [7] [8] [9] Instructions:
+- - - - - - - 0.99 0.01 - test rsi, rsi
+- - 1.00 - - - - - - - je .L1
+- - - 0.02 - - - 0.98 - - lea rcx, [rsi - 1]
+#+END_EXAMPLE
+
+
+https://en.algorithmica.org/hpc/profiling/benchmarking/
+
+Benchmark这节使用jupyter来进行参数配置以及画图的确是很有意思的事情
+
+#+BEGIN_SRC python
+def bench(source, n=2**20):
+    !make -s {source}
+    if _exit_code != 0:
+        raise Exception("Compilation failed")
+    res = !./{source} {n} {q}
+    duration = float(res[0].split()[0])
+    return duration
+
+ns = list(int(1.17**k) for k in range(30, 60))
+baseline = [bench('std_lower_bound', n=n) for n in ns]
+results = [bench('my_binary_search', n=n) for n in ns]
+
+# plotting relative speedup for different array sizes
+import matplotlib.pyplot as plt
+
+plt.plot(ns, [x / y for x, y in zip(baseline, results)])
+plt.show()
+#+END_SRC

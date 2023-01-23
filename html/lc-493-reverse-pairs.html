@@ -1,0 +1,186 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>LC 493. Reverse Pairs</title>
+<meta name="author" content="dirtysalt" />
+<meta name="generator" content="Org Mode" />
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content" class="content">
+<h1 class="title">LC 493. Reverse Pairs</h1>
+<p>
+<a href="https://leetcode.com/problems/reverse-pairs/">https://leetcode.com/problems/reverse-pairs/</a>
+</p>
+
+<p>
+之所以想写这题，主要是因为自己在上面做了很多种尝试，虽然这些尝试在时间复杂度面前都是无效的。
+</p>
+
+<p>
+LC上只要你的时间复杂度是错的，那么基本上就是TLE，没有办法在代码层面或者是特殊case上优化来AC. 说说这道题目我试过的算法吧。
+</p>
+
+<hr />
+
+<p>
+首先我觉得这个问题是一个线段树，树节点定义如下：
+</p>
+<ul class="org-ul">
+<li>se 是一个tuple (start, end), 闭区间，表示这个树所覆盖的范围</li>
+<li>max_value 表示在这个范围内最大值</li>
+<li>min_value 表示在这个范围内最小值</li>
+<li>left, right 左右节点. 左边是 (s, (s+e)/2), 右边是 ((s+e) 2+1, e)</li>
+</ul>
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-py-def-class">class</span> <span class="org-py-class-name">Tree</span>:
+    <span class="org-py-def-class">def</span> <span class="org-function-name">__init__</span>(<span class="org-py-object-reference">self</span>, se, max_value, min_value):
+        <span class="org-py-object-reference">self</span>.se = se
+        <span class="org-py-object-reference">self</span>.max_value = max_value
+        <span class="org-py-object-reference">self</span>.min_value = min_value
+        <span class="org-py-object-reference">self</span>.left = <span class="org-py-pseudo-keyword">None</span>
+        <span class="org-py-object-reference">self</span>.right = <span class="org-py-pseudo-keyword">None</span>
+</pre>
+</div>
+
+<p>
+如果我们想查询从 `idx` 开始到数组结尾有多少个值是 `&lt;=v` 的话，可以使用下面过程：
+</p>
+<ul class="org-ul">
+<li>如果当前范围 `s &gt;=idx` 并且最大值比v小的话，那么整个范围都符合条件</li>
+<li>如果当前范围内最小值比v大的话，那么说明这个范围不符合条件</li>
+<li>如果没有办法立刻决定，就需要搜索左右两棵子树</li>
+</ul>
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-py-def-class">def</span> <span class="org-function-name">query_tree</span>(t: Tree, idx, v, ctx):
+    <span class="org-keyword">if</span> t <span class="org-keyword">is</span> <span class="org-py-pseudo-keyword">None</span>:
+        <span class="org-keyword">return</span> <span class="org-py-number">0</span>
+    (s, e) = t.se
+    <span class="org-py-variable-name">sz</span> = (e - s) + <span class="org-py-number">1</span>
+    <span class="org-keyword">if</span> idx &lt;= s <span class="org-keyword">and</span> v &gt;= t.max_value:
+        <span class="org-keyword">return</span> sz
+    <span class="org-keyword">if</span> t.min_value &gt; v:
+        <span class="org-keyword">return</span> <span class="org-py-number">0</span>
+
+    <span class="org-py-variable-name">m</span> = (s + e) // <span class="org-py-number">2</span>
+    <span class="org-keyword">if</span> idx &gt; m:
+        <span class="org-py-variable-name">a</span> = <span class="org-py-number">0</span>
+    <span class="org-keyword">else</span>:
+        <span class="org-py-variable-name">a</span> = query_tree(t.left, idx, v, ctx)
+    <span class="org-py-variable-name">b</span> = query_tree(t.right, idx, v, ctx)
+    <span class="org-keyword">return</span> a + b
+</pre>
+</div>
+
+<p>
+上面这段搜索代码要求搜索范围是一边固定(搜索到数组结尾）一边可变，但是改成两边可变的范围也不是什么难事。
+</p>
+
+<p>
+这样整个外围代码就是这样的
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-comment-delimiter"># </span><span class="org-comment">note(yan): &#19981;&#30693;&#36947;&#36825;&#31181;&#21306;&#38388;&#26641;&#26159;&#21542;&#27491;&#30830;&#36275;&#22815;&#39640;&#25928;</span>
+<span class="org-py-def-class">class</span> <span class="org-py-class-name">Solution</span>:
+    <span class="org-py-def-class">def</span> <span class="org-function-name">reversePairs</span>(<span class="org-py-object-reference">self</span>, nums: List[<span class="org-py-builtins">int</span>]) -&gt; <span class="org-py-builtins">int</span>:
+        <span class="org-keyword">if</span> <span class="org-py-builtins">len</span>(nums) &lt; <span class="org-py-number">2</span>: <span class="org-keyword">return</span> <span class="org-py-number">0</span>
+        <span class="org-py-variable-name">t</span> = build_tree(nums, <span class="org-py-number">0</span>, <span class="org-py-builtins">len</span>(nums) - <span class="org-py-number">1</span>)
+        <span class="org-py-variable-name">ans</span> = <span class="org-py-number">0</span>
+        <span class="org-keyword">for</span> i <span class="org-keyword">in</span> <span class="org-py-builtins">range</span>(len(nums) - <span class="org-py-number">1</span>):
+            <span class="org-py-variable-name">j</span> = i + <span class="org-py-number">1</span>
+            <span class="org-py-variable-name">max_exp</span> = (nums[i] - <span class="org-py-number">1</span>) // <span class="org-py-number">2</span>
+            <span class="org-py-variable-name">res</span> = query_tree(t, j, max_exp)
+            <span class="org-py-variable-name">ans</span> += res
+        <span class="org-keyword">return</span> ans
+</pre>
+</div>
+
+<hr />
+
+<p>
+但是搜索线段树远没有我想像的那么高效，因为这个强烈取决于里面的值分布。如果你运气好，访问第一棵树就可以停止，
+如果运气不好，那么就需要搜索整棵树了，访问节点的数量就是线性的。这样下来最坏情况还是O(n^2).
+</p>
+
+<p>
+但是我忽视这个时间复杂度，尝试继续从代码上或者是特殊路径上做优化，是否可以避免最坏的情况呢？一个优化点是这样的。
+</p>
+
+<p>
+考虑数组 `[10 10 9(X) 4 9(Y) 4 4 4 4 3]` 如果我们从后向前遍历，当我们知道9(Y)后面有5个满足条件点的话，
+那么当访问9(X)的话，其实只需要判断两个点 `[4 9(Y)]`, 而其余后面的点肯定是都满足的。
+</p>
+
+<p>
+建立这个索引不复杂，时间空间复杂度都是O(n). 这个优化上了之后依然是TLE, 因为这个优化同样很依赖数据的分布。
+比如对于 `[8 7 6 5 4 3 2 1]` 没有任何优化效果。
+</p>
+
+<hr />
+
+<p>
+当意识到这个方向走不下去的时候，最好的方法还是从头思考问题，把原来的一些想法全部丢弃掉。如果我们考虑从后往前遍历，
+每看到一个点就将这个点保存到数据库S中，我们还是有办法立刻查询到 "在这个数据库S中，有多少个点它的值是小于某个值v的".
+我们可以很容易地想到使用二叉树当这个数据库，这样程序大体框架就是这样的了。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-py-def-class">class</span> <span class="org-py-class-name">Solution</span>:
+    <span class="org-py-def-class">def</span> <span class="org-function-name">reversePairs</span>(<span class="org-py-object-reference">self</span>, nums: List[<span class="org-py-builtins">int</span>]) -&gt; <span class="org-py-builtins">int</span>:
+        <span class="org-keyword">if</span> <span class="org-py-builtins">len</span>(nums) &lt; <span class="org-py-number">2</span>: <span class="org-keyword">return</span> <span class="org-py-number">0</span>
+        <span class="org-py-variable-name">t</span> = <span class="org-py-pseudo-keyword">None</span>
+        <span class="org-py-variable-name">ans</span> = <span class="org-py-number">0</span>
+        <span class="org-keyword">for</span> i <span class="org-keyword">in</span> <span class="org-py-builtins">reversed</span>(range(len(nums))):
+            <span class="org-py-variable-name">v</span> = nums[i]
+            <span class="org-py-variable-name">max_exp</span> = (v - <span class="org-py-number">1</span>) // <span class="org-py-number">2</span>
+            <span class="org-py-variable-name">ans</span> += query_tree(t, max_exp)
+            <span class="org-py-variable-name">t</span> = insert_tree(t, v)
+        <span class="org-keyword">return</span> ans
+
+</pre>
+</div>
+
+<p>
+不过简单的二叉树还是不能避免顺序数组造成的最坏情况，所以最好配合AVL来保持平衡。虽然这样的确可以通过，但是时间也比较长，
+最重要的是代码也非常多。 *肯定有比AVL更好的方法，LC肯定不会让你去手写旋转树的*。如果要写旋转树，一定就是还有更好的方法。
+</p>
+
+<hr />
+
+<p>
+最后就是使用归并排序算法。归并排序算法时间复杂度有保障，可以处理任何数据分布。而且根据我的经验，很适合解决这类需要重复扫描区间的计数问题。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-py-def-class">class</span> <span class="org-py-class-name">Solution</span>:
+    <span class="org-py-def-class">def</span> <span class="org-function-name">reversePairs</span>(<span class="org-py-object-reference">self</span>, nums: List[<span class="org-py-builtins">int</span>]) -&gt; <span class="org-py-builtins">int</span>:
+        <span class="org-py-object-reference">self</span>.ans = <span class="org-py-number">0</span>  <span class="org-comment"># &#30452;&#25509;&#25226;&#20840;&#23616;&#21464;&#37327;&#35760;&#22312;&#36825;&#37324;</span>
+
+        <span class="org-py-def-class">def</span> <span class="org-function-name">msort</span>(lst):
+            <span class="org-py-variable-name">n</span> = <span class="org-py-builtins">len</span>(lst)
+            <span class="org-keyword">if</span> n &lt;= <span class="org-py-number">1</span>:
+                <span class="org-keyword">return</span> lst
+            <span class="org-keyword">return</span> merge(msort(lst[:n // <span class="org-py-number">2</span>]), msort(lst[n // <span class="org-py-number">2</span>:]))
+
+        <span class="org-py-def-class">def</span> <span class="org-function-name">merge</span>(a, b):
+            <span class="org-py-variable-name">i</span>, <span class="org-py-variable-name">j</span> = <span class="org-py-number">0</span>, <span class="org-py-number">0</span>
+            <span class="org-keyword">while</span> i &lt; <span class="org-py-builtins">len</span>(a) <span class="org-keyword">and</span> j &lt; <span class="org-py-builtins">len</span>(b):
+                <span class="org-keyword">if</span> a[i] &lt;= <span class="org-py-number">2</span> * b[j]:
+                    <span class="org-py-variable-name">i</span> += <span class="org-py-number">1</span>
+                <span class="org-keyword">else</span>:
+                    <span class="org-py-object-reference">self</span>.ans += <span class="org-py-builtins">len</span>(a) - i
+                    <span class="org-py-variable-name">j</span> += <span class="org-py-number">1</span>
+            <span class="org-keyword">return</span> <span class="org-py-builtins">sorted</span>(a + b)
+
+        msort(nums)
+        <span class="org-keyword">return</span> <span class="org-py-object-reference">self</span>.ans
+
+</pre>
+</div>
+</div>
+<div id="content"><!-- DISQUS BEGIN --><div id="disqus_thread"></div><script>/***  RECOMMENDED CONFIGURATION VARIABLES: EDIT AND UNCOMMENT THE SECTION BELOW TO INSERT DYNAMIC VALUES FROM YOUR PLATFORM OR CMS.*  LEARN WHY DEFINING THESE VARIABLES IS IMPORTANT: https://disqus.com/admin/universalcode/#configuration-variables*/var disqus_config = function () {this.page.url = 'https://dirtysalt.github.io/html/lc-493-reverse-pairs.html';this.page.identifier = 'lc-493-reverse-pairs.html';};(function() {var d = document, s = d.createElement('script');s.src = 'https://dirlt.disqus.com/embed.js';s.setAttribute('data-timestamp', +new Date());(d.head || d.body).appendChild(s);})();</script><noscript>Please enable JavaScript to view the <a href="https://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript><!-- DISQUS END --></div></body>
+</html>

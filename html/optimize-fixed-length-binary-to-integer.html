@@ -1,0 +1,498 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>优化定长二进制串到整数变换</title>
+<meta name="author" content="dirtysalt" />
+<meta name="generator" content="Org Mode" />
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content" class="content">
+<h1 class="title">优化定长二进制串到整数变换</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>Table of Contents</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#orge04f2ad">1. 基本实现</a></li>
+<li><a href="#org092de69">2. 模板处理常量</a></li>
+<li><a href="#org7303e7f">3. 非规则大小的memcpy</a></li>
+<li><a href="#org7e0f488">4. 使用int64_t来处理</a></li>
+<li><a href="#org76840ca">5. 使用int128_t来处理</a></li>
+<li><a href="#org466aa61">6. 完整代码</a></li>
+</ul>
+</div>
+</div>
+<p>
+在parquet格式的Decimal解析中，需要将fixed length binary转换成为整数，这个整数就是Decimal中的unscaledValue部分。这个过程可以看 <a href="https://github.com/apache/parquet-format/blob/master/LogicalTypes.md">https://github.com/apache/parquet-format/blob/master/LogicalTypes.md</a> 里面的 &lt;DECIMAL&gt; 一节
+</p>
+
+<blockquote>
+<p>
+The primitive type stores an unscaled integer value. For byte arrays, binary and fixed, the unscaled number must be encoded as two's complement using big-endian byte order (the most significant byte is the zeroth element). The scale stores the number of digits of that value that are to the right of the decimal point, and the precision stores the maximum number of digits supported in the unscaled value.
+</p>
+</blockquote>
+
+<p>
+fixed length binary有两个特点：
+</p>
+<ol class="org-ol">
+<li>字符串是定长的</li>
+<li>所有字符串是连续存放的</li>
+</ol>
+
+<div id="outline-container-orge04f2ad" class="outline-2">
+<h2 id="orge04f2ad"><span class="section-number-2">1.</span> 基本实现</h2>
+<div class="outline-text-2" id="text-1">
+<p>
+最初的实现是下面这样的，其中Slice是 `(const char* data, size_t size)` 的tuple, 解析一下过程
+</p>
+<ul class="org-ul">
+<li>先根据 `s.data[0]` 最高位判断是否需要使用1进行填充</li>
+<li>然后将 `s.data` 拷贝到 `value` 的高地址部分</li>
+<li>然后使用 int128_t 的字节翻转</li>
+<li>最后存储在 `dst_data` 里面</li>
+</ul>
+
+<div class="org-src-container">
+<pre class="src src-cpp"><span class="org-type">void</span> <span class="org-function-name">binary_to_int128</span>(<span class="org-keyword">const</span> <span class="org-constant">std</span>::<span class="org-type">vector</span>&lt;Slice&gt;&amp; <span class="org-variable-name">src_data</span>, <span class="org-constant">std</span>::<span class="org-type">vector</span>&lt;<span class="org-type">int128_t</span>&gt;&amp; <span class="org-variable-name">dst_data</span>) {
+    <span class="org-type">size_t</span> <span class="org-variable-name">size</span> = src_data.size();
+    <span class="org-keyword">for</span> (<span class="org-type">size_t</span> <span class="org-variable-name">i</span> = 0; i &lt; size; i++) {
+        <span class="org-keyword">const</span> <span class="org-type">Slice</span>&amp; <span class="org-variable-name">s</span> = src_data[i];
+        <span class="org-type">int128_t</span> <span class="org-variable-name">value</span> = s.data[0] &amp; 0x80 ? -1 : 0;
+        memcpy(<span class="org-keyword">reinterpret_cast</span>&lt;<span class="org-type">char</span>*&gt;(&amp;value) + <span class="org-keyword">sizeof</span>(value) - s.size, s.data, s.size);
+        value = ToHost128(value);
+        dst_data[i] = value;
+    }
+    <span class="org-keyword">return</span>;
+}
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org092de69" class="outline-2">
+<h2 id="org092de69"><span class="section-number-2">2.</span> 模板处理常量</h2>
+<div class="outline-text-2" id="text-2">
+<p>
+因为整个二进制串都是定长，所以使用模板来做处理常量。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-cpp"><span class="org-type">void</span> <span class="org-function-name">binary_to_int128_fixed</span>(<span class="org-keyword">const</span> <span class="org-constant">std</span>::<span class="org-type">vector</span>&lt;Slice&gt;&amp; <span class="org-variable-name">src_data</span>, <span class="org-constant">std</span>::<span class="org-type">vector</span>&lt;<span class="org-type">int128_t</span>&gt;&amp; <span class="org-variable-name">dst_data</span>) {
+    <span class="org-type">size_t</span> <span class="org-variable-name">size</span> = src_data.size();
+    <span class="org-keyword">for</span> (<span class="org-type">size_t</span> <span class="org-variable-name">i</span> = 0; i &lt; size; i++) {
+        <span class="org-keyword">const</span> <span class="org-type">Slice</span>&amp; <span class="org-variable-name">s</span> = src_data[i];
+        <span class="org-type">int128_t</span> <span class="org-variable-name">value</span> = s.data[0] &amp; 0x80 ? -1 : 0;
+        memcpy(<span class="org-keyword">reinterpret_cast</span>&lt;<span class="org-type">char</span>*&gt;(&amp;value) + <span class="org-keyword">sizeof</span>(value) - 7, s.data, 7);
+        value = ToHost128(value);
+        dst_data[i] = value;
+    }
+    <span class="org-keyword">return</span>;
+}
+</pre>
+</div>
+
+<p>
+这个优化有改进但是不是特别大
+</p>
+
+<pre class="example" id="orgbc48a58">
+-----------------------------------------------------------------------------
+Benchmark                                   Time             CPU   Iterations
+-----------------------------------------------------------------------------
+run_binary_to_int128/1000000          8655761 ns      8654883 ns           80
+run_binary_to_int128_fixed/1000000    8215534 ns      8214657 ns           87
+</pre>
+</div>
+</div>
+
+<div id="outline-container-org7303e7f" class="outline-2">
+<h2 id="org7303e7f"><span class="section-number-2">3.</span> 非规则大小的memcpy</h2>
+<div class="outline-text-2" id="text-3">
+<p>
+如果将上面代码放在 <a href="https://gcc.godbolt.org/">https://gcc.godbolt.org/</a> 里面，可以看到这个部分对应的汇编如下：
+</p>
+<ul class="org-ul">
+<li>rcx/rsi 是 int128_t 的高低两个部分</li>
+<li>rcx/rsi 这两个部分分别进行了填充</li>
+<li>因为memcpy 7bytes, 所以这里填充非常不规则， 使用了比较多的指令来处理</li>
+</ul>
+
+<div class="org-src-container">
+<pre class="src src-asm"><span class="org-function-name">.L9</span>:
+        <span class="org-keyword">mov</span>     rdx, rax
+        <span class="org-keyword">xor</span>     r9d, r9d
+        <span class="org-keyword">sal</span>     rdx, 4
+        <span class="org-keyword">mov</span>     r11, r9
+        <span class="org-keyword">mov</span>     rsi, QWORD PTR [rbx+rdx]
+        <span class="org-keyword">movsx</span>   rcx, BYTE PTR [rsi]
+        <span class="org-keyword">shr</span>     rcx, 63
+        <span class="org-keyword">mov</span>     r10, rcx
+        <span class="org-keyword">neg</span>     r10
+        <span class="org-keyword">adc</span>     r11, 0
+        <span class="org-keyword">mov</span>     rcx, r10
+        <span class="org-keyword">mov</span>     QWORD PTR [rsp-24], r10
+        <span class="org-keyword">mov</span>     r10d, DWORD PTR [rsi]
+        <span class="org-keyword">mov</span>     esi, DWORD PTR [rsi+3]
+        <span class="org-keyword">neg</span>     r11
+        <span class="org-keyword">add</span>     rax, 1
+        <span class="org-keyword">bswap</span>   rcx
+        <span class="org-keyword">mov</span>     QWORD PTR [rsp-16], r11
+        <span class="org-keyword">mov</span>     DWORD PTR [rsp-15], r10d
+        <span class="org-keyword">mov</span>     DWORD PTR [rsp-12], esi
+        <span class="org-keyword">mov</span>     rsi, QWORD PTR [rsp-16]
+        <span class="org-keyword">mov</span>     QWORD PTR [rdi+8+rdx], rcx
+        <span class="org-keyword">bswap</span>   rsi
+        <span class="org-keyword">mov</span>     QWORD PTR [rdi+rdx], rsi
+        <span class="org-keyword">cmp</span>     rax, rbp
+        <span class="org-keyword">jb</span>      .L9
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org7e0f488" class="outline-2">
+<h2 id="org7e0f488"><span class="section-number-2">4.</span> 使用int64_t来处理</h2>
+<div class="outline-text-2" id="text-4">
+<p>
+如果使用规则大小(比如8 bytes)这样的memcpy, 那么我们可以使用一个mov就可以将内存值加载到寄存器里面。如果之后的操作也可以在寄存器里面完成的话，那么就能快不少了，实际上也的确可以做到。
+</p>
+
+<p>
+假设7个字节分别是 [a7 a6 a5 a4 a3 a2 a1], 这个时候是按照big endian来存储的。之前整个过程如下：
+</p>
+<ul class="org-ul">
+<li>我们先按照a7的高位进行填充，假设最高位是1。 value = [1,1,1,1,1,1,1,1]</li>
+<li>然后按照7字节进行拷贝。 value = [1,a7,a6,a5,a4,a3,a2,a1]</li>
+<li>然后按照8字节进行swap. value = [a1,a2,a3,a4,a5,a6,a7,1]</li>
+</ul>
+
+<p>
+其实我们也可以做个改进，使得整个过程可以在寄存器内完成。
+</p>
+<ul class="org-ul">
+<li>先对7字节进行拷贝，并且从低字节开始。 value = [a7,a6,a5,a4,a3,a2,a1,0]</li>
+<li>然后按照8字节进行swap. value = [0,a1,a2,a3,a4,a5,a6,a7]</li>
+<li>然后算术左移8bit. value = [a1,a2,a3,a4,a5,a6,a7,1]</li>
+</ul>
+
+<p>
+我们多copy一些数据没有关系，因为最后都会被left shift给清除出去的。下面的实现有点简化，我们需要在尾部做些判断确保不会出现内存越界访问。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-cpp"><span class="org-type">void</span> <span class="org-function-name">binary_to_int128_ex</span>(<span class="org-keyword">const</span> <span class="org-constant">std</span>::<span class="org-type">vector</span>&lt;Slice&gt;&amp; <span class="org-variable-name">src_data</span>, <span class="org-constant">std</span>::<span class="org-type">vector</span>&lt;<span class="org-type">int128_t</span>&gt;&amp; <span class="org-variable-name">dst_data</span>) {
+    <span class="org-type">size_t</span> <span class="org-variable-name">size</span> = src_data.size();
+    <span class="org-keyword">for</span> (<span class="org-type">size_t</span> <span class="org-variable-name">i</span> = 0; i &lt; size; i++) {
+        <span class="org-keyword">const</span> <span class="org-type">Slice</span>&amp; <span class="org-variable-name">s</span> = src_data[i];
+        <span class="org-type">int64_t</span> <span class="org-variable-name">value</span> = 0;
+        memcpy((<span class="org-type">char</span>*)&amp;value, s.data, 8);
+        value = ToHost64(value);
+        value = value &gt;&gt; ((8 - BYTE_SIZE) * 8);
+        dst_data[i] = value;
+    }
+    <span class="org-keyword">return</span>;
+}
+</pre>
+</div>
+
+<p>
+得到的汇编就会是下面这个样子的，看上去的确比上面指令少了许多。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-asm"><span class="org-function-name">.L14</span>:
+        <span class="org-keyword">movq</span>    (<span class="org-variable-name">%r8</span>,<span class="org-variable-name">%rdx</span>), <span class="org-variable-name">%rax</span>
+        <span class="org-keyword">addq</span>    $1, <span class="org-variable-name">%rcx</span>
+        <span class="org-keyword">movq</span>    (<span class="org-variable-name">%rax</span>), <span class="org-variable-name">%rax</span>
+        <span class="org-keyword">bswap</span>   <span class="org-variable-name">%rax</span>
+        <span class="org-keyword">movq</span>    <span class="org-variable-name">%rax</span>, <span class="org-variable-name">%rdi</span>
+        <span class="org-keyword">sarq</span>    $63, <span class="org-variable-name">%rax</span>
+        <span class="org-keyword">sarq</span>    $8, <span class="org-variable-name">%rdi</span>
+        <span class="org-keyword">movq</span>    <span class="org-variable-name">%rax</span>, 8(<span class="org-variable-name">%rsi</span>,<span class="org-variable-name">%rdx</span>)
+        <span class="org-keyword">movq</span>    <span class="org-variable-name">%rdi</span>, (<span class="org-variable-name">%rsi</span>,<span class="org-variable-name">%rdx</span>)
+        <span class="org-keyword">addq</span>    $16, <span class="org-variable-name">%rdx</span>
+        <span class="org-keyword">cmpq</span>    <span class="org-variable-name">%r9</span>, <span class="org-variable-name">%rcx</span>
+        <span class="org-keyword">jb</span>      .L14
+</pre>
+</div>
+
+<p>
+结果大约提升了3倍左右
+</p>
+
+<pre class="example" id="orgdce3f70">
+-----------------------------------------------------------------------------
+Benchmark                                   Time             CPU   Iterations
+-----------------------------------------------------------------------------
+run_binary_to_int128/1000000          8667702 ns      8666784 ns           82
+run_binary_to_int128_fixed/1000000    8182932 ns      8182026 ns           86
+run_binary_to_int128_ex/1000000       2261388 ns      2261088 ns          353
+</pre>
+</div>
+</div>
+
+<div id="outline-container-org76840ca" class="outline-2">
+<h2 id="org76840ca"><span class="section-number-2">5.</span> 使用int128_t来处理</h2>
+<div class="outline-text-2" id="text-5">
+<p>
+同理我们可以使用int128_t来处理更大范围的整数
+</p>
+
+<div class="org-src-container">
+<pre class="src src-cpp"><span class="org-type">void</span> <span class="org-function-name">binary_to_int128_ex_128</span>(<span class="org-keyword">const</span> <span class="org-constant">std</span>::<span class="org-type">vector</span>&lt;Slice&gt;&amp; <span class="org-variable-name">src_data</span>, <span class="org-constant">std</span>::<span class="org-type">vector</span>&lt;<span class="org-type">int128_t</span>&gt;&amp; <span class="org-variable-name">dst_data</span>) {
+    <span class="org-type">size_t</span> <span class="org-variable-name">size</span> = src_data.size();
+    <span class="org-keyword">for</span> (<span class="org-type">size_t</span> <span class="org-variable-name">i</span> = 0; i &lt; size; i++) {
+        <span class="org-keyword">const</span> <span class="org-type">Slice</span>&amp; <span class="org-variable-name">s</span> = src_data[i];
+        <span class="org-type">int128_t</span> <span class="org-variable-name">value</span> = 0;
+        memcpy((<span class="org-type">char</span>*)&amp;value, s.data, 16);
+        value = ToHost128(value);
+        value = value &gt;&gt; ((16 - BYTE_SIZE) * 8);
+        dst_data[i] = value;
+    }
+    <span class="org-keyword">return</span>;
+}
+</pre>
+</div>
+
+<p>
+得到的汇编也一样很精简
+</p>
+
+<div class="org-src-container">
+<pre class="src src-asm"><span class="org-function-name">.L14</span>:
+        <span class="org-keyword">movq</span>    (<span class="org-variable-name">%r10</span>,<span class="org-variable-name">%rax</span>), <span class="org-variable-name">%rcx</span>
+        <span class="org-keyword">addq</span>    $1, <span class="org-variable-name">%rdx</span>
+        <span class="org-keyword">movq</span>    (<span class="org-variable-name">%rcx</span>), <span class="org-variable-name">%rsi</span>
+        <span class="org-keyword">movq</span>    8(<span class="org-variable-name">%rcx</span>), <span class="org-variable-name">%rcx</span>
+        <span class="org-keyword">bswap</span>   <span class="org-variable-name">%rsi</span>
+        <span class="org-keyword">movq</span>    <span class="org-variable-name">%rsi</span>, <span class="org-variable-name">%r9</span>
+        <span class="org-keyword">bswap</span>   <span class="org-variable-name">%rcx</span>
+        <span class="org-keyword">movq</span>    <span class="org-variable-name">%rcx</span>, <span class="org-variable-name">%rsi</span>
+        <span class="org-keyword">movq</span>    <span class="org-variable-name">%r9</span>, <span class="org-variable-name">%rdi</span>
+        <span class="org-keyword">shrdq</span>   $40, <span class="org-variable-name">%r9</span>, <span class="org-variable-name">%rsi</span>
+        <span class="org-keyword">sarq</span>    $40, <span class="org-variable-name">%rdi</span>
+        <span class="org-keyword">movq</span>    <span class="org-variable-name">%rsi</span>, (<span class="org-variable-name">%rbx</span>,<span class="org-variable-name">%rax</span>)
+        <span class="org-keyword">movq</span>    <span class="org-variable-name">%rdi</span>, 8(<span class="org-variable-name">%rbx</span>,<span class="org-variable-name">%rax</span>)
+        <span class="org-keyword">addq</span>    $16, <span class="org-variable-name">%rax</span>
+        <span class="org-keyword">cmpq</span>    <span class="org-variable-name">%r11</span>, <span class="org-variable-name">%rdx</span>
+        <span class="org-keyword">jb</span>      .L14
+</pre>
+</div>
+
+<p>
+结果如下，速度看上去比int64要稍微差些，但是也比之前的实现要快很多。
+</p>
+
+<pre class="example" id="org6b9f1c8">
+------------------------------------------------------------------------------
+Benchmark                                    Time             CPU   Iterations
+------------------------------------------------------------------------------
+run_binary_to_int128/1000000           8619666 ns      8618856 ns           81
+run_binary_to_int128_fixed/1000000     8057064 ns      8056318 ns           87
+run_binary_to_int128_ex/1000000        1952846 ns      1952639 ns          349
+run_binary_to_int128_ex_128/1000000    2184613 ns      2184084 ns          354
+</pre>
+</div>
+</div>
+
+<div id="outline-container-org466aa61" class="outline-2">
+<h2 id="org466aa61"><span class="section-number-2">6.</span> 完整代码</h2>
+<div class="outline-text-2" id="text-6">
+<p>
+<a href="https://github.com/dirtysalt/codes/tree/master/cc/sr-test/b2i_perf.cpp">github</a> <a href="https://github.com/dirtysalt/codes/blob/master/cc/sr-test/b2i_perf.cpp">https://github.com/dirtysalt/codes/blob/master/cc/sr-test/b2i_perf.cpp</a>
+</p>
+
+<div class="org-src-container">
+<pre class="src src-cpp"><span class="org-preprocessor">#include</span> <span class="org-string">&lt;benchmark/benchmark.h&gt;</span>
+<span class="org-preprocessor">#include</span> <span class="org-string">&lt;emmintrin.h&gt;</span>
+<span class="org-preprocessor">#include</span> <span class="org-string">&lt;immintrin.h&gt;</span>
+
+<span class="org-preprocessor">#include</span> <span class="org-string">&lt;cmath&gt;</span>
+<span class="org-preprocessor">#include</span> <span class="org-string">&lt;cstdlib&gt;</span>
+<span class="org-preprocessor">#include</span> <span class="org-string">&lt;cstring&gt;</span>
+<span class="org-preprocessor">#include</span> <span class="org-string">&lt;functional&gt;</span>
+<span class="org-preprocessor">#include</span> <span class="org-string">&lt;iostream&gt;</span>
+<span class="org-preprocessor">#include</span> <span class="org-string">&lt;random&gt;</span>
+
+<span class="org-keyword">typedef</span> <span class="org-type">__int128</span> <span class="org-type">int128_t</span>;
+
+<span class="org-keyword">struct</span> <span class="org-type">Slice</span> {
+    <span class="org-keyword">const</span> <span class="org-type">char</span>* <span class="org-variable-name">data</span>;
+    <span class="org-type">size_t</span> <span class="org-variable-name">size</span>;
+};
+<span class="org-keyword">static</span> <span class="org-keyword">constexpr</span> <span class="org-type">int</span> <span class="org-variable-name">BYTE_SIZE</span> = 11;
+<span class="org-keyword">static</span> <span class="org-keyword">constexpr</span> <span class="org-type">int</span> <span class="org-variable-name">GAP_SIZE</span> = 0;
+<span class="org-keyword">static</span> <span class="org-keyword">constexpr</span> <span class="org-type">bool</span> <span class="org-variable-name">verify</span> = <span class="org-constant">false</span>;
+
+<span class="org-preprocessor">#define</span> <span class="org-function-name">bswap_64</span>(<span class="org-variable-name">x</span>) __bswap_64(x)
+
+<span class="org-keyword">inline</span> <span class="org-type">unsigned</span> <span class="org-type">__int128</span> <span class="org-function-name">bswap_128</span>(<span class="org-type">unsigned</span> <span class="org-type">__int128</span> <span class="org-variable-name">host_int</span>) {
+    <span class="org-keyword">return</span> <span class="org-keyword">static_cast</span>&lt;<span class="org-type">unsigned</span> <span class="org-variable-name">__int128</span>&gt;(bswap_64(<span class="org-keyword">static_cast</span>&lt;<span class="org-type">uint64_t</span>&gt;(host_int &gt;&gt; 64))) |
+           (<span class="org-keyword">static_cast</span>&lt;<span class="org-type">unsigned</span> <span class="org-variable-name">__int128</span>&gt;(bswap_64(<span class="org-keyword">static_cast</span>&lt;<span class="org-type">uint64_t</span>&gt;(host_int))) &lt;&lt; 64);
+}
+
+<span class="org-keyword">static</span> <span class="org-type">unsigned</span> <span class="org-type">__int128</span> <span class="org-function-name">ToHost128</span>(<span class="org-type">unsigned</span> <span class="org-type">__int128</span> <span class="org-variable-name">x</span>) {
+    <span class="org-keyword">return</span> bswap_128(x);
+}
+
+<span class="org-keyword">static</span> <span class="org-type">uint64_t</span> <span class="org-function-name">ToHost64</span>(<span class="org-type">uint64_t</span> <span class="org-variable-name">x</span>) {
+    <span class="org-keyword">return</span> __bswap_64(x);
+}
+
+<span class="org-type">void</span> <span class="org-function-name">make_src_data</span>(<span class="org-type">size_t</span> <span class="org-variable-name">size</span>, <span class="org-constant">std</span>::<span class="org-type">string</span>* <span class="org-variable-name">blob</span>, <span class="org-constant">std</span>::<span class="org-type">vector</span>&lt;<span class="org-type">Slice</span>&gt;* <span class="org-variable-name">src_data</span>) {
+    <span class="org-comment-delimiter">// </span><span class="org-comment">assume each data is 7 bytes</span>
+    <span class="org-comment-delimiter">// </span><span class="org-comment">and bewteen each data there is 4 bytes.</span>
+
+    <span class="org-comment-delimiter">// </span><span class="org-comment">add some extra padding bytes.</span>
+    <span class="org-type">size_t</span> <span class="org-variable-name">bytes</span> = (BYTE_SIZE + GAP_SIZE) * (size) + 16;
+    <span class="org-constant">std</span>::<span class="org-type">mt19937_64</span> <span class="org-variable-name">gen64</span>;
+    blob-&gt;resize(bytes);
+    <span class="org-keyword">for</span> (<span class="org-type">size_t</span> <span class="org-variable-name">i</span> = 0; i &lt; bytes; i++) {
+        (*blob)[i] = gen64() &amp; 0xff;
+    }
+
+    <span class="org-comment-delimiter">// </span><span class="org-comment">construct src data.</span>
+    <span class="org-keyword">const</span> <span class="org-type">char</span>* <span class="org-variable-name">p</span> = blob-&gt;data();
+    <span class="org-keyword">for</span> (<span class="org-type">size_t</span> <span class="org-variable-name">i</span> = 0; i &lt; size; i++) {
+        src_data-&gt;emplace_back(Slice{.data = p, .size = BYTE_SIZE});
+        p += (BYTE_SIZE + GAP_SIZE);
+    }
+}
+
+<span class="org-type">void</span> <span class="org-function-name">binary_to_int128</span>(<span class="org-keyword">const</span> <span class="org-constant">std</span>::<span class="org-type">vector</span>&lt;<span class="org-type">Slice</span>&gt;&amp; <span class="org-variable-name">src_data</span>, <span class="org-constant">std</span>::<span class="org-type">vector</span>&lt;<span class="org-type">int128_t</span>&gt;&amp; <span class="org-variable-name">dst_data</span>) {
+    <span class="org-type">size_t</span> <span class="org-variable-name">size</span> = src_data.size();
+    <span class="org-keyword">for</span> (<span class="org-type">size_t</span> <span class="org-variable-name">i</span> = 0; i &lt; size; i++) {
+        <span class="org-keyword">const</span> <span class="org-type">Slice</span>&amp; <span class="org-variable-name">s</span> = src_data[i];
+        <span class="org-type">int128_t</span> <span class="org-variable-name">value</span> = s.data[0] &amp; 0x80 ? -1 : 0;
+        memcpy(<span class="org-keyword">reinterpret_cast</span>&lt;<span class="org-type">char</span>*&gt;(&amp;value) + <span class="org-keyword">sizeof</span>(value) - s.size, s.data, s.size);
+        value = ToHost128(value);
+        dst_data[i] = value;
+    }
+    <span class="org-keyword">return</span>;
+}
+
+<span class="org-keyword">static</span> <span class="org-type">void</span> <span class="org-function-name">run_binary_to_int128</span>(<span class="org-constant">benchmark</span>::<span class="org-type">State</span>&amp; <span class="org-variable-name">state</span>) {
+    <span class="org-comment-delimiter">// </span><span class="org-comment">Code inside this loop is measured repeatedly</span>
+    <span class="org-constant">std</span>::<span class="org-type">string</span> <span class="org-variable-name">blob</span>;
+    <span class="org-type">size_t</span> <span class="org-variable-name">size</span> = state.range(0);
+    <span class="org-constant">std</span>::<span class="org-type">vector</span>&lt;<span class="org-type">Slice</span>&gt; <span class="org-variable-name">src_data</span>;
+    <span class="org-constant">std</span>::<span class="org-type">vector</span>&lt;<span class="org-type">int128_t</span>&gt; <span class="org-variable-name">dst_data</span>(size);
+    make_src_data(size, &amp;blob, &amp;src_data);
+
+    <span class="org-keyword">for</span> (<span class="org-keyword">auto</span> <span class="org-variable-name">_</span> : state) {
+        <span class="org-comment-delimiter">// </span><span class="org-comment">state.PauseTiming();</span>
+        <span class="org-comment-delimiter">// </span><span class="org-comment">state.ResumeTiming();</span>
+        binary_to_int128(src_data, dst_data);
+    }
+}
+
+<span class="org-type">void</span> <span class="org-function-name">binary_to_int128_fixed</span>(<span class="org-keyword">const</span> <span class="org-constant">std</span>::<span class="org-type">vector</span>&lt;<span class="org-type">Slice</span>&gt;&amp; <span class="org-variable-name">src_data</span>, <span class="org-constant">std</span>::<span class="org-type">vector</span>&lt;<span class="org-type">int128_t</span>&gt;&amp; <span class="org-variable-name">dst_data</span>) {
+    <span class="org-type">size_t</span> <span class="org-variable-name">size</span> = src_data.size();
+    <span class="org-keyword">for</span> (<span class="org-type">size_t</span> <span class="org-variable-name">i</span> = 0; i &lt; size; i++) {
+        <span class="org-keyword">const</span> <span class="org-type">Slice</span>&amp; <span class="org-variable-name">s</span> = src_data[i];
+        <span class="org-type">int128_t</span> <span class="org-variable-name">value</span> = s.data[0] &amp; 0x80 ? -1 : 0;
+        memcpy(<span class="org-keyword">reinterpret_cast</span>&lt;<span class="org-type">char</span>*&gt;(&amp;value) + <span class="org-keyword">sizeof</span>(value) - 7, s.data, 7);
+        value = ToHost128(value);
+        dst_data[i] = value;
+    }
+    <span class="org-keyword">return</span>;
+}
+
+<span class="org-keyword">static</span> <span class="org-type">void</span> <span class="org-function-name">run_binary_to_int128_fixed</span>(<span class="org-constant">benchmark</span>::<span class="org-type">State</span>&amp; <span class="org-variable-name">state</span>) {
+    <span class="org-comment-delimiter">// </span><span class="org-comment">Code inside this loop is measured repeatedly</span>
+    <span class="org-constant">std</span>::<span class="org-type">string</span> <span class="org-variable-name">blob</span>;
+    <span class="org-type">size_t</span> <span class="org-variable-name">size</span> = state.range(0);
+    <span class="org-constant">std</span>::<span class="org-type">vector</span>&lt;<span class="org-type">Slice</span>&gt; <span class="org-variable-name">src_data</span>;
+    <span class="org-constant">std</span>::<span class="org-type">vector</span>&lt;<span class="org-type">int128_t</span>&gt; <span class="org-variable-name">dst_data</span>(size);
+    make_src_data(size, &amp;blob, &amp;src_data);
+
+    <span class="org-keyword">for</span> (<span class="org-keyword">auto</span> <span class="org-variable-name">_</span> : state) {
+        <span class="org-comment-delimiter">// </span><span class="org-comment">state.PauseTiming();</span>
+        <span class="org-comment-delimiter">// </span><span class="org-comment">state.ResumeTiming();</span>
+        binary_to_int128_fixed(src_data, dst_data);
+    }
+}
+
+<span class="org-keyword">template</span> &lt;<span class="org-keyword">typename</span> <span class="org-type">TYPE</span>&gt;
+<span class="org-type">void</span> <span class="org-function-name">binary_to_int128_ex</span>(<span class="org-keyword">const</span> <span class="org-constant">std</span>::<span class="org-type">vector</span>&lt;<span class="org-type">Slice</span>&gt;&amp; <span class="org-variable-name">src_data</span>, <span class="org-constant">std</span>::<span class="org-type">vector</span>&lt;<span class="org-type">int128_t</span>&gt;&amp; <span class="org-variable-name">dst_data</span>) {
+    <span class="org-type">size_t</span> <span class="org-variable-name">size</span> = src_data.size();
+    <span class="org-keyword">for</span> (<span class="org-type">size_t</span> <span class="org-variable-name">i</span> = 0; i &lt; size; i++) {
+        <span class="org-keyword">const</span> <span class="org-type">Slice</span>&amp; <span class="org-variable-name">s</span> = src_data[i];
+
+        <span class="org-type">TYPE</span> <span class="org-variable-name">value</span> = 0;
+        memcpy((<span class="org-type">char</span>*)&amp;value, s.data, <span class="org-keyword">sizeof</span>(TYPE));
+        <span class="org-keyword">if</span> <span class="org-keyword">constexpr</span> (<span class="org-constant">std</span>::<span class="org-type">is_same_v</span>&lt;<span class="org-type">TYPE</span>, <span class="org-type">int64_t</span>&gt;) {
+            value = ToHost64(value);
+        } <span class="org-keyword">else</span> {
+            value = ToHost128(value);
+        }
+        value = value &gt;&gt; ((<span class="org-keyword">sizeof</span>(TYPE) - BYTE_SIZE) * 8);
+
+        <span class="org-keyword">if</span> <span class="org-keyword">constexpr</span> ((BYTE_SIZE &lt;= <span class="org-keyword">sizeof</span>(TYPE)) &amp;&amp; verify) {
+            <span class="org-type">TYPE</span> <span class="org-variable-name">value2</span> = s.data[0] &amp; 0x80 ? -1 : 0;
+            memcpy(<span class="org-keyword">reinterpret_cast</span>&lt;<span class="org-type">char</span>*&gt;(&amp;value2) + <span class="org-keyword">sizeof</span>(value2) - BYTE_SIZE, s.data, BYTE_SIZE);
+            <span class="org-keyword">if</span> <span class="org-keyword">constexpr</span> (<span class="org-constant">std</span>::<span class="org-type">is_same_v</span>&lt;<span class="org-type">TYPE</span>, <span class="org-type">int64_t</span>&gt;) {
+                value2 = ToHost64(value2);
+            } <span class="org-keyword">else</span> {
+                value2 = ToHost128(value2);
+            }
+            <span class="org-keyword">if</span> (value != value2) {
+                printf(<span class="org-string">"FAILED at %s. v = %p, v2 = %p, raw = "</span>, __func__, value, value2);
+                <span class="org-keyword">for</span> (<span class="org-type">int</span> <span class="org-variable-name">j</span> = 0; j &lt; BYTE_SIZE; j++) {
+                    printf(<span class="org-string">"%x "</span>, s.data[j]);
+                }
+                printf(<span class="org-string">"\n"</span>);
+                exit(-1);
+            }
+        }
+        dst_data[i] = value;
+    }
+    <span class="org-keyword">return</span>;
+}
+
+<span class="org-keyword">static</span> <span class="org-type">void</span> <span class="org-function-name">run_binary_to_int128_ex</span>(<span class="org-constant">benchmark</span>::<span class="org-type">State</span>&amp; <span class="org-variable-name">state</span>) {
+    <span class="org-comment-delimiter">// </span><span class="org-comment">Code inside this loop is measured repeatedly</span>
+    <span class="org-constant">std</span>::<span class="org-type">string</span> <span class="org-variable-name">blob</span>;
+    <span class="org-type">size_t</span> <span class="org-variable-name">size</span> = state.range(0);
+    <span class="org-constant">std</span>::<span class="org-type">vector</span>&lt;<span class="org-type">Slice</span>&gt; <span class="org-variable-name">src_data</span>;
+    <span class="org-constant">std</span>::<span class="org-type">vector</span>&lt;<span class="org-type">int128_t</span>&gt; <span class="org-variable-name">dst_data</span>(size);
+    make_src_data(size, &amp;blob, &amp;src_data);
+
+    <span class="org-keyword">for</span> (<span class="org-keyword">auto</span> <span class="org-variable-name">_</span> : state) {
+        <span class="org-comment-delimiter">// </span><span class="org-comment">state.PauseTiming();</span>
+        <span class="org-comment-delimiter">// </span><span class="org-comment">state.ResumeTiming();</span>
+        binary_to_int128_ex&lt;<span class="org-type">int64_t</span>&gt;(src_data, dst_data);
+    }
+}
+
+<span class="org-keyword">static</span> <span class="org-type">void</span> <span class="org-function-name">run_binary_to_int128_ex_128</span>(<span class="org-constant">benchmark</span>::<span class="org-type">State</span>&amp; <span class="org-variable-name">state</span>) {
+    <span class="org-comment-delimiter">// </span><span class="org-comment">Code inside this loop is measured repeatedly</span>
+    <span class="org-constant">std</span>::<span class="org-type">string</span> <span class="org-variable-name">blob</span>;
+    <span class="org-type">size_t</span> <span class="org-variable-name">size</span> = state.range(0);
+    <span class="org-constant">std</span>::<span class="org-type">vector</span>&lt;<span class="org-type">Slice</span>&gt; <span class="org-variable-name">src_data</span>;
+    <span class="org-constant">std</span>::<span class="org-type">vector</span>&lt;<span class="org-type">int128_t</span>&gt; <span class="org-variable-name">dst_data</span>(size);
+    make_src_data(size, &amp;blob, &amp;src_data);
+
+    <span class="org-keyword">for</span> (<span class="org-keyword">auto</span> <span class="org-variable-name">_</span> : state) {
+        <span class="org-comment-delimiter">// </span><span class="org-comment">state.PauseTiming();</span>
+        <span class="org-comment-delimiter">// </span><span class="org-comment">state.ResumeTiming();</span>
+        binary_to_int128_ex&lt;<span class="org-type">int128_t</span>&gt;(src_data, dst_data);
+    }
+}
+
+<span class="org-keyword">static</span> <span class="org-keyword">constexpr</span> <span class="org-type">size_t</span> <span class="org-variable-name">N</span> = 1000000;
+BENCHMARK(run_binary_to_int128)-&gt;Args({N});
+BENCHMARK(run_binary_to_int128_fixed)-&gt;Args({N});
+BENCHMARK(run_binary_to_int128_ex)-&gt;Args({N});
+BENCHMARK(run_binary_to_int128_ex_128)-&gt;Args({N});
+</pre>
+</div>
+</div>
+</div>
+</div>
+<div id="content"><!-- DISQUS BEGIN --><div id="disqus_thread"></div><script>/***  RECOMMENDED CONFIGURATION VARIABLES: EDIT AND UNCOMMENT THE SECTION BELOW TO INSERT DYNAMIC VALUES FROM YOUR PLATFORM OR CMS.*  LEARN WHY DEFINING THESE VARIABLES IS IMPORTANT: https://disqus.com/admin/universalcode/#configuration-variables*/var disqus_config = function () {this.page.url = 'https://dirtysalt.github.io/html/optimize-fixed-length-binary-to-integer.html';this.page.identifier = 'optimize-fixed-length-binary-to-integer.html';};(function() {var d = document, s = d.createElement('script');s.src = 'https://dirlt.disqus.com/embed.js';s.setAttribute('data-timestamp', +new Date());(d.head || d.body).appendChild(s);})();</script><noscript>Please enable JavaScript to view the <a href="https://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript><!-- DISQUS END --></div></body>
+</html>

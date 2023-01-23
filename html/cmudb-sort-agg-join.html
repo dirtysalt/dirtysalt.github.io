@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>CMU DB Sort+Agg+Join</title>
+<meta name="author" content="dirtysalt" />
+<meta name="generator" content="Org Mode" />
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content" class="content">
+<h1 class="title">CMU DB Sort+Agg+Join</h1>
+<p>
+通常外排都会使用多路排序，我们首先计算需要多少趟(phase):
+</p>
+<ol class="org-ol">
+<li>假设有B个buffer pages, N个文件需要进行归并排序</li>
+<li>首先对每个文件进行排序，这是一趟</li>
+<li>然后使用K-merge sort. 可以同时对B-1路进行归并排序，剩下一个Buffer page用于output</li>
+<li>这样算下来会有ceil(log(N) - log(B-1))趟</li>
+<li>因此总共可以认为有 log(B-1)(N) + 1趟</li>
+</ol>
+<p>
+每趟都需要对N个文件input/output, 所以IO大小就是2*N*(# of phases)
+</p>
+
+<p>
+做Agg的话有两种办法：Sort和Hash. Sort这个好理解，搞过MapReduce里面Reduce阶段都知道。Hash可以对key进行分桶，然后对每个bucket分别做agg. 至于对每个bucket做agg的话，又还是回到sort或者是hash了，这个过程可以持续拆分下去。
+</p>
+
+<p>
+Join只以inner equijoin为例，其他的join都可以在这个上面进行扩展。join过程中的输出可以是data, 也可以是record id. 如果使用record id的话，那么就需要回表。可能中间计算过程传输会减少，但也可能因为回表次数太多，造成cost又上来了。课程里面的说法是，对于vertica这样的OLAP系统，最开始是record id, 但是后来切换到了data性能更好。
+</p>
+
+<p>
+Join算法分析中有下面几个变量：
+</p>
+<ol class="org-ol">
+<li>M pages in table R(outer table), m tuples</li>
+<li>N pages in table S(inner table), n tuples</li>
+<li>B available buffer pages</li>
+</ol>
+<p>
+经典算法有下面几种：
+</p>
+<ol class="org-ol">
+<li>NLJ(Nested Loop Join). 简单的循环匹配 可以细分为BNL(Block)和INL(Index)</li>
+<li>SMJ(Sort-Merge Join) 分别对两个表做sort然后merge join</li>
+<li>HJ(Hash Join) Build+Probe</li>
+</ol>
+
+<p>
+Blocked Nested Loop Join 工作方式如下，时间复杂度是 M + MN.  如果可用的Buffer pages更多的话，那么可以做到M+(M/(B-2) * N).  Index Nested Loop Join 则是遍历outer table, 然后使用index去query inner table. 时间复杂度是M+(m*C) C是查询index的时间
+</p>
+
+<p>
+<img src="../images/cmudb-block-nested-loop-join.png" alt="cmudb-block-nested-loop-join.png" /> <img src="../images/cmudb-block-nested-loop-join2.png" alt="cmudb-block-nested-loop-join2.png" />
+</p>
+
+<p>
+SMJ 时间复杂度分为两个部分，Sort的话上面有K-Way merge sort的时间复杂度，如果table上有按照join key的索引，那么这个sort部分就可以省去。Merge就是M+N.
+</p>
+
+<p>
+HJ 时间复杂度分为两个部分：Build + Probe. Build是将outer table 按照某个hash function生成hash table. 然后Probe阶段就是遍历inner table去hash table里面查询。至于hash table里面存放data还是record id则根据情况，如果join selectivity比较低的话，那么使用record id则更加划算。另外就是在build阶段还可以生成Bloom filter, 帮助probe阶段。这种bloom filter可以理解为某种sideways information passing.
+</p>
+
+<p>
+HJ的cost analysis我有点没有看懂。上面的HJ要求hash table是in memory的话，如果没有办法in memory的话，那么可以分别对inner和outer table做partition，使用相同的hash function，然后分别对partition做join. 每个partition上面的join可以继续拆分，直到partition可以fit in memory为止，这是个递归的过程。如果不考虑递归的话，partition phase时间复杂度是2*(M+N)（input + output), Probe Phase因为完全fit in memory使用NLJ的话可以做到M+N. 所以总的cosst是 3*(M+N).
+</p>
+</div>
+<div id="content"><!-- DISQUS BEGIN --><div id="disqus_thread"></div><script>/***  RECOMMENDED CONFIGURATION VARIABLES: EDIT AND UNCOMMENT THE SECTION BELOW TO INSERT DYNAMIC VALUES FROM YOUR PLATFORM OR CMS.*  LEARN WHY DEFINING THESE VARIABLES IS IMPORTANT: https://disqus.com/admin/universalcode/#configuration-variables*/var disqus_config = function () {this.page.url = 'https://dirtysalt.github.io/html/cmudb-sort-agg-join.html';this.page.identifier = 'cmudb-sort-agg-join.html';};(function() {var d = document, s = d.createElement('script');s.src = 'https://dirlt.disqus.com/embed.js';s.setAttribute('data-timestamp', +new Date());(d.head || d.body).appendChild(s);})();</script><noscript>Please enable JavaScript to view the <a href="https://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript><!-- DISQUS END --></div></body>
+</html>

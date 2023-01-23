@@ -1,0 +1,51 @@
+#+title: Dremio Reflections/Views文档说明
+
+----------
+
+如何创建Dataset Layers https://docs.dremio.com/cloud/data/datasets/#layering-datasets
+
+#+BEGIN_QUOTE
+Dremio recommends that, when you create datasets, you create them in layers:
+- The bottom or first layer consists of your physical datasets.
+- In the second layer are virtual datasets, one for each physical dataset, that do lightweight preparation of data for virtual datasets in the next layers. Here, administrators might create virtual datasets that do limited casting, type conversion, and field renaming, and redacting sensitive information, among other prepping operations. Administrators can also add security by subsetting both rows and fields that users in other layers are not allowed to access. The data has been lightly scrubbed and restricted to the group of people who have the business knowledge that lets them use these virtual datasets to build higher-order virtual datasets that data consumers can use. Then, admins grant access to these virtual datasets to users who create virtual datasets in the next layer, without being able to see the raw data in the physical datasets.
+- In the third layer, users create virtual datasets that perform joins and other expensive operations. This layer is where the intensive work on data is performed. These users then create reflections (raw, aggregation, or both) from their virtual datasets.
+- In the fourth layer, users can create lightweight virtual datasets for dashboards, reports, and visualization tools. They can also create aggregation reflections, as needed.
+#+END_QUOTE
+
+----------
+
+ https://docs.dremio.com/cloud/reflections/types-and-benefits/
+
+Reflections/Views的好处：
+1. Raw Views 和原始数据有差不多相同的行数，删除一些不必要的列，可以按照列进行水平和垂直切分，并且针对某些列进行排序。另外还有个功能就是可以用来改变存储格式。
+2. Agg Views 针对原始数据进行聚合，主要是用来解决GroupBy性能问题，当然也可以过滤数据，支持预先聚合的operators包括sum/count/min/max等
+
+https://docs.dremio.com/cloud/reflections/creating-and-editing-reflections/
+
+View在刷新时候有两个策略：
+1. Minimize Time Needed To Refresh 减少刷新时间，但是可能生成许多小文件
+2. Minimize Number Of Files 减少生成的文件，读取的时候可以节省时间
+
+缓存文件格式上：
+1. View文件本身格式是Parquet的，存储在S3上
+2. 默认配置在SSD Cache上存储的也是Parquet格式，然后读取的时候转变成为Arrow格式
+3. 但是如果存储设备S3/HDFS支持CCC的话，那么可以直接在S3上存储Arrow格式
+4. 相比Parquet格式，Arrow格式会占用更多的空间，但是可以节省parse的开销
+
+----------
+
+使用Views的建议 https://docs.dremio.com/cloud/reflections/best-practices/
+1. 前面大部分建议和create index是非常类似的，你必须了解它的cost/benefit.
+2. Horizontally Partition Reflections that Have Many Rows.  // 针对大量Rows进行水平切分，比如country/region这些，建议partitions数量不要超过10000.
+3. Sort Reflections on High-Cardinality Fields // 在高基数字段上使用sort views，好处是在filter的时候可以使用到有序性，建议不要在多个字段上创建。
+4. Create Reflections from Joins that are Based on Joins from Multiple Queries // 没有太看懂这个例子，好像给的例子似乎不太能使用上。
+
+#+BEGIN_EXAMPLE
+SELECT a1, b1, c1 FROM a,b,c WHERE a.3 > '2001-01-01' AND b.3 IN ('red','blue','green')
+SELECT a1, a2, c1, COUNT(b.1) FROM a,b,c WHERE a.size = 'M' AND b.2 < 10 AND c.2 > 2 GROUP BY a1, a2, c1
+SELECT a1, b2 FROM a,b,c WHERE c.1 = 123
+
+// 可以使用下面这个View进行加速
+
+SELECT a1, a2, a3, b1, b2, b3, c1, c2 FROM a,b,c WHERE a.3 > '2001-01-01' AND b.3 IN ('red','blue','green') AND c.1 = 123
+#+END_EXAMPLE

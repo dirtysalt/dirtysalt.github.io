@@ -1,0 +1,187 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>TCP Implementation in Linux: A Brief Tutorial</title>
+<meta name="author" content="dirtysalt" />
+<meta name="generator" content="Org Mode" />
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content" class="content">
+<h1 class="title">TCP Implementation in Linux: A Brief Tutorial</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>Table of Contents</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#org635875a">1. create connection</a></li>
+<li><a href="#org339009a">2. packet reception</a></li>
+<li><a href="#org3422027">3. packet transmission</a></li>
+<li><a href="#orgd5f71dd">4. congestion control</a></li>
+</ul>
+</div>
+</div>
+<p>
+<a href="http://www.ece.virginia.edu/cheetah/documents/papers/TCPlinux.pdf">http://www.ece.virginia.edu/cheetah/documents/papers/TCPlinux.pdf</a>
+</p>
+
+<div id="outline-container-org635875a" class="outline-2">
+<h2 id="org635875a"><span class="section-number-2">1.</span> create connection</h2>
+<div class="outline-text-2" id="text-1">
+<p>
+下面摘自 "<a href="http://blog.sina.com.cn/s/blog_e59371cc0102vg4n.html">Linux TCP队列相关参数的总结</a>":
+</p>
+
+
+<div id="orgc3d8bcd" class="figure">
+<p><img src="../images/tcp-create-connection.png" alt="tcp-create-connection.png" />
+</p>
+</div>
+
+<p>
+简单看下连接的建立过程，客户端向server发送SYN包，server回复SYN＋ACK，同时将这个处于SYN_RECV状态的连接保存到半连接队列。客户端返回ACK包完成三次握手，server将ESTABLISHED状态的连接移入accept队列，等待应用调用accept()。可以看到建立连接涉及两个队列：
+</p>
+<ul class="org-ul">
+<li>半连接队列，保存SYN_RECV状态的连接。队列长度由net.ipv4.tcp_max_syn_backlog设置。</li>
+<li>accept队列，保存ESTABLISHED状态的连接。队列长度为min(net.core.somaxconn, backlog). # listen(sockfd, backlog)</li>
+</ul>
+
+<p>
+另外，为了应对SYN flooding（即客户端只发送SYN包发起握手而不回应ACK完成连接建立，填满server端的半连接队列，让它无法处理正常的握手请求），Linux实现了一种称为SYN cookie的机制，通过net.ipv4.tcp_syncookies控制，设置为1表示开启。简单说SYN cookie就是将连接信息编码在ISN(initial sequence number)中返回给客户端，这时server不需要将半连接保存在队列中，而是利用客户端随后发来的ACK带回的ISN还原连接信息，以完成连接的建立，避免了半连接队列被攻击SYN包填满。对于一去不复返的客户端握手，不理它就是了。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org339009a" class="outline-2">
+<h2 id="org339009a"><span class="section-number-2">2.</span> packet reception</h2>
+<div class="outline-text-2" id="text-2">
+
+<div id="org8f429b5" class="figure">
+<p><img src="../images/tcp-packet-reception.png" alt="tcp-packet-reception.png" />
+</p>
+</div>
+
+<p>
+整个流程大致如下：
+</p>
+<ul class="org-ul">
+<li>linux里面使用sk_buff数据结构来描述packet.</li>
+<li>NIC检测到packet到达，从Kernel Memory(sk_buffs)分配sk_buff数据结构，调用DMA Engine将packet放到sk_buff数据结构里面。NIC检测有packet到达和有packet发送，都不是触发而是主动poll的方式来完成的</li>
+<li>将sk_buff并且加入rx_ring这个ring_buffer里面。如果rx_ring满了的话那么将packet丢弃。</li>
+<li>当DMA Engine完成处理之后， <b>NIC通过向CPU发起中断</b> 通知kernel进行处理。</li>
+<li>kernel将这个packet传递给IP层进行处理。IP层需要将信息组装成为ip packet。如果ip packet是tcp的话那么放到socket backlog里面。如果socket backlog满了的话那么将ip packet丢弃。 <b>copy packet data to ip buffer to form ip packet</b>. 这个步骤完成之后IP layer就可以释放sk_buffer结构</li>
+<li>tcp layer从socket backlog里面取出tcp packet， <b>copy ip packet tcp recv buffer to form tcp packet</b></li>
+<li>tcp recv buffer交给application layer处理， <b>copy tcp recv buffer to app buffer to form app packet</b></li>
+<li>其中内核参数有
+<ul class="org-ul">
+<li>/proc/sys/net/ipv4/tcp_rmem # tcp recv buffer大小</li>
+<li>/proc/sys/net/core/netdev_max_backlog # 图中socket backlog大小，和accept系统调用的backlog区分开。</li>
+</ul></li>
+</ul>
+
+<p>
+下面这些是从文章摘取出来的
+</p>
+<ul class="org-ul">
+<li><a href="http://blog.sina.com.cn/s/blog_e59371cc0102vg4n.html">Linux TCP队列相关参数的总结</a></li>
+<li><a href="https://www.suse.com/documentation/sles11/book_sle_tuning/data/sec_tuning_network_buffers.html">https://www.suse.com/documentation/sles11/book_sle_tuning/data/sec_tuning_network_buffers.html</a></li>
+</ul>
+
+<blockquote>
+<p>
+Linux在2.6.17以后增加了recv Buffer自动调节机制，recv buffer的实际大小会自动在最小值和最大值之间浮动，以期找到性能和资源的平衡点，因此大多数情况下不建议将recv buffer手工设置成固定值。
+</p>
+
+<p>
+当net.ipv4.tcp_moderate_rcvbuf设置为1时，自动调节机制生效，每个TCP连接的recv Buffer由下面的3元数组指定：net.ipv4.tcp_rmem = (min, default, max). 最初recv buffer被设置为&lt;default&gt;，同时这个缺省值会覆盖net.core.rmem_default的设置。随后recv buffer根据实际情况在最大值和最小值之间动态调节。在缓冲的动态调优机制开启的情况下，我们将net.ipv4.tcp_rmem的最大值设置为BDP(Bandwidth-Delay Product)。
+</p>
+
+<p>
+当net.ipv4.tcp_moderate_rcvbuf被设置为0，或者设置了socket选项SO_RCVBUF，缓冲的动态调节机制被关闭。recv buffer的缺省值由net.core.rmem_default设置，但如果设置了net.ipv4.tcp_rmem，缺省值则被覆盖。可以通过系统调用setsockopt()设置recv buffer的最大值为net.core.rmem_max。在缓冲动态调节机制关闭的情况下，建议把缓冲的缺省值设置为BDP。
+</p>
+
+<p>
+发送端缓冲的自动调节机制很早就已经实现，并且是无条件开启，没有参数去设置。如果指定了tcp_wmem，则net.core.wmem_default被tcp_wmem的覆盖。send Buffer在tcp_wmem的最小值和最大值之间自动调节。如果调用setsockopt()设置了socket选项SO_SNDBUF，将关闭发送端缓冲的自动调节机制，tcp_wmem将被忽略，SO_SNDBUF的最大值由net.core.wmem_max限制。
+</p>
+</blockquote>
+</div>
+</div>
+
+<div id="outline-container-org3422027" class="outline-2">
+<h2 id="org3422027"><span class="section-number-2">3.</span> packet transmission</h2>
+<div class="outline-text-2" id="text-3">
+
+<div id="org1414461" class="figure">
+<p><img src="../images/tcp-packet-transmission.png" alt="tcp-packet-transmission.png" />
+</p>
+</div>
+
+<p>
+整个流程大致如下：
+</p>
+<ul class="org-ul">
+<li>application layer将数据copy到tcp send buffer里面，如果空间不够的话那么就会出现阻塞。 <b>copy app buffer to tcp send buffer as app packet</b></li>
+<li>tcp layer等待tcp send buffer存在数据或者是需要做ack的时候，组装ip packet推送到IP layer <b>copy tcp send buffer to ip send buffer as tcp packet</b></li>
+<li>IP layer从kernel memory申请sk_buffer，将ip data包装成为packet data，然后塞到qdisc(txqueuelen控制队列长度）里面（指针）。如果队列满的话那么就会出现阻塞，反馈到tcp layer阻塞。 <b>copy ip send buffer to packet data as ip packet</b></li>
+<li>NIC driver如果检测到qdisc有数据的话，调用NIC DMA Engine将packet发送出去。发送完成之后NIC向CPU发起中断释放packet data内存到Kernel Memory</li>
+<li>其中内核参数有：
+<ul class="org-ul">
+<li>/proc/sys/net/ipv4/tcp_wmem 这个和rmem非常类似</li>
+<li>与上面类比，相关参数还有net.core.wmem_default和net.core.wmem_max.</li>
+</ul></li>
+</ul>
+
+<p>
+在wangyx的帮助下, qdisc队列长度参数txqueuelen这个配置在ifconfig下面找到了. txqueuelen = 1000.
+</p>
+<pre class="example" id="org711f2fc">
+➜  ~  ifconfig
+eth0      Link encap:Ethernet  HWaddr 12:31:40:00:49:d1
+          inet addr:10.170.78.31  Bcast:10.170.79.255  Mask:255.255.254.0
+          inet6 addr: fe80::1031:40ff:fe00:49d1/64 Scope:Link
+          UP BROADCAST RUNNING MULTICAST  MTU:1500  Metric:1
+          RX packets:13028359 errors:0 dropped:0 overruns:0 frame:0
+          TX packets:9504902 errors:0 dropped:0 overruns:0 carrier:0
+          collisions:0 txqueuelen:1000
+          RX bytes:2464083770 (2.4 GB)  TX bytes:20165782073 (20.1 GB)
+          Interrupt:25
+</pre>
+
+<p>
+下面摘自: <a href="http://blog.sina.com.cn/s/blog_e59371cc0102vg4n.html">Linux TCP队列相关参数的总结</a>
+</p>
+<blockquote>
+<p>
+QDisc（queueing discipline ）位于IP层和网卡的ring buffer之间。我们已经知道，ring buffer是一个简单的FIFO队列，这种设计使网卡的驱动层保持简单和快速。而QDisc实现了流量管理的高级功能，包括流量分类，优先级和流量整形（rate-shaping）。可以使用tc命令配置QDisc。
+</p>
+
+<p>
+QDisc的队列长度由txqueuelen设置，和接收数据包的队列长度由内核参数net.core.netdev_max_backlog控制所不同，txqueuelen是和网卡关联
+</p>
+</blockquote>
+</div>
+</div>
+
+<div id="outline-container-orgd5f71dd" class="outline-2">
+<h2 id="orgd5f71dd"><span class="section-number-2">4.</span> congestion control</h2>
+<div class="outline-text-2" id="text-4">
+
+<div id="org1c40d6b" class="figure">
+<p><img src="../images/tcp-congestion-control.png" alt="tcp-congestion-control.png" />
+</p>
+</div>
+
+<ul class="org-ul">
+<li>初始状态是slow start</li>
+<li>cwnd(congestion window) 拥塞窗口，表示一次最多发送的数据包多少。</li>
+<li>ssthresh(slow start threshold) 慢速启动阈值。</li>
+<li>MSS(maximum segment size) 最大分节大小，和传输网络的MTU相关。</li>
+<li><a href="http://www.zhihu.com/question/21813579">为什么多 TCP 连接分块下载比单连接下载快？</a></li>
+</ul>
+</div>
+</div>
+</div>
+<div id="content"><!-- DISQUS BEGIN --><div id="disqus_thread"></div><script>/***  RECOMMENDED CONFIGURATION VARIABLES: EDIT AND UNCOMMENT THE SECTION BELOW TO INSERT DYNAMIC VALUES FROM YOUR PLATFORM OR CMS.*  LEARN WHY DEFINING THESE VARIABLES IS IMPORTANT: https://disqus.com/admin/universalcode/#configuration-variables*/var disqus_config = function () {this.page.url = 'https://dirtysalt.github.io/html/tcp-on-linux.html';this.page.identifier = 'tcp-on-linux.html';};(function() {var d = document, s = d.createElement('script');s.src = 'https://dirlt.disqus.com/embed.js';s.setAttribute('data-timestamp', +new Date());(d.head || d.body).appendChild(s);})();</script><noscript>Please enable JavaScript to view the <a href="https://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript><!-- DISQUS END --></div></body>
+</html>

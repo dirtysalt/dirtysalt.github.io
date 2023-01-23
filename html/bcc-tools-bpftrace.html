@@ -1,0 +1,144 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>bcc &amp; bpftrace</title>
+<meta name="author" content="dirtysalt" />
+<meta name="generator" content="Org Mode" />
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content" class="content">
+<h1 class="title">bcc &amp; bpftrace</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>Table of Contents</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#orge44cc49">1. 参考命令</a>
+<ul>
+<li><a href="#orgd7b532e">1.1. stackcount</a></li>
+<li><a href="#org6a931d0">1.2. bpftrace ustack/sum</a></li>
+<li><a href="#org2fb1c45">1.3. bpftrace ustack/time</a></li>
+<li><a href="#orgca45027">1.4. argdist</a></li>
+</ul>
+</li>
+<li><a href="#orgb1c328d">2. Enable Frame Pointer</a></li>
+<li><a href="#orge575d7f">3. JIT Symbols (Java, Node.js)</a></li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-orge44cc49" class="outline-2">
+<h2 id="orge44cc49"><span class="section-number-2">1.</span> 参考命令</h2>
+<div class="outline-text-2" id="text-1">
+</div>
+<div id="outline-container-orgd7b532e" class="outline-3">
+<h3 id="orgd7b532e"><span class="section-number-3">1.1.</span> stackcount</h3>
+<div class="outline-text-3" id="text-1-1">
+<blockquote>
+<p>
+sudo stackcount -P -p `doris-find-process` -D 10 -f '/home/disk2/zy/DorisDB/output/be/lib/starrocks_be:_ZN9starrocks10vectorized17ORCHdfsFileStream4readEPvmm' | flamegraph.pl &#x2013;width 2400 &#x2013;hash &#x2013;bgcolors=grey &gt; orc_read_stack_count.svg
+</p>
+</blockquote>
+</div>
+</div>
+
+<div id="outline-container-org6a931d0" class="outline-3">
+<h3 id="org6a931d0"><span class="section-number-3">1.2.</span> bpftrace ustack/sum</h3>
+<div class="outline-text-3" id="text-1-2">
+<blockquote>
+<p>
+run-bpftrace -e 'u:/home/disk2/zy/DorisDB/output/be/lib/starrocks_be:_ZN9starrocks10vectorized17ORCHdfsFileStream4readEPvmm { @[ustack] = sum(arg2); } ' &gt; orc_read_stack_size.out
+</p>
+
+<p>
+stackcollapse-bpftrace.pl &lt; orc_read_stack_size.out | flamegraph.pl &#x2013;width 2400 &#x2013;hash &#x2013;bgcolors=grey &gt; orc_read_stack_size.svg
+</p>
+</blockquote>
+</div>
+</div>
+
+<div id="outline-container-org2fb1c45" class="outline-3">
+<h3 id="org2fb1c45"><span class="section-number-3">1.3.</span> bpftrace ustack/time</h3>
+<div class="outline-text-3" id="text-1-3">
+<blockquote>
+<p>
+run-bpftrace -e 'uprobe:/home/disk2/zy/DorisDB/output/be/lib/starrocks_be:_ZNK9starrocks20HdfsRandomAccessFile7read_atEmRKNS_5SliceE { @ts[tid] = nsecs; } uretprobe:/home/disk2/zy/DorisDB/output/be/lib/starrocks_be:_ZNK9starrocks20HdfsRandomAccessFile7read_atEmRKNS_5SliceE { @[ustack]=(nsecs-@ts[tid]); delete(@ts[tid]) } ' &gt; hdfs_read_time.out
+</p>
+
+<p>
+stackcollapse-bpftrace.pl &lt; hdfs_read_time.out | flamegraph.pl &#x2013;width 2400 &#x2013;hash &#x2013;bgcolors=grey &gt; hdfs_read_time.svg
+</p>
+</blockquote>
+</div>
+</div>
+
+<div id="outline-container-orgca45027" class="outline-3">
+<h3 id="orgca45027"><span class="section-number-3">1.4.</span> argdist</h3>
+<div class="outline-text-3" id="text-1-4">
+<blockquote>
+<p>
+sudo argdist -d 10 -i 10 -p `doris-find-process` -H 'p:/home/disk2/zy/DorisDB/output/be/lib/starrocks_be:_ZN9starrocks10vectorized17ORCHdfsFileStream4readEPvmm(void*this, void*buf,u64 length,u64 offset):u64:length'
+</p>
+</blockquote>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgb1c328d" class="outline-2">
+<h2 id="orgb1c328d"><span class="section-number-2">2.</span> Enable Frame Pointer</h2>
+<div class="outline-text-2" id="text-2">
+<p>
+<a href="https://cmake.org/cmake/help/latest/envvar/CXXFLAGS.html">https://cmake.org/cmake/help/latest/envvar/CXXFLAGS.html</a>
+</p>
+
+<p>
+这个环境变量会影响到cmake里面c/c++默认编译参数
+</p>
+
+<p>
+```
+export CXXFLAGS="-fno-omit-frame-pointer ${CXXFLAGS}"
+export CFLAGS="-fno-omit-frame-pointer ${CFLAGS}"
+```
+</p>
+
+<p>
+When introducing thirdparty, make sure compiler option `-fno-omit-frame-pointer` is enabled. By default it's disabled, which makes profiling hard.  <a href="https://gcc.gnu.org/onlinedocs/gcc-10.3.0/gcc/Optimize-Options.html">https://gcc.gnu.org/onlinedocs/gcc-10.3.0/gcc/Optimize-Options.html</a>. The ovehead of it can be offset by observablity.
+</p>
+
+<p>
+BPF Performance Tools.pdf Chapter2
+</p>
+
+<p>
+&gt; On x86_64 today, most software is compiled with gcc’s defaults, breaking frame pointer stack traces. Last time I studied the performance gain from frame pointer omission in our production environment, it was usually less than one percent, and it was often so close to zero that it was difficult to measure. Many microservices at Netflix are running with the frame pointer reenabled, as the performance wins found by CPU profiling outweigh the tiny loss of performance.
+</p>
+</div>
+</div>
+
+<div id="outline-container-orge575d7f" class="outline-2">
+<h2 id="orge575d7f"><span class="section-number-2">3.</span> JIT Symbols (Java, Node.js)</h2>
+<div class="outline-text-2" id="text-3">
+<p>
+<a href="https://www.brendangregg.com/perf.html#JIT_Symbols">https://www.brendangregg.com/perf.html#JIT_Symbols</a>
+</p>
+
+<p>
+Programs that have virtual machines (VMs), like Java's JVM and node's v8, execute their own virtual processor, which has its own way of executing functions and managing stacks. If you profile these using perf_events, you'll see symbols for the VM engine, which have some use (eg, to identify if time is spent in GC), but you won't see the language-level context you might be expecting. Eg, you won't see Java classes and methods.
+</p>
+
+<p>
+perf_events has JIT support to solve this, which requires the VM to maintain a /tmp/perf-PID.map file for symbol translation. Java can do this with perf-map-agent, and Node.js 0.11.13+ with &#x2013;perf_basic_prof. See my blog post Node.js flame graphs on Linux for the steps.
+</p>
+
+<p>
+Note that Java may not show full stacks to begin with, due to hotspot on x86 omitting the frame pointer (just like gcc). On newer versions (JDK 8u60+), you can use the -XX:+PreserveFramePointer option to fix this behavior, and profile fully using perf. See my Netflix Tech Blog post, Java in Flames, for a full writeup, and my Java flame graphs section, which links to an older patch and includes an example resulting flame graph. I also summarized the latest in my JavaOne 2016 talk Java Performance Analysis on Linux with Flame Graphs.
+</p>
+</div>
+</div>
+</div>
+<div id="content"><!-- DISQUS BEGIN --><div id="disqus_thread"></div><script>/***  RECOMMENDED CONFIGURATION VARIABLES: EDIT AND UNCOMMENT THE SECTION BELOW TO INSERT DYNAMIC VALUES FROM YOUR PLATFORM OR CMS.*  LEARN WHY DEFINING THESE VARIABLES IS IMPORTANT: https://disqus.com/admin/universalcode/#configuration-variables*/var disqus_config = function () {this.page.url = 'https://dirtysalt.github.io/html/bcc-tools-bpftrace.html';this.page.identifier = 'bcc-tools-bpftrace.html';};(function() {var d = document, s = d.createElement('script');s.src = 'https://dirlt.disqus.com/embed.js';s.setAttribute('data-timestamp', +new Date());(d.head || d.body).appendChild(s);})();</script><noscript>Please enable JavaScript to view the <a href="https://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript><!-- DISQUS END --></div></body>
+</html>

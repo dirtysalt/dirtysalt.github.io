@@ -1,0 +1,154 @@
+#+title: MongoDB
+
+** Introduction
+主页是http://www.mongodb.org/. mongdb有下面这些特点：
+- 可扩展，高性能，开源NoSQL数据库系统。Written in C++. Mongo is from "humongous".
+- 面向文档存储。这个和面向key-value存储区别，有点类似于RDBMS的面向记录存储。
+- Schema Free.对于文档而言没有固定的schema,不需要像RDBMS一样定义table schema.文档使用BSON(http://bsonspec.org/)来表示和存储。
+- 全索引支持。全索引的支持可以让功能上就可以和key-value存储系统匹敌。
+- Auto-Sharding.可以很好且很容易地做到负载均衡和水平扩展。
+- 完整的HA方案。提供了两种HA方案master-slave(ms,deprecated)和replica-set(rs,recommended).
+- MapReduce.可以在MongoDB上面进行MapReduce操作，使得mdb成为支持服务端计算的存储系统。
+- GridFS.规定如何基于MongoDB来进行大文件存储的specification.
+- 丰富的客户端支持。C++,Java,Python,Ruby,PHP,JavaScript,Scala等。
+
+这里有一些关于MongoDB的介绍和架构的文章.
+- MongoDb Architecture. http://horicky.blogspot.jp/2012/04/mongodb-architecture.html (需骑墙)
+- mongoDB - the good to begin links. http://poplink.blogspot.in/2012/05/mongodb-pandora-links.html (需骑墙)
+- MongoDB构架图分享. http://blog.nosqlfan.com/html/3887.html
+- MongoDB资料汇总专题. http://blog.nosqlfan.com/html/3548.html
+- MongoDB和其他几种数据库的对比. http://kkovacs.eu/cassandra-vs-mongodb-vs-couchdb-vs-redis
+- MongoDB FAQ. http://cn.docs.mongodb.org/manual/faq/fundamentals/
+
+** Cheatsheet
+*必须使用wiredtiger引擎* 相比mmapv1, wiredtiger可以更好地管理内存. `--storageEngine wiredTiger --wiredTigerCacheSizeGB 1`
+
+- db.playlist.find({'lang': 'zh-cn'}, projection = {'pid': 1, 'releaseDate': 1, 'title': 1, 'weight': 1}).sort({'weight': 1, 'releaseDate': -1}) # 查询，选择字段，排序
+- db.playlist.update({}, {'$unset':{'skip':1}}, {'multi':true}) # 删除多个文档中的字段
+- db.playlist.update({}, {'$rename': {'genres': 'itunes_genres'}, '$set': {'skip': 1}}, {'multi': true}) # 更新多个文档中的字段
+
+** 网络模型
+mongodb采用一个线程处理一个请求的模型，不太确定mongodb是否限制了并发连接数。
+如果没有限制的话，那么如果活跃连接数过多的话会导致上下文切换开销严重，导致mongodb挂掉。
+
+** 单机存储
+这里有一些关于MongoDB单机存储方面的文章.
+- 深入MongoDB内部结构. http://blog.nosqlfan.com/html/2079.html
+- MongoDB的索引使用及索引机制. http://blog.nosqlfan.com/html/758.html
+- MongoDB Indexing: The Details http://www.slideshare.net/mongodb/mongodb-indexing-the-details
+- 代码分析-查询 http://www.cnblogs.com/daizhj/archive/2011/03/18/1988288.html
+- 代码分析-插入记录和btree构建 http://www.cnblogs.com/daizhj/archive/2011/03/30/1999699.html
+- 代码分析-更新记录 http://www.cnblogs.com/daizhj/archive/2011/04/11/mongodb_update_recode_source_code.html
+- 代码分析-删除记录 http://www.cnblogs.com/daizhj/archive/2011/04/06/mongodb_delete_recode_source_code.html
+- 代码分析-日志持久化 http://www.cnblogs.com/daizhj/archive/2011/03/21/1990344.html
+
+文件组织上每个database使用一个文件前缀，每个databses里面可以存在多个namespace.然后在多个namespace下面可以有多个collection.
+对于一个collection而言的话就是一个bson文档。
+#+BEGIN_EXAMPLE
+dirlt@dirlt-virtual-machine:~/utils/mongodb/data/db$ ll -h
+total 209M
+drwxrwxr-x 4 dirlt dirlt 4.0K  6月  1 11:48 ./
+drwxrwxr-x 3 dirlt dirlt 4.0K  5月 31 06:36 ../
+drwxrwxr-x 2 dirlt dirlt 4.0K  6月  1 11:47 journal/
+-rwxrwxr-x 1 dirlt dirlt    5  6月  1 11:47 mongod.lock*
+-rw------- 1 dirlt dirlt  64M  6月  1 11:48 test.0
+-rw------- 1 dirlt dirlt 128M  6月  1 11:48 test.1
+-rw------- 1 dirlt dirlt  16M  6月  1 11:48 test.ns
+drwxrwxr-x 2 dirlt dirlt 4.0K  6月  1 11:48 _tmp/
+#+END_EXAMPLE
+这里database是test.初始文件是64MB,然后后面每个文件翻倍直到2GB，文件里面存放了数据和索引。test.ns是名字空间文件内部存放了数据库名字空间信息。
+每个数据文件会被分成一个一个的数据块，块与块之间用双向链表连接。对每一个块来说，其头部包含了一些块的元数据，比如自己的位置，上一个和下一个块的位置以及块中第一条和最后一条记录的位置指针。
+剩下的部分用于存储具体的数据(BSON文档)，具体数据之间也是通过双向链表来进行连接，索引也存在数据块内部但是组织成为btree格式而不是用双向链表连接。
+在名字空间文件中，保存的是一个hash table，保存了每个名字空间的存储信息元数据，包括其大小，块数，第一块位置，最后一块位置，被删除的块的链表以及索引信息。
+关于位置信息都是通过DiskLoc数据结构进行存储，存储了数据文件编号和块在文件中的位置。
+#+BEGIN_SRC C++
+struct DiskLoc {
+  int fileNum; // 文件编号
+  int offset; // 文件偏移
+};
+#+END_SRC
+mdb提供了compaction功能来做压缩，否则时间长了会出现文件空洞，使得读操作更加随机降低性能，同时占用更多的磁盘。
+
+mongodb所有的数据修改都是in-place的，这样的random write对于普通磁盘是不利的。对于读取数据的话应该是首先尝试读取索引，然后读取对应的磁盘块，
+但是磁盘块本身也不是有序的，所以对于read来说也是random的。不过对于mongodb这种面向文档的数据库系统也不好做LSM.所以mongodb最好还是使用SSD.
+关于mongodb使用SSD可以参看官方的文章 http://www.mongodb.org/display/DOCS/SSD
+
+但是mongodb针对这个问题解决方法就是直接使用mmap来做文件块缓存。所有的文件读写都通过mmap到内存，然后直接操作内存即可。使用mmap在一定程度上
+可以很容易地解决缓冲问题，但是也造成了failure情况下面数据不一致的问题，因为mdb里面没有显示地控制mmap写回时机。好比mmap两块内存，先修改A然后
+修改B,但是结果可能B比A先写回磁盘然后crash,或者是A写回磁盘然后crash,这些都会造成数据不一致。可以看看这篇文章"Redis新的存储模式diskstore" http://timyang.net/data/redis-diskstore/
+
+虽然mdb倡导"MongoDB is not designed around single-server durability, but rather multi-server durability."这个哲学，但是依然在后期版本加入了journal机制。
+mdb引入journal机制来做system crash recovery.如果不适用journal的话那么如果databases出现crash的话，那么需要适用database repairs(类似于fsck)或者是数据全copy.
+journal机制就是redo log.启动之后如果发现存在journal的话那么就会做redo,期间所有的操作都是journal.当mdb正常退出的话，会将这些journal删除。journal功能会预分配3G文件。
+#+BEGIN_EXAMPLE
+dirlt@dirlt-virtual-machine:~/utils/mongodb/data/db/journal$ ll -h
+total 3.1G
+drwxrwxr-x 2 dirlt dirlt 4.0K  6月  1 11:47 ./
+drwxrwxr-x 4 dirlt dirlt 4.0K  6月  1 11:48 ../
+-rw------- 1 dirlt dirlt 1.0G  6月  1 11:48 j._0
+-rw------- 1 dirlt dirlt 1.0G  6月  1 11:47 prealloc.1
+-rw------- 1 dirlt dirlt 1.0G  6月  1 11:47 prealloc.2
+#+END_EXAMPLE
+mongodb底层使用btree来进行索引.btree放在内存所以操作非常快(也是使用mmap来完成的)。对于多维索引比如k1,k2的话，从上面文章分析来看，应该是使用(k1,k2)复合key来作为主键的。
+#note: 应该大部分的RDBMS也是这种实现方式来实现复合索引的，本质上这种方式依然是单键索引。不能很好地解决部分匹配查询以及多键范围查询等操作。如果索引过大的话会造成频繁swap这点是需要注意的。
+
+对于query的话，如果这个collection可以有多个index使用的话，那么mdb首次会针对不同的index生成多个query plan同时执行。一旦最快的plan返回的话然后取消其他的查询方案，
+然后接下来的几次collection query都会使用这个index来进行query,直到针对这个collection发生了多次的update.
+
+** 内存占用
+这里有一些关于MongoDB内存使用和Linux内存方面的文章.
+- MongoDB与内存. http://blog.nosqlfan.com/html/2865.html
+- Linux虚拟内存实现原理. http://blog.nosqlfan.com/html/2956.html
+
+MongoDB不管是索引还是数据文件都强烈依赖于mmap.但是这里有必要区分虚拟内存和物理内存。mongdb虽然将文件都映射到内存，
+但是如果不触碰这些数据的话，实际上都是没有载入物理内存的(rss).不过如果需要将物理内存释放的话，需要munmap释放。
+如果物理内存不够使用的话，那么就会造成swap.不过我觉得对于mongodb这个东西，swap不是一个问题。因为大部分的内存都是mmap上来的，
+即使被换出去也不会占用swap分区而是直接写回数据文件而已。
+
+** Sharding
+mdb可以通过指定shard key来做auto-sharding.对于sharding的话需要三个组件
+- mongod.存储服务器
+- mongos.路由服务器
+- config server.配置服务器.
+这里需要配置服务器的原因主要是用来记录shard key partition方案的。根据shard key parition方案，对于所有的文档
+会形成不同的chunk落在不同的mongod上面。mongos一旦检测到某个chunk过大的话那么就会进行分裂，这样会形成新的shard key parition方案。
+
+不过auto-sharding也有问题，比较出名的就是这个"Foursquare长达11小时的宕机" http://www.dbanotes.net/arch/foursquare_outage.html.
+然后又同学跳出来也批评了一下"auto-sharding 无用论：auto-sharding vs. manual-sharding" http://blog.nosqlfan.com/html/841.html.
+auto-sharding有三个需要考虑的问题：
+- sharding算法
+- 自动在线迁移数据代价
+- 数据迁移造成的碎片.(这个应该算是mongodb的问题).
+不过我不是很认同作者的一个观点就是"冷数据不冷"。首先必须考虑我们为什么需要增加节点，是CPU还是Memory还是IO出现了问题，否则完全没有必要增加节点。
+对于mdb说是通常是memory出现了问题，那么完全可以在mdb单机上着手解决而不是auto-sharding的问题。既然增加了机器，那么就就希望CPU memory以及IO都可以充分利用起来。
+
+** HA方案
+对于HA方案来说的话，mdb有两种解决方案
+- master/slave(ms)
+- replica-sets(rs)
+
+ms并不是一个推荐的方式，因为相对rs来说工作方式没有那么灵活。ms需要指定master和slave节点，之间数据的同步类似于mysql relaylog工作方式，
+relaylog是异步发送的，所以数据没有强一致性只有最终一致性。但是如果master节点挂掉的话，需要人工介入(human intervention)，整个系统陷入read-only状态。
+rs相对来说好一些就是可以自动选主并且切换，并且rs不需要client指定具体哪一个是master。rs来说也需要几个组件
+- mongod.存储服务器
+- mongos.路由服务器
+- config server.配置服务器
+- arbiter.仲裁者.
+mongod会进行voting，而arbiter也会进行voting但是却不会用来作为存储，也就是说arbiter不会作为主节点选出。rs也是通过异步传输relaylog来进行数据同步的。
+
+这里官方给出了一些HA方案的数据。
+- 对于primary检测到自己不是主，或者是其他secondary发现primary inaccessible大约在10-30s.
+- secondary之间进行election大约也在10-30s.
+- 所以对于出现故障来说切换时间大约在1min.
+- relaylog在局域网上的传输在ms级别上。
+
+但是官方文档里面也提到了
+#+BEGIN_QUOTE
+Replica sets are the preferred replication mechanism in MongoDB. However, if your deployment requires more than 12 nodes, you must use master/slave replication.
+#+END_QUOTE
+如果部署超过12个节点的话，那么必须使用master/slave模式。原因我觉得可能是这个。
+#+BEGIN_QUOTE
+Within the replica set, members are interconnected with each other to exchange heartbeat message. A crashed server with missing heartbeat will be detected by other members and removed from the replica set membership.
+#+END_QUOTE
+也就是说，replicas之间都会和相互检测对方的心跳，这是一个全连接图。如果节点超过一定数量的话，那么心跳处理的延迟可能会非常长，同时选举的时间也会非常长，
+最终造成如果发生切换的话，切换时间会非常长。

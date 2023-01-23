@@ -1,0 +1,198 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Algorithmica Compilation &amp; Profiling</title>
+<meta name="author" content="dirtysalt" />
+<meta name="generator" content="Org Mode" />
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content" class="content">
+<h1 class="title">Algorithmica Compilation &amp; Profiling</h1>
+<hr />
+
+<p>
+<a href="https://en.algorithmica.org/hpc/compilation/flags/">https://en.algorithmica.org/hpc/compilation/flags/</a>
+</p>
+
+<p>
+可以在源代码内部加上编译选项，好处是可以是针对某个文件进行特殊优化。
+</p>
+
+<pre class="example" id="org6bbf3a4">
+#pragma GCC optimize("O3")
+#pragma GCC target("avx2")
+</pre>
+
+<p>
+可以针对不用的target做不同的实现，如果使用 `-mpopcnt` 的话那么就会使用下面那个版本。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-cpp"><span class="org-keyword">__attribute__</span>(( target(<span class="org-string">"default"</span>) )) <span class="org-comment-delimiter">// </span><span class="org-comment">fallback implementation</span>
+<span class="org-type">int</span> <span class="org-function-name">popcnt</span>(<span class="org-type">int</span> <span class="org-variable-name">x</span>) {
+    <span class="org-type">int</span> <span class="org-variable-name">s</span> = 0;
+    <span class="org-keyword">for</span> (<span class="org-type">int</span> <span class="org-variable-name">i</span> = 0; i &lt; 32; i++)
+        s += (x&gt;&gt;i&amp;1);
+    <span class="org-keyword">return</span> s;
+}
+
+<span class="org-keyword">__attribute__</span>(( target(<span class="org-string">"popcnt"</span>) )) <span class="org-comment-delimiter">// </span><span class="org-comment">used if popcnt flag is enabled</span>
+<span class="org-type">int</span> <span class="org-function-name">popcnt</span>(<span class="org-type">int</span> <span class="org-variable-name">x</span>) {
+    <span class="org-keyword">return</span> __builtin_popcount(x);
+}
+</pre>
+</div>
+
+<p>
+<a href="https://en.algorithmica.org/hpc/compilation/situational/">https://en.algorithmica.org/hpc/compilation/situational/</a>
+</p>
+
+<p>
+某些优化是需要在特定场景下面才有效的，这类优化在-O2/-O3的时候都不会开启，除非显示指定。
+</p>
+<ol class="org-ol">
+<li>loop unrolling (-funroll-loops)</li>
+<li>function inlining (always_inline, -finline-limit=n)</li>
+<li>likely/unlikely</li>
+<li>PGO. 按照作者的说法对于大项目可以有10~20%的性能提升</li>
+</ol>
+
+<hr />
+
+<p>
+<a href="https://en.algorithmica.org/hpc/profiling/">https://en.algorithmica.org/hpc/profiling/</a>
+</p>
+
+<p>
+Profiling和现代物理学研究非常类似，观察不同尺度的物质需要使用对应尺度的观测工具，观察不同软件行为需要不同层次的profiling工具。
+</p>
+
+<p>
+在现代计算机上设计算法有点类似于经验学科，需要通过实验来进行验证，因为现代计算机是在是太复杂了。像Intel这样的东西都没有办法确定x86指令的latency和throughput, 还需要通过别人的逆向工程来搞定。 <a href="https://arxiv.org/pdf/1810.04610.pdf">https://arxiv.org/pdf/1810.04610.pdf</a>
+</p>
+
+<blockquote>
+<p>
+There are many different types of profilers. I like to think about them by analogy of how physicists and other natural scientists approach studying small things, picking the right tool depending on the required level of precision:
+</p>
+<ul class="org-ul">
+<li>When objects are on a micrometer scale, they use optical microscopes.</li>
+<li>When objects are on a nanometer scale, and light no longer interacts with them, they use electron microscopes.</li>
+<li>When objects are smaller than that (e. g. the insides of an atom), they resort to theories and assumptions about how things work (and test these assumptions using intricate and indirect experiments).</li>
+</ul>
+
+<p>
+Similarly, there are three main profiling techniques, each operating by its own principles, having distinct areas of applicability, and allowing for different levels of precision:
+</p>
+<ul class="org-ul">
+<li>Instrumentation lets you time the program as a whole or by parts and count specific events you are interested in.</li>
+<li>Statistical profiling lets you go down to the assembly level and track various hardware events such as branch mispredictions or cache misses, which are critical for performance.</li>
+<li>Program simulation lets you go down to the individual cycle level and look into what is happening inside the CPU on each cycle when it is executing a small assembly snippet.</li>
+</ul>
+
+<p>
+Practical algorithm design can be very much considered an empirical field too. We largely rely on the same experimental methods, although this is not because we don’t know some of the fundamental secrets of nature but mostly because modern computers are just too complex to analyze — besides, this is also true that we, regular software engineers, can’t know some of the details because of IP protection from hardware companies (in fact, considering that the most accurate x86 instruction tables are reverse-engineered, there is a reason to believe that Intel doesn’t know these details themselves).
+</p>
+</blockquote>
+
+<p>
+<a href="https://en.algorithmica.org/hpc/profiling/mca/">https://en.algorithmica.org/hpc/profiling/mca/</a>
+</p>
+
+<p>
+MCA(machine code analyzer) llvm-mca 这个工具可以分析到指令级别的CPU延迟/吞吐情况
+</p>
+
+<p>
+<a href="https://godbolt.org/">https://godbolt.org/</a> 可以在线进行分析
+</p>
+
+<pre class="example" id="org3fc5a1f">
+// 代码整体执行情况，Insts, Cycles, IPC
+Iterations: 100
+Instructions: 8600
+Total Cycles: 1861
+Total uOps: 9900
+
+
+Dispatch Width: 6
+uOps Per Cycle: 5.32
+IPC: 4.62
+Block RThroughput: 16.5
+
+// 每条指令情况
+
+Instruction Info:
+[1]: #uOps
+[2]: Latency
+[3]: RThroughput
+[4]: MayLoad
+[5]: MayStore
+[6]: HasSideEffects (U)
+
+
+[1] [2] [3] [4] [5] [6] Instructions:
+1 1 0.25 test rsi, rsi
+
+// 每条指令的对资源占用情况
+Resources:
+[0] - SKXDivider
+[1] - SKXFPDivider
+[2] - SKXPort0
+[3] - SKXPort1
+[4] - SKXPort2
+[5] - SKXPort3
+[6] - SKXPort4
+[7] - SKXPort5
+[8] - SKXPort6
+[9] - SKXPort7
+
+
+Resource pressure per iteration:
+[0] [1] [2] [3] [4] [5] [6] [7] [8] [9]
+- - 18.50 18.49 7.49 7.52 9.00 18.50 18.51 6.99
+
+
+Resource pressure by instruction:
+[0] [1] [2] [3] [4] [5] [6] [7] [8] [9] Instructions:
+- - - - - - - 0.99 0.01 - test rsi, rsi
+- - 1.00 - - - - - - - je .L1
+- - - 0.02 - - - 0.98 - - lea rcx, [rsi - 1]
+</pre>
+
+
+<p>
+<a href="https://en.algorithmica.org/hpc/profiling/benchmarking/">https://en.algorithmica.org/hpc/profiling/benchmarking/</a>
+</p>
+
+<p>
+Benchmark这节使用jupyter来进行参数配置以及画图的确是很有意思的事情
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-py-def-class">def</span> <span class="org-function-name">bench</span>(source, <span class="org-py-variable-name">n</span>=<span class="org-py-number">2</span>**<span class="org-py-number">20</span>):
+    !make -s {source}
+    <span class="org-keyword">if</span> _exit_code != <span class="org-py-number">0</span>:
+        <span class="org-keyword">raise</span> <span class="org-py-exception-name">Exception</span>(<span class="org-string">"Compilation failed"</span>)
+    <span class="org-py-variable-name">res</span> = !./{source} {n} {q}
+    <span class="org-py-variable-name">duration</span> = <span class="org-py-builtins">float</span>(res[<span class="org-py-number">0</span>].split()[<span class="org-py-number">0</span>])
+    <span class="org-keyword">return</span> duration
+
+<span class="org-py-variable-name">ns</span> = <span class="org-py-builtins">list</span>(int(<span class="org-py-number">1</span>.<span class="org-py-number">17</span>**k) <span class="org-keyword">for</span> k <span class="org-keyword">in</span> <span class="org-py-builtins">range</span>(<span class="org-py-number">30</span>, <span class="org-py-number">60</span>))
+<span class="org-py-variable-name">baseline</span> = [bench(<span class="org-string">'std_lower_bound'</span>, <span class="org-py-variable-name">n</span>=n) <span class="org-keyword">for</span> n <span class="org-keyword">in</span> ns]
+<span class="org-py-variable-name">results</span> = [bench(<span class="org-string">'my_binary_search'</span>, <span class="org-py-variable-name">n</span>=n) <span class="org-keyword">for</span> n <span class="org-keyword">in</span> ns]
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">plotting relative speedup for different array sizes</span>
+<span class="org-py-import-from">import</span> matplotlib.pyplot <span class="org-keyword">as</span> plt
+
+plt.plot(ns, [x / y <span class="org-keyword">for</span> x, y <span class="org-keyword">in</span> <span class="org-py-builtins">zip</span>(baseline, results)])
+plt.show()
+</pre>
+</div>
+</div>
+<div id="content"><!-- DISQUS BEGIN --><div id="disqus_thread"></div><script>/***  RECOMMENDED CONFIGURATION VARIABLES: EDIT AND UNCOMMENT THE SECTION BELOW TO INSERT DYNAMIC VALUES FROM YOUR PLATFORM OR CMS.*  LEARN WHY DEFINING THESE VARIABLES IS IMPORTANT: https://disqus.com/admin/universalcode/#configuration-variables*/var disqus_config = function () {this.page.url = 'https://dirtysalt.github.io/html/algorithmica-compilation-profiling.html';this.page.identifier = 'algorithmica-compilation-profiling.html';};(function() {var d = document, s = d.createElement('script');s.src = 'https://dirlt.disqus.com/embed.js';s.setAttribute('data-timestamp', +new Date());(d.head || d.body).appendChild(s);})();</script><noscript>Please enable JavaScript to view the <a href="https://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript><!-- DISQUS END --></div></body>
+</html>

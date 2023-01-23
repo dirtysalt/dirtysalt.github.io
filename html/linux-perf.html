@@ -1,0 +1,265 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Linux Perf</title>
+<meta name="author" content="dirtysalt" />
+<meta name="generator" content="Org Mode" />
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content" class="content">
+<h1 class="title">Linux Perf</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>Table of Contents</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#org7639725">1. 参考链接</a></li>
+<li><a href="#org9c97fe6">2. 多线程优化</a></li>
+<li><a href="#org6385fc2">3. 常见问题</a>
+<ul>
+<li><a href="#orgc650cea">3.1. 确保perf版本和内核版本匹配</a></li>
+<li><a href="#org18ee760">3.2. 调试perf版本时yum几个命令</a></li>
+<li><a href="#orgb68ac87">3.3. 反编译和符号解析问题</a></li>
+<li><a href="#orge2f4ded">3.4. flamegraph和perf结果差异</a></li>
+</ul>
+</li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-org7639725" class="outline-2">
+<h2 id="org7639725"><span class="section-number-2">1.</span> 参考链接</h2>
+<div class="outline-text-2" id="text-1">
+<ul class="org-ul">
+<li>perf (Linux) - Wikipedia, the free encyclopedia <a href="http://en.wikipedia.org/wiki/Perf_(Linux)">http://en.wikipedia.org/wiki/Perf_(Linux)</a></li>
+<li>Tutorial - Perf Wiki : <a href="https://perf.wiki.kernel.org/index.php/Tutorial">https://perf.wiki.kernel.org/index.php/Tutorial</a></li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-org9c97fe6" class="outline-2">
+<h2 id="org9c97fe6"><span class="section-number-2">2.</span> 多线程优化</h2>
+<div class="outline-text-2" id="text-2">
+<p>
+Performance analysis of multithreaded applications. | Easyperf <a href="https://easyperf.net/blog/2019/10/05/Performance-Analysis-Of-MT-apps">https://easyperf.net/blog/2019/10/05/Performance-Analysis-Of-MT-apps</a>
+</p>
+
+<p>
+How to find expensive locks in multithreaded application. | Easyperf <a href="https://easyperf.net/blog/2019/10/12/MT-Perf-Analysis-part2">https://easyperf.net/blog/2019/10/12/MT-Perf-Analysis-part2</a>
+</p>
+
+<p>
+Detect false sharing with Data Address Profiling. | Easyperf <a href="https://easyperf.net/blog/2019/12/17/Detecting-false-sharing-using-perf">https://easyperf.net/blog/2019/12/17/Detecting-false-sharing-using-perf</a>
+</p>
+
+<p>
+C2C - False Sharing Detection in Linux Perf - My Octopress Blog <a href="https://joemario.github.io/blog/2016/09/01/c2c-blog/">https://joemario.github.io/blog/2016/09/01/c2c-blog/</a>
+</p>
+
+<p>
+caching - Is it possible to know the address of a cache miss? - Stack Overflow <a href="https://stackoverflow.com/questions/23736999/is-it-possible-to-know-the-address-of-a-cache-miss/45899495#45899495">https://stackoverflow.com/questions/23736999/is-it-possible-to-know-the-address-of-a-cache-miss/45899495#45899495</a>
+</p>
+
+<p>
+<a href="https://www.brendangregg.com/perf.html#SchedulerAnalysis">https://www.brendangregg.com/perf.html#SchedulerAnalysis</a>
+</p>
+
+<p>
+perf查看内存访问情况
+</p>
+<ul class="org-ul">
+<li>`perf mem record &#x2013; &lt;process&gt;` 对内存访问进行采样</li>
+<li>`perf mem report &#x2013;stdio` 查看每个内存地址的访问频率和延迟</li>
+<li>`perf mem -t load/store report &#x2013;sort=mem &#x2013;stdio` 针对load/store查看内存层次上的次数和延迟</li>
+</ul>
+
+<p>
+perf分析单个线程情况
+</p>
+<ul class="org-ul">
+<li>`perf record -s` 对每个线程分别进行采样</li>
+<li>`perf report -n -T` 对线程进行group by分析</li>
+<li>`perf report -T &#x2013;tid 6607 -n` 针对某个线程进行单独分析</li>
+<li>`perf record -s -e sched:sched_switch -g &#x2013;call-graph dwarf` 对线程切换进行分析（需要存储调用堆栈）</li>
+<li>`perf report -n &#x2013;stdio &#x2013;no-call-graph -T` （然后在阅读的时候把堆栈省略）</li>
+</ul>
+
+<p>
+perf查看cache之间冲突 (<a href="https://joemario.github.io/blog/2016/09/01/c2c-blog/">https://joemario.github.io/blog/2016/09/01/c2c-blog/</a>)
+</p>
+<ul class="org-ul">
+<li>`perf c2c record &#x2013;all-user/-u &#x2013;ldlat 50` 收集用户态的cache冲突，并且load时间超过50cycles才会上报</li>
+<li>TODO: 需要具体场景来使用</li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-org6385fc2" class="outline-2">
+<h2 id="org6385fc2"><span class="section-number-2">3.</span> 常见问题</h2>
+<div class="outline-text-2" id="text-3">
+</div>
+<div id="outline-container-orgc650cea" class="outline-3">
+<h3 id="orgc650cea"><span class="section-number-3">3.1.</span> 确保perf版本和内核版本匹配</h3>
+<div class="outline-text-3" id="text-3-1">
+<pre class="example" id="orgde2d5e8">
+sandbox-sql :: ~/work/run-bench ‹master› » uname -r
+3.10.0-1160.42.2.el7.x86_64
+sandbox-sql :: ~/work/run-bench ‹master› » perf -v
+perf version 3.10.0-1160.42.2.el7.x86_64.debug
+</pre>
+
+<p>
+某些情况下内核会自动升级（可能也是执行了yum update时候触发的），从我的经验来看就会在/boot目录下面产生多个启动配置
+</p>
+
+<pre class="example" id="orgaaa4fbc">
+sandbox-sql :: ~/work/run-bench ‹master› » ls /boot/config-3.10.0-11* -l
+-rw-r--r--  1 root root 153567 Aug 26  2020 /boot/config-3.10.0-1127.19.1.el7.x86_64
+-rw-r--r--. 1 root root 153562 Apr  1  2020 /boot/config-3.10.0-1127.el7.x86_64
+-rw-r--r--  1 root root 153596 Sep  7 22:54 /boot/config-3.10.0-1160.42.2.el7.x86_64
+sandbox-sql :: ~/work/run-bench ‹master› » ls /boot/initramfs-* -l
+-rw-------. 1 root root 58572648 Sep 14  2020 /boot/initramfs-0-rescue-20200914151306980406746494236010.img
+-rw-------  1 root root 17784907 Sep 18 10:54 /boot/initramfs-3.10.0-1127.19.1.el7.x86_64.img
+-rw-------  1 root root 10733878 Sep 14  2020 /boot/initramfs-3.10.0-1127.19.1.el7.x86_64kdump.img
+-rw-------  1 root root 18199672 Sep 14  2020 /boot/initramfs-3.10.0-1127.el7.x86_64.img
+-rw-------  1 root root 10731212 Sep 14  2020 /boot/initramfs-3.10.0-1127.el7.x86_64kdump.img
+-rw-------  1 root root 17785753 Sep 18 10:53 /boot/initramfs-3.10.0-1160.42.2.el7.x86_64.img
+</pre>
+
+<p>
+如果发现内核和perf版本不同的话，那么可能就需要重启机器了，版本不同很多PMU/hardward events就没有办法使用。
+</p>
+
+<p>
+为了避免系统自动更新，可以使用这篇文章的方法 [CentOS 7禁止内核自动更新升级 LiuJason'sBlog](<a href="https://www.liujason.com/article/742.html">https://www.liujason.com/article/742.html</a>) ：
+</p>
+
+<p>
+执行更新的时候加上exclude参数 `sudo yum &#x2013;exclude=kernel* update`
+</p>
+
+<p>
+或者是在 `/etc/yum.conf` 文件里面 [main] section里面增加
+</p>
+
+<pre class="example" id="orged5f192">
+#禁止更新内核
+exclude=kernel*
+# 禁止更新系统
+exclude=centos-release*
+</pre>
+</div>
+</div>
+
+<div id="outline-container-org18ee760" class="outline-3">
+<h3 id="org18ee760"><span class="section-number-3">3.2.</span> 调试perf版本时yum几个命令</h3>
+<div class="outline-text-3" id="text-3-2">
+<p>
+使用所有仓库查看可用的perf
+</p>
+
+<p>
+&gt; yum &#x2013;enablerepo="**" list available perf
+</p>
+
+<p>
+查看不同版本的perf
+</p>
+
+<p>
+&gt; yum &#x2013;enablerepo="**" &#x2013;showduplicates list available perf
+</p>
+
+<p>
+只在某些特定仓库下查找
+</p>
+
+<p>
+&gt; yum &#x2013;enablerepo="centos-kernel,centos-sclo-rh,fasttrack" &#x2013;showduplicates search perf
+</p>
+
+<p>
+列举所有的仓库
+</p>
+
+<p>
+&gt; yum repolist
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgb68ac87" class="outline-3">
+<h3 id="orgb68ac87"><span class="section-number-3">3.3.</span> 反编译和符号解析问题</h3>
+<div class="outline-text-3" id="text-3-3">
+<p>
+最近跑perf想看某个符号的汇编代码总是失败，我想到这个是不是和objdump有关系，因为objdump就是用来做反汇编的。
+</p>
+
+<p>
+用系统自带的objdump出现下面这个错误
+</p>
+
+<pre class="example" id="org6bfd571">
+sandbox-sql :: ~/DorisDB ‹ext-planner-profile› » objdump -d ./output/be/lib/starrocks_be
+objdump: ./output/be/lib/starrocks_be: unable to initialize decompress status for section .debug_aranges
+objdump: ./output/be/lib/starrocks_be: unable to initialize decompress status for section .debug_aranges
+objdump: ./output/be/lib/starrocks_be: File format not recognized
+</pre>
+
+<p>
+google了一下这个问题，发现golang社区也有，<a href="https://github.com/golang/go/issues/42136">https://github.com/golang/go/issues/42136</a> 就是因为使用了低版本的binutils. 然后对于某一类最新编译的section无法解析导致的，升级到bintuils-2.32就能解决这个问题。 <a href="https://centos.pkgs.org/7/centos-sclo-rh-x86_64/devtoolset-9-binutils-2.32-14.el7.x86_64.rpm.html">https://centos.pkgs.org/7/centos-sclo-rh-x86_64/devtoolset-9-binutils-2.32-14.el7.x86_64.rpm.html</a>
+</p>
+
+<ul class="org-ul">
+<li>yum install centos-release-scl-rh</li>
+<li>yum install devtoolset-9-binutils</li>
+</ul>
+
+<pre class="example" id="org1f4771c">
+sandbox-sql :: ~/DorisDB ‹ext-planner-profile› » /opt/rh/devtoolset-9/root/usr/bin/objdump -d ./output/be/lib/starrocks_be &gt; x
+sandbox-sql :: ~/DorisDB ‹ext-planner-profile*› » head x
+
+./output/be/lib/starrocks_be:     file format elf64-x86-64
+
+
+Disassembly of section .plt:
+
+00000000022de000 &lt;JNI_CreateJavaVM@plt-0x10&gt;:
+ 22de000:       ff 35 02 50 38 04       pushq  0x4385002(%rip)        # 6663008 &lt;_GLOBAL_OFFSET_TABLE_+0x8&gt;
+ 22de006:       ff 25 04 50 38 04       jmpq   *0x4385004(%rip)        # 6663010 &lt;_GLOBAL_OFFSET_TABLE_+0x10&gt;
+ 22de00c:       0f 1f 40 00             nopl   0x0(%rax)
+</pre>
+
+<p>
+接着问题就是如何让perf使用这个objdump, 修改一下PATH就好了: `export PATH=/opt/rh/devtoolset-9/root/usr/bin/:$PATH`
+</p>
+</div>
+</div>
+
+<div id="outline-container-orge2f4ded" class="outline-3">
+<h3 id="orge2f4ded"><span class="section-number-3">3.4.</span> flamegraph和perf结果差异</h3>
+<div class="outline-text-3" id="text-3-4">
+<p>
+<a href="http://smalldatum.blogspot.com/2022/04/i-previously-wrote-about-generating.html">http://smalldatum.blogspot.com/2022/04/i-previously-wrote-about-generating.html</a>
+</p>
+
+<p>
+<a href="https://github.com/brendangregg/FlameGraph/issues/165">https://github.com/brendangregg/FlameGraph/issues/165</a>
+</p>
+
+<p>
+目前flamegraph在解析-F的时候，没有把sample period考虑进去，所以导致flamegraph和perf report结果是不一致的。
+</p>
+
+<p>
+这个区别至今不是特别理解，总之就是如果在解释的时候出现什么问题的话，可以考虑使用-c而不是-F重新进行profile
+</p>
+</div>
+</div>
+</div>
+</div>
+<div id="content"><!-- DISQUS BEGIN --><div id="disqus_thread"></div><script>/***  RECOMMENDED CONFIGURATION VARIABLES: EDIT AND UNCOMMENT THE SECTION BELOW TO INSERT DYNAMIC VALUES FROM YOUR PLATFORM OR CMS.*  LEARN WHY DEFINING THESE VARIABLES IS IMPORTANT: https://disqus.com/admin/universalcode/#configuration-variables*/var disqus_config = function () {this.page.url = 'https://dirtysalt.github.io/html/linux-perf.html';this.page.identifier = 'linux-perf.html';};(function() {var d = document, s = d.createElement('script');s.src = 'https://dirlt.disqus.com/embed.js';s.setAttribute('data-timestamp', +new Date());(d.head || d.body).appendChild(s);})();</script><noscript>Please enable JavaScript to view the <a href="https://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript><!-- DISQUS END --></div></body>
+</html>

@@ -1,0 +1,159 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Binary Indexed Tree(Fenwick Tree)</title>
+<meta name="author" content="dirtysalt" />
+<meta name="generator" content="Org Mode" />
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content" class="content">
+<h1 class="title">Binary Indexed Tree(Fenwick Tree)</h1>
+<p>
+<a href="https://www.geeksforgeeks.org/binary-indexed-tree-or-fenwick-tree-2/">https://www.geeksforgeeks.org/binary-indexed-tree-or-fenwick-tree-2/</a>
+</p>
+
+<p>
+首先需要了解负数的二进制表示：负数的二进制表示是取反然后+1
+</p>
+
+<div class="org-src-container">
+<pre class="src src-Python">def binstr(x):
+    ss = []
+    for i in range(32):
+        ss.append((x &gt;&gt; i) &amp; 0x1)
+    ss = ss[::-1]
+    return ''.join(map(str, ss))
+
+for x in range(10, 16, 2):
+    print('bin({:&gt;4s}) = {}'.format(str(x), binstr(x)))
+    y = -x
+    print('bin({:&gt;4s}) = {}'.format(str(y), binstr(y)))
+
+bin(  10) = 00000000000000000000000000001010
+bin( -10) = 11111111111111111111111111110110
+bin(  12) = 00000000000000000000000000001100
+bin( -12) = 11111111111111111111111111110100
+bin(  14) = 00000000000000000000000000001110
+bin( -14) = 11111111111111111111111111110010
+</pre>
+</div>
+
+<p>
+然后了解一下index &amp; (-index) 这个操作的含义：找到lsb（找到最低位置的1）
+</p>
+
+<div class="org-src-container">
+<pre class="src src-Python">print(12 &amp; (-12))
+print(binstr(12))
+
+4
+00000000000000000000000000001100
+</pre>
+</div>
+
+<p>
+最下面图里面给出的 i &amp; -i 的操作解释很好：
+</p>
+<ol class="org-ol">
+<li>假设i = a 1 0k 的话</li>
+<li>~i = (~a) 0 1k</li>
+<li>-i = (~a) 1 0k</li>
+<li>i &amp; -i = 1 0 0k</li>
+</ol>
+
+<hr />
+
+<p>
+UPDATE@201809: 最下面的配图可能有助于理解这棵树的组织
+</p>
+
+<p>
+Binary Indexed Tree实际上进行分段存储，每段长度都是2 ** k - 1，每段里面可以继续拆分：
+</p>
+
+<p>
+以31为例：31 = 16 + 8 + 4 + 2 + 1. 那么可以分为五段：
+</p>
+<pre class="example" id="org0c0a6af">
+1. B[16] = nums[1] + … nums[16]
+2. B[24] = nums[17] + … nums[24]
+3. B[28] = nums[25] + … nums[28]
+4. B[30] = nums[29] + nums[30]
+5. B[31] = nums[31]
+</pre>
+<p>
+这个过程就是不断地 index -= (index &amp; -index).
+</p>
+
+<p>
+然后考虑一下对于nums[index]可能会影响到哪些B呢？假设len(nums) == 32, index = 29. 从上面例子看到
+</p>
+<pre class="example" id="org37e007c">
+1. B[30] = nums[29] + nums[30]
+2. B[32] = nums[1] + … nums[32]
+</pre>
+<p>
+所以这个过程和上面相反，index += (index &amp; -index).
+</p>
+
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-comment-delimiter">/*            </span><span class="org-comment">n  --&gt; No. of elements present in input array.</span>
+<span class="org-comment">    BITree[0..n] --&gt; Array that represents Binary Indexed Tree.</span>
+<span class="org-comment">    arr[0..n-1]  --&gt; Input array for whic prefix sum is evaluated.</span><span class="org-comment-delimiter"> */</span>
+
+<span class="org-comment-delimiter">// </span><span class="org-comment">Returns sum of arr[0..index]. This function assumes</span>
+<span class="org-comment-delimiter">// </span><span class="org-comment">that the array is preprocessed and partial sums of</span>
+<span class="org-comment-delimiter">// </span><span class="org-comment">array elements are stored in BITree[].</span>
+<span class="org-type">int</span> <span class="org-function-name">getSum</span>(<span class="org-type">int</span> <span class="org-variable-name">BITree</span>[], <span class="org-type">int</span> <span class="org-variable-name">index</span>)
+{
+    <span class="org-type">int</span> <span class="org-variable-name">sum</span> = 0; <span class="org-comment-delimiter">// </span><span class="org-comment">Iniialize result</span>
+
+    <span class="org-comment-delimiter">// </span><span class="org-comment">index in BITree[] is 1 more than the index in arr[]</span>
+    index = index + 1;
+
+    <span class="org-comment-delimiter">// </span><span class="org-comment">Traverse ancestors of BITree[index]</span>
+    <span class="org-keyword">while</span> (index&gt;0)
+    {
+        <span class="org-comment-delimiter">// </span><span class="org-comment">Add current element of BITree to sum</span>
+        sum += BITree[index];
+
+        <span class="org-comment-delimiter">// </span><span class="org-comment">Move index to parent node in getSum View</span>
+        index -= index &amp; (-index);
+    }
+    <span class="org-keyword">return</span> sum;
+}
+
+<span class="org-comment-delimiter">// </span><span class="org-comment">Updates a node in Binary Index Tree (BITree) at given index</span>
+<span class="org-comment-delimiter">// </span><span class="org-comment">in BITree.  The given value 'val' is added to BITree[i] and</span>
+<span class="org-comment-delimiter">// </span><span class="org-comment">all of its ancestors in tree.</span>
+<span class="org-type">void</span> <span class="org-function-name">updateBIT</span>(<span class="org-type">int</span> <span class="org-variable-name">BITree</span>[], <span class="org-type">int</span> <span class="org-variable-name">n</span>, <span class="org-type">int</span> <span class="org-variable-name">index</span>, <span class="org-type">int</span> <span class="org-variable-name">val</span>)
+{
+    <span class="org-comment-delimiter">// </span><span class="org-comment">index in BITree[] is 1 more than the index in arr[]</span>
+    index = index + 1;
+
+    <span class="org-comment-delimiter">// </span><span class="org-comment">Traverse all ancestors and add 'val'</span>
+    <span class="org-keyword">while</span> (index &lt;= n)
+    {
+       <span class="org-comment-delimiter">// </span><span class="org-comment">Add 'val' to current node of BI Tree</span>
+       BITree[index] += val;
+
+       <span class="org-comment-delimiter">// </span><span class="org-comment">Update index to that of parent in update View</span>
+       index += index &amp; (-index);
+    }
+}
+</pre>
+</div>
+
+
+
+<div id="org565f9a0" class="figure">
+<p><img src="../images/fenwick-tree-explained.jpg" alt="fenwick-tree-explained.jpg" />
+</p>
+</div>
+</div>
+<div id="content"><!-- DISQUS BEGIN --><div id="disqus_thread"></div><script>/***  RECOMMENDED CONFIGURATION VARIABLES: EDIT AND UNCOMMENT THE SECTION BELOW TO INSERT DYNAMIC VALUES FROM YOUR PLATFORM OR CMS.*  LEARN WHY DEFINING THESE VARIABLES IS IMPORTANT: https://disqus.com/admin/universalcode/#configuration-variables*/var disqus_config = function () {this.page.url = 'https://dirtysalt.github.io/html/binary-indexed-tree.html';this.page.identifier = 'binary-indexed-tree.html';};(function() {var d = document, s = d.createElement('script');s.src = 'https://dirlt.disqus.com/embed.js';s.setAttribute('data-timestamp', +new Date());(d.head || d.body).appendChild(s);})();</script><noscript>Please enable JavaScript to view the <a href="https://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript><!-- DISQUS END --></div></body>
+</html>

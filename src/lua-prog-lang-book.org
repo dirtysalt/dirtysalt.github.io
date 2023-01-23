@@ -1,0 +1,985 @@
+#+title: Lua程序设计
+
+** 第一部分 基本语法(C1-C10)
+
+*** 类型，表达式，语句
+Lua有8种基础类型，通过函数 `type` 来了解具体类型
+1. nil(无效值)
+2. boolean(true/false)
+3. number(整数或者是双精度浮点)
+4. string
+5. userdata(自定义类型)
+6. function
+7. thread(线程)
+8. table
+
+如果要写入长字符串的话，可以使用下面这种格式.
+#+BEGIN_SRC Lua
+s = [[this is a very long string.
+could be multiple lines]]
+#+END_SRC
+
+获得字符串长度以及table的大小，都可以使用 `#var` 这样的写法。
+
+table既可以认为是一个dict, 也可以认为是array, 这点和Javascript很像。
+作为字典的话可以可以使用类似属性的方式 `a.x = 10; a["x"] = 10 ` 进行访问。
+此外Javascript也只有数字类型而不区分整形和浮点。需要注意的是lua数组通常以1作为起始索引。
+
+有两个方法可以用来编译表格: ipairs和pairs. 其中ipairs从1开始遍历知道data[i] = nil结束，
+而pairs则是真正遍历里面所有的keys.
+#+BEGIN_SRC Lua
+printf = function(s, ...) return io.write(string.format(s,...)); end
+a = {[1] = 10, [2] = 20, [10] = 10, x = 30, y = 40}
+print("using ipairs to iterate")
+for i, v in ipairs(a) do
+   printf("i = %d, v = %d\n", i, v);
+end
+print("using pairs to iterate")
+for k in pairs(a) do
+   print("k = " .. k);
+end
+print(#a)
+
+-- [[
+➜  playbook lua test.lua
+using ipairs to iterate
+i = 1, v = 10
+i = 2, v = 20
+using pairs to iterate
+k = x
+k = 1
+k = 2
+k = 10
+k = y
+2
+-- ]]
+#+END_SRC
+
+table constructor(table构造式）很有趣，同时兼容key/value和array的构造。
+#+BEGIN_SRC lua
+days = {'Sun', 'Mon', 'Tue'} -- 数组构造，下标从1开始
+point = {x = 10, y = 20} -- 字典构造
+days_and_point = {'Sun', 'Mon', 'Tue', x = 10, y = 20} -- 混合构造，毕竟数组下标只是一个key而已
+
+-- 此外支持表达式做key. {[expr] = value}
+days = {["*"] = mul} -- days["*"] 来引用
+days = {[ 0 ] = 20} -- days[0] 来引用
+#+END_SRC
+
+多变量赋值时，如果没有匹配上的话，那么剩余的变量自动匹配到 nil. 多余的自动忽略。
+或者是如果直接声明 `local a` 的话，那么 `a` 的默认值也是 nil. 整个lua环境对 nil 有非常特殊的处理。
+
+块(block)(通常是do-end部分）是规定了local(局部)变量的作用范围。常见控制结构有
+- if then(else/elseif) end
+- while do ... end
+- repeat ... until
+- for var=exp1, exp2, exp3 do ... end(数字型for, numeric for)
+  - 如果exp2很大的话可以用 `math.huge` 来表示无线循环
+  - `var` 作用域仅限于这个block，不要对 `var` 做任何赋值
+  - 例子： for i=1,10,2 do; print(i); end;
+- for var1, var2 in func do ... end(泛型for, generic for) 这个在上面ipairs和pairs例子使用到了。
+- break和return必须是block的最后一条语句。所以如果想提前返回的话，那么可以把break/return包装在 do .. end 中间另起一个block.
+
+*** 函数/深入函数
+函数调用形参和实参的绑定和多变量赋值很像：如果实参不够，那么以nil代替；如果实参太多，那么就被丢弃。
+#+BEGIN_SRC lua
+function hello(a, b)
+   print("a = " .. tostring(a) .. ", b = " .. tostring(b))
+end
+
+hello(10)
+hello(10, 20)
+hello(10, 20, 30)
+
+-- [[
+> dofile("test.lua")
+a = 10, b = nil
+a = 10, b = 20
+a = 10, b = 20
+-- ]]
+#+END_SRC
+
+lua的函数定义和scheme很像，默认地都是匿名函数，至于 `function a()` 不过是 `a = function()` 这种语法糖形式。
+
+函数调用中比较有意思的是，如果只有一个参数并且该参数是字符串或者是table构造式的话，可以省略 `()`. 这样的话写出来就非常漂亮。
+#+BEGIN_SRC Lua
+print 'hello, world'
+a, b = table.unpack{10, 20}
+print(a, b)
+#+END_SRC
+
+多值和列表/元组本身还是存在一定差异的，虽然他们逻辑结构类似。比如我们可以直接将多值传入函数作为参数，这和传入列表/元组到函数是不同的。
+我们可以用 `table.unpack` 函数将列表拆分成为多值，然后传入到函数。这里我们模拟 `table.unpack` 给出了一个自己的unpack实现.
+#+BEGIN_SRC lua
+function hello(a, b)
+   print("a = " .. tostring(a) .. ", b = " .. tostring(b))
+end
+
+-- 一种table.unpack的实现方法
+function unpack(t, i)
+   -- 如果没有那么多参数的话，那么i=nil
+   i = i or 1
+   if t[i] then
+      return t[i], unpack(t, i+1)
+   end
+end
+params = {10, 20}
+hello(params)
+hello(unpack(params))
+#+END_SRC
+
+变长参数在C语言里面需要花费很大的力气才能解开，但是lua里面使用却很容易。`...` 都被复制给了arg, 其中arg.n表示参数个数
+#+BEGIN_SRC lua
+
+function test_vargs(a, b, ...)
+   print('a = ' .. a .. " , b = " .. b)
+   for i = 1, select('#', ...) do
+      print('varg #' .. i .. " = " .. select(i, ...))
+   end
+end
+test_vargs(10,20, table.unpack{30, 40 , 50})
+
+-- [[ arg是一个空table. 没有绑定到...上. 非常奇怪
+function test_vargs(a, b, ...)
+   print('a = ' .. a .. " , b = " .. b)
+   for i, v in ipairs(arg) do
+      print('varg #' .. i .. " = " .. v)
+   end
+end
+-- ]]
+
+#+END_SRC
+
+Lua本身并不支持具名实参 `named arguments`. 但是有个workaround, 就是传入table/字典
+#+BEGIN_SRC Lua
+function get_named_args(args)
+   keys = {"height", "width", "depth"}
+   for i, k in ipairs(keys) do
+      local arg = args[k]
+      print(k .. ' = ' .. arg)
+   end
+end
+get_named_args({height = 100, width = 200, depth = 50})
+#+END_SRC
+
+table.sort支持对table进行排序，可以传入一个匿名参数比较两个key. 对于数组默认就是升序排序。
+#+BEGIN_SRC lua
+nums = {5,4,3,2,1}
+table.sort(nums, function(a,b)
+              return a < b
+end)
+for i, v in ipairs(nums) do
+   print(v)
+end
+#+END_SRC
+
+变量可以是局部的，那么函数也可以是局部的。局部函数有一些限制，但是可以通过提前声明来解决
+#+BEGIN_SRC lua
+do
+   local fact;
+   fact = function(n)
+         if (n == 0) then
+            return 1
+         end
+         return n * fact(n-1)
+   end
+
+   print(fact(10))
+end
+#+END_SRC
+
+*** 迭代器与泛型for
+泛型for的执行过程如下：
+
+#+BEGIN_QUOTE
+下面我们看看范性for的执行过程：
+
+- 首先，初始化，计算in后面表达式的值，表达式应该返回范性for需要的三个值：迭代函数，状态常量和控制变量；与多值赋值一样，如果表达式返回的结果个数不足三个会自动用nil补足，多出部分会被忽略。
+- 第二，将状态常量和控制变量作为参数调用迭代函数（注意：对于for结构来说，状态常量没有用处，仅仅在初始化时获取他的值并传递给迭代函数）。
+- 第三，将迭代函数返回的值赋给变量列表。
+- 第四，如果返回的第一个值为nil循环结束，否则执行循环体。
+- 第五，回到第二步再次调用迭代函数。
+#+END_QUOTE
+
+#+BEGIN_SRC lua
+for var_1, ..., var_n in explist do block end
+
+-- 等价于下面这样的形式
+
+do
+  local _f, _s, _var = explist
+  while true do
+    local var_1, ... , var_n = _f(_s, _var)
+    _var = var_1
+    if _var == nil then break end
+    block
+  end
+end
+#+END_SRC
+
+可以看到我们有几个东西可以控制：
+1. f. 生成函数，根据s, var来产生新的值
+2. s. 状态，这个需要在生成函数里面更新。尽可能地不要涉及状态。
+3. var. var1比较特殊，会进行生成函数，其他value则只用于访问数据。var1可以用来做简单的状态控制，比s这种类似table代价要小。
+
+基本上这种迭代器都可以通过闭包和状态变量控制搞定，除非是复杂的状态机需要维持一个s. 下面是ipairs和values的实现，
+其中ipairs把这几个东西都用上了，而values只使用了最简单的闭包。
+
+#+BEGIN_SRC lua
+function values(t)
+   local i = 0
+   return function()
+      i = i + 1
+      return t[i]
+   end
+end
+
+function my_ipairs(t)
+   local iter = function(t, i)
+      i = i + 1
+      if t[i] then
+         return i, t[i]
+      end
+   end
+   return iter, t, 0
+end
+
+print('========== values ==========')
+for v in values({10, 20, 30, 40}) do
+   print(v)
+end
+print('========== my_ipairs ==========')
+for i, v in my_ipairs({10, 20, 30, 40}) do
+   print(i, v)
+end
+#+END_SRC
+
+*** 编译执行与错误
+`loadstring`可以载入外部代码，`loadfile`可以载入代码文件。两者都会编译代码，并且返回local function对象。
+只有执行这个function对象代码才会变真正执行，在执行的时候也是可以传入参数（但是这个参数可能只能通过比较特殊手段拿到）
+
+`dofile` 执行的是 `f = loadfile(file_path); f() `，所以每次都会去编译代码文件。
+
+`require` 函数用于导入模块，类似python里面的import语句。模块查找路径是由环境变量LUA_PATH控制的。
+
+#+BEGIN_SRC lua
+f = loadstring("i = i + 1")
+
+-- 等价于下面的形式
+
+f = function() i = i + 1 end
+#+END_SRC
+
+这样得到的local function只能访问到两处的变量：1. 全局变量 2. local function内部变量。所以它不是通常意义上的词法作用域(lexical scoping).
+
+#+BEGIN_SRC lua
+i = 10
+
+function f()
+   local i = 20
+
+   f2 = loadfile("test2.lua") -- i = i + 1
+   f2()
+
+   print("f.i = " .. i)
+end
+
+f()
+print("global i = " .. i)
+
+-- [[ 结果如下
+
+➜  playbook lua test.lua
+f.i = 20
+global i = 11
+
+-- ]]
+#+END_SRC
+
+`package.loadlib`可以载入C代码（动态加载）。这个函数不是标准ANSI C的实现，但是因为这个函数太重要的，所以lua在每个平台上都有特定实现。
+同样这个函数只是将动态库加载进来（需要传入动态库路径和初始化函数名称），返回一个function对象。
+
+下面几个函数涉及到错误处理：
+- `errro("error message")` 汇报错误；（产生异常）
+- `assert` 做断言；
+- `pcall`可以在保护模式(protected mode下面)调用函数，分别(true, value) | (nil, error)；（捕捉异常）
+- `xpcall` 传入调用函数和错误处理函数
+- `debug.traceback` 可以打印出错堆栈
+
+下面的代码把这几个函数都串起来了
+
+#+BEGIN_SRC lua
+printf=function (fmt, ...) print(string.format(fmt, ...)) end
+
+function my_func(v)
+   if v == 10 then
+      error("value == 10")
+   else
+      return "good"
+   end
+end
+
+function test_pcall()
+   print("========== test_pcall ==========")
+   local bad_func = function ()
+      print('calling bad_func')
+      return my_func(10)
+   end
+   local good_func = function ()
+      print('calling good_func')
+      return my_func(20)
+   end
+
+   local status, err = pcall(bad_func)
+   printf("status = %s, err = '%s'", tostring(status), tostring(err))
+
+   local status, value = pcall(good_func)
+   printf("status = %s, value = %s", tostring(status), tostring(value))
+end
+
+function test_xpcall()
+   print("========== test_xpcall ==========")
+   local bad_func = function ()
+      print('calling bad_func')
+      return my_func(10)
+   end
+   local good_func = function ()
+      print('calling good_func')
+      return my_func(20)
+   end
+   local on_failed_fn = function(err)
+      printf("on failed. err = '%s'", tostring(err))
+      print(debug.traceback())
+   end
+
+   xpcall(bad_func, on_failed_fn)
+   xpcall(good_func, on_failed_fn)
+end
+
+test_pcall()
+test_xpcall()
+
+-- [[ output
+➜  playbook lua test.lua
+========== test_pcall ==========
+calling bad_func
+status = false, err = 'test.lua:5: value == 10'
+calling good_func
+status = true, value = good
+========== test_xpcall ==========
+calling bad_func
+on failed. err = 'test.lua:5: value == 10'
+stack traceback:
+	test.lua:41: in function <test.lua:39>
+	[C]: in function 'error'
+	test.lua:5: in function 'my_func'
+	(...tail calls...)
+	[C]: in function 'xpcall'
+	test.lua:44: in function 'test_xpcall'
+	test.lua:49: in main chunk
+	[C]: in ?
+calling good_func
+-- ]]
+#+END_SRC
+
+
+*** 协同程序(coroutine)
+coroutine的几个相关操作
+- co = coroutine.create(func)
+- coroutine.resume(co, ...) 让co继续执行
+  - 初始阶段传入参数，被传入 `func`
+  - 返回值(ok, `yield` 传入的参数)
+- coroutine.yield 传入的参数被 `resume` 返回，只能在co里面调用
+- coroutine.status 查询co的状态
+  - suspended 挂起
+  - running 运行
+  - dead 死亡
+  - normal 正常
+
+lua coroutine应该是stackful coroutine, coroutine.yield只能返回caller. stackless coroutine
+则更具有灵活性，能够yield到任何其他coroutine上面。但是我没有想到有什么场景是一定需要stackless而非stackful的。
+
+书里面producer/consumer的例子改写成为coroutine方式如下。我稍微改动了一些代码为了更好地理解coroutine.
+为了能让"quit"能最后一次回显，producer不能立即退出，必须等待consumer再次请求，并且上次command=="quit"的时候才能退出。
+#+BEGIN_SRC lua
+
+producer = coroutine.create(
+   function()
+      local send = function(x)
+         last_command = coroutine.yield(x)
+         return last_command
+      end
+
+      while true do
+         local x = io.read()
+         last_command = send(x)
+         if last_command == 'quit' then
+            break
+         end
+      end
+   end
+)
+
+function consumer()
+   local last_command = nil
+
+   local receive = function(x)
+      local status, value = coroutine.resume(producer, last_command)
+      last_command = value
+      return value
+   end
+
+   while true do
+      local x = receive()
+      if x == nil then
+         break
+      end
+      io.write("ECHO ", x, "\n")
+   end
+   assert(last_command == nil)
+end
+
+consumer()
+#+END_SRC
+
+** 第二部分 运行环境(C11~C17)
+
+*** 数据结构/数据文件与持久化
+lua在函数单参数调用的时候不要求加上(), 这样可以非常适合DSL，比如类似BibTex这样的格式。
+我们在外部定义好环境（函数），然后就可以使用 dofile 函数将数据直接载入进来。
+
+#+BEGIN_SRC lua
+-- main.lua
+function Entry(t)
+   fields = {"author", "book_name", "publisher", "year"}
+   print("----- Entry -----")
+   for i, v in ipairs(fields) do
+      print(string.format("%s = %s", v, tostring(t[i])))
+   end
+end
+
+dofile("datafile")
+
+
+-- datafile
+
+Entry{"Donald E. Knuth",
+"Literate Programming",
+"CSLI",
+1992}
+
+Entry{"Jon Bentley",
+"More Programming Pearls",
+"Addison-Wesley",
+1990}
+
+
+-- [[ output
+➜  playbook lua test.lua
+----- Entry -----
+author = Donald E. Knuth
+book_name = Literate Programming
+publisher = CSLI
+year = 1992
+----- Entry -----
+author = Jon Bentley
+book_name = More Programming Pearls
+publisher = Addison-Wesley
+year = 1990
+-- ]]
+#+END_SRC
+
+*** 元表和元方法
+元表(metatable)本质上是一个table，我们可以在这个table里面设置，然后来影响和扩展使用这个metatable的table的行为。
+在Lua代码里面只能设置table的metatable, 其他类型的metatable的设置只能在C代码里面完成。
+
+下面代码片段说明了metatable的使用
+- `_m` 是 `make_obj`里面对象o的metatable
+- __tostring 函数影响到如何输出这个对象
+- __add 函数影响到如何叠加两个对象
+- __index 函数影响到如何查找某个不断在的字段
+- rawget 可以不理会 __index 这个函数, rawset 可以不理会 __newindex这个函数.
+
+因为 __index 使用非常频繁，所以lua允许 __index还可以是一个table对象。如果是table对象而非函数的话，那么直接在这个table对象里面查找。
+
+除了 __index 之外，还有个 __newindex 函数是影响如果某个字段不存在，如何给这个字段赋值。所以可以结合 __index 和 __newindex 两个函数，来实现追踪table的读写。
+
+#+BEGIN_SRC Lua
+local _m = {
+   __tostring = function ()
+      return o.c
+   end,
+   __add = function (a, b)
+      return a.c + b.c
+   end,
+   __index = function (t, k)
+      -- t是调用对象，而非metatable
+      print(t == obj1, t == obj2, t == _m)
+      print('request key = ' .. k)
+      if k == 'e' then
+         return 10
+      else
+         return 20
+      end
+   end
+}
+
+local function make_obj(c)
+   o = {c = c}
+   setmetatable(o, _m)
+   return o
+end
+
+local function inspect_obj(o)
+   for k,v in pairs(o) do
+      print('key = ' .. k .. ', value = ' .. v)
+   end
+end
+
+obj1 = make_obj(10)
+obj2 = make_obj(20)
+print(obj1 + obj2)
+
+inspect_obj(obj1)
+print(obj1.e, obj1.f)
+print(rawget(obj1, 'e'), rawget(obj1, 'c'))
+
+-- [[ output
+➜  workspace lua test.lua
+30
+key = c, value = 10
+true	false	false
+request key = e
+true	false	false
+request key = f
+10	20
+nil	10
+-- ]]
+#+END_SRC
+
+这里我在摘抄两个书里面的代码片段，一个是实现Set数据结构，一个是实现代理类（可以监控字段的读写）。因为我觉得这两个例子里面有点启发性。
+
+Set数据结构的启发性是：
+- 任何数据结构类型是一个表，里面包含类字段，以及mt(表示metatable)
+- 在new方法里面创建另外一个实例表
+- 在实例表里面设置metatable，设置为类里面的mt字段
+- 这样所有实例的 getmetatable(t) == cls.mt
+
+#+BEGIN_SRC lua
+Set = {} -- 数据结构类
+Set.mt = {} -- 类的metatable
+-- 类字段
+Set.version = "1.0.0"
+Set.name = "yan"
+
+function Set.new(t)
+   local inst = {}
+   for i, v in ipairs(t) do
+      inst[v] = true
+   end
+   setmetatable(inst, Set.mt)
+   return inst
+end
+
+Set.mt.__tostring = function (obj)
+   local tmp = {}
+   for k in pairs(obj) do
+      table.insert(tmp, k)
+   end
+   return "{" .. table.concat(tmp, ",") .. "}"
+end
+
+Set.mt.__add = function(a, b)
+   local tmp = Set.new({})
+   assert (getmetatable(a) == Set.mt)
+   assert (getmetatable(b) == Set.mt)
+   for k in pairs(a) do
+      tmp[k] = true
+   end
+   for k in pairs(b) do
+      tmp[k] = true
+   end
+   return tmp
+end
+
+a = Set.new({1,2,3,4})
+b = Set.new({5,6,7})
+print("a = " .. tostring(a))
+print("b = " .. tostring(b))
+c = a + b
+print("c = " .. tostring(c))
+#+END_SRC
+
+代理类(proxy)的启发性是，任何对象都可以作为table的key，另外这个代理类也非常容易使用
+
+#+BEGIN_SRC lua
+local pk = function () end -- 使用函数对象可以作为key.
+-- local pk = {} -- 或者是空表（空表地址）
+
+function track(t)
+   local proxy = {}
+   proxy[pk] = t
+   setmetatable(proxy, mt)
+   return proxy
+end
+
+mt = {
+   __index = function(proxy, k)
+      t = proxy[pk]
+      print(string.format("access table %s field %s ...", tostring(t), tostring(k)))
+      return t[k]
+   end
+}
+
+
+t = { a= 10, b = 20}
+pt = track(t)
+print(pt.a)
+for k in pairs(pt) do
+   print(k)
+end
+
+-- [[ 扫描下面所有的keys的话，这个pk还是可以看到的
+> dofile("test.lua")
+access table table: 0x7fc62c407030 field a ...
+10
+function: 0x7fc62c402bd0
+-- ]]
+#+END_SRC
+
+*** 环境
+Lua所有的全局变量都保存在一个table里面，这个table称为环境(environment). 可以使用 `_G` 来获得环境。结合上面元表(metatable)和元方法(metamethod), 可以做蛮多事情的。
+
+此外我们还可以使用 `setfenv(current_stack, env)` 来改变执行函数的环境，其中current_stack=1表示当前函数，2表示上一层函数，以此类推。另外current_stack还可以传递函数对象，
+这样在执行函数的时候会使用到这个环境。
+
+*** 模块与包
+模块可以通过 `require` 来加载。加载模块会有返回值，这个由模块来定义的，通常返回的是一个table.
+
+加载模块搜索路径存放在 `package.path` 里面，这个路径可以通过 LUA_PATH 环境变量控制。当loader没有办法找到对应Lua模块的时候，会去寻找C模块。
+C模块对应的路径分别是 `package.cpath` 和 `LUA_CPATH`.
+
+一旦模块加载上来后，就会在 `package.loaded` 里面创建一个条目，之后再遇到 `require` 的话就从这里面读取。所以如果希望重新加载的话，可以将里面条目置nil.
+
+模块在编写上有许多技巧，似乎都比较复杂。下面我汇编了个可以work的boilerplate (copy from [[https://moonbingbing.gitbooks.io/openresty-best-practices/lua/not_use_module.html][here]])
+#+BEGIN_SRC lua
+-- /usr/bin/env lua
+-- coding:utf-8
+-- Copyright (C) dirlt
+
+local _M = {}           -- 局部的变量
+_M._VERSION = '1.0'     -- 模块版本
+
+local mt = { __index = _M }
+
+function _M.new(self, width, height)
+    return setmetatable({ width=width, height=height }, mt)
+end
+
+function _M.get_square(self)
+    return self.width * self.height
+end
+
+function _M.get_circumference(self)
+    return (self.width + self.height) * 2
+end
+
+return _M
+#+END_SRC
+
+在调用的时候如下
+#+BEGIN_SRC lua
+local rect = require 'kv' -- 上面module命名为kv.lua
+
+obj = rect:new(10, 20)
+print(obj:get_square(), obj:get_circumference())
+
+for k in pairs(obj) do
+   print(k)
+end
+#+END_SRC
+
+*** 面向对象编程
+为了方便对象引用，lua引入一个新语法 `:`，实际上是一个语法糖 `a:method(x, y, z)` =  `a.method(a, x, y z)`。在函数体内可以使用 `self` 关键字引用到调用对象。
+
+下面是书中Account(账号)实现代码：
+- Account 是个类(class)，字段 `balance` 默认值是0
+- `account` 是个对象(instance), `new`出来的时候并没有`balance`字段
+- 第一次调用 `add_balance` 的时候，`account` 对象里面才创建了 `balance` 对象
+
+#+BEGIN_SRC lua
+Account = {balance = 0}
+
+function Account:new (o) -- same as Account.new(self, o), self = Account
+  o = o or {}
+  setmetatable(o, self)
+  self.__index = self -- 这样可以找到类字段
+  return o
+end
+
+function Account:add_balance(value)
+   self.balance = self.balance + value
+   return self
+end
+
+account = Account:new()
+print(rawget(account, 'balance'), account.balance) -- nil, 0
+account:add_balance(10)
+account:add_balance(20)
+print(account.balance)
+#+END_SRC
+
+实现SubAccount继承于Account. 在 SubAccount:new 函数里面注意：
+- setmetatable(o, SubAccount)
+- SubAccount.__index= SubAccount
+所以使用self好处就是，子类继承并且调用方法的时候，self可以替换成为子类。
+
+#+BEGIN_SRC lua
+SubAccount = Account:new()
+
+function SubAccount:add_level(value)
+   self.level = self.level + value
+   return self
+end
+
+sub_account = SubAccount:new({level = 10})
+sub_account:add_balance(10)
+sub_account:add_level(50)
+print(sub_account.balance, sub_account.level)
+#+END_SRC
+
+如果是多重继承的话，需要修改 `setmetatable(o, self)` 这段代码，需要传入所有的parent class, 然后在`__index`里面查找所有parent class.
+书里面给了例子，我觉得写起来还挺有技巧性的，所以复制一份代码放在这里。
+#+BEGIN_SRC Lua
+local function search(k, plist)
+   for i = 1, #plist do
+      local v = plist[i][k]
+      if v then return v end
+   end
+end
+
+function createClass(...)
+   local c = {}
+   local parents = { ... }
+   setmetatable(c, {__index = function(t, k)
+                       return search(k, parents)
+   end})
+   c.__index = c
+
+   function c:new(o)
+      o = o or {}
+      setmetatable(o, c)
+      return o
+   end
+   return c
+end
+#+END_SRC
+
+*** 弱引用table(weak table)
+一个table里面所有的keys和values都是存在引用的，所以它们永远都不会被释放（除非这个table被释放了）。但是如果这些key, value只是对外界对象的引用，
+而table本身并不关心这些key, value的存在与否（或者它只是一个lookup结构的话），那么就可以将table设置成为weak table.
+
+注意弱引用仅仅对于table/function有用，对于number/string是没有用的。你可以认为1, "hello"这样的对象永远不会被GC.
+
+将普通的table变成弱引用table的方式是修改metatable. `{__mode = 'k'}` 说明key是弱引用， `{__mode = 'v'}` 说明value是弱引用, 'kv'的话说明就是key,value弱引用。
+弱引用的效果是：如果弱引用的对象在外部没有引用的话，那么这key/value就会从这个table里面删除。以下面代码为例
+
+#+BEGIN_SRC lua
+t = {}
+mt = getmetatable(t)
+if mt == nil then
+   mt = {}
+   setmetatable(t, mt)
+end
+mt.__mode = "k" -- 设置成为弱引用
+
+key = function() end
+t[key] = 10
+
+key = function() end -- 原来的key被gc, 所以(key, 10)这个entry会被删除
+t[key] = 20
+
+-- 现在还有两个entries.
+print('===== before gc =====')
+for k in pairs(t) do; print(k, t[k]); end
+
+print('===== after gc =====')
+collectgarbage()
+-- 现在只有(key, 20)这个entry
+for k in pairs(t) do; print(k, t[k]); end
+#+END_SRC
+
+书里面给了两个weak table使用的场景：
+1. 记忆函数(memoiziation). 如果value对象不再被引用，那么我们可以从table里面释放掉。那么我们可以设置table为weak value table.
+2. 关联对象属性. 我们想知道某个对象的属性，比如数组长度等。这些属性是和对象关联起来的，一旦对象释放，我们也没有必要保留这些属性。
+所以我们可以设置table为weak key table. 其中key为关联对象，value为关联属性。
+
+** 第三部分 标准库(C18~C23)
+
+Lua各种库的使用方法。书里面介绍了下面这些库
+- 数学库 math
+- 表格库 table
+- 字符串库 string
+- IO库 io
+- 操作系统库 os
+- 调试库 debug
+
+最后这个调试库debug比较有意思。这个库并没有提供一个Lua调试器，只是提供了一些primitives, 使用这些primitives可以来完成调试功能。primitives可以分为两类:
+1. 自省函数(introspective function).
+   - 调用调试库的栈层stack level = 1
+   - `debug.getinfo`, 某个栈层的函数信息
+   - `debug.getlocal` 某个栈层的局部变量
+   - `debug.getupvalue` 某个函数的非局部变量(closure里面包含的变量)
+2. 钩子(hook).
+   - 在函数调用和返回处会调用钩子函数
+   - `debug.sethook` 参数包括回调函数，监控事件，以及可选数字指定多久获得一次事件
+
+注意这些primitives的性能并不高，Lua以一种不会影响程序正确执行的方式来保存调试信息而已。所以在production环境下面这些调试语句最好需要去除掉。
+
+** 第四部分 C API(C24~C31)
+
+如何将Lua和C混合编程，包括用C扩展Lua以及在C里面调用Lua代码。
+
+lua解释器的全部状态都存储在lua_State对象里面。Lua和C之间的交互，是通过栈(stack)来完成的。
+
+API用索引来访问栈中的元素。在栈中的第一个元素（也就是第一个被压入栈的）有索引1，下一个有索引2，以此类推。
+我们也可以用栈顶作为参照来存取元素，利用负索引。在这种情况下，-1指出栈顶元素（也就是最后被压入的），-2指出它的前一个元素，以此类推。
+例如，调用lua_tostring(L, -1)以字符串的形式返回栈顶的值。我们下面将看到，在某些场合使用正索引访问栈比较方便，另外一些情况下，使用负索引访问栈更方便。
+
+通过栈来交互数据有两个考虑：
+1. 是否可以很容易地接入其他语言比如Java, C#.
+2. 因为Lua是有垃圾收集的，如果使用栈来保存交互数据的话，那么可以追踪到活跃对象。
+使用栈来交互数据并不是LuaVM才这么做的，JVM也是stack-based VM，Scala/Kotlin都可以和Java语言来做交互。
+
+下面是一个在C里面调用lua解释器的示例代码：
+- lua.h 是 lua解释器的头文件，包含基本函数和数据结构。
+- lualib.h 是 lua自带库的头文件，最主要的就是调用 luaL_openlibs.
+- lauxlib.h 是 对lua解释器封装的头文件，以luaL开头，大部分使用这个库就行。
+
+#+BEGIN_SRC c
+#include <stdio.h>
+#include <string.h>
+#include <lualib.h>
+#include <lauxlib.h>
+
+const char *text = " \
+function add(x, y) \
+    return math.sin(x) + math.sin(y) \
+end \
+print(add(10, 20)) \
+";
+
+int main() {
+    int error;
+    lua_State* L = luaL_newstate();
+    luaL_openlibs(L);
+
+    error = luaL_loadbuffer(L, text, strlen(text), "test_lua::") || lua_pcall(L, 0, 0, 0);
+    if (error) {
+        fprintf(stderr, "%s", lua_tostring(L, -1));
+        lua_pop(L, 1);
+    }
+
+    lua_close(L);
+    return 0;
+}
+#+END_SRC
+
+#+BEGIN_SRC makefile
+SRC=$(HOME)/utils/lua-5.3.5/src
+
+test_lua:test_lua.c
+	gcc test_lua.c -I$(SRC) -L$(SRC) -llua
+#+END_SRC
+
+如果运行出错的话，那么会出现类似下面这样的错误
+
+#+BEGIN_EXAMPLE
+➜  playbook ./a.out
+[string "test_lua::"]:1: attempt to call a nil value (field 'sinx')
+#+END_EXAMPLE
+
+下面是一个C提供扩展函数的示例代码：
+
+#+BEGIN_SRC c
+#include <stdio.h>
+#include <string.h>
+#include <lauxlib.h>
+
+static int l_add(lua_State* L) {
+    double a = luaL_checknumber(L, -1);
+    double b = luaL_checknumber(L, -2);
+    lua_pop(L, 2);
+    lua_pushnumber(L, a + b);
+    return 1;
+}
+
+static const struct luaL_Reg funcs[] = {
+    {"l_add", l_add},
+    {NULL, NULL},
+};
+
+int luaopen_mylib(lua_State* L) {
+    lua_newtable(L);
+    luaL_setfuncs(L, funcs, 0);
+    return 1;
+}
+
+#+END_SRC
+
+#+BEGIN_SRC makefile
+SRC=$(HOME)/utils/lua-5.3.5/src
+
+test_lua.so:test_lua.c
+	gcc test_lua.c -I$(SRC) -L$(SRC) -fPIC -shared -o $@ -llua
+
+#+END_SRC
+
+#+BEGIN_SRC lua
+local open_mylib, err = package.loadlib("test_lua.so", "luaopen_mylib");
+
+if (err ~= nil) then
+   print(err)
+   os.exit(1)
+end
+
+local mylib = open_mylib()
+print(mylib.l_add(10, 20));
+
+#+END_SRC
+
+用户自定义类型可以设置`__gc`字段，这个字段对应的函数会在对象被Lua执行GC的时候调用。
+
+Lua允许在分配解释器状态 lua_State 使用自定义的内存分配函数
+
+垃圾收集在5.0之前使用的是mark-and-sweep(stop-the-world)垃圾收集器，每个周期分为4个阶段：
+1. 标记(mark): 从根集合找到所有活跃的对象并且标记下来。
+2. 整理(cleaning):
+  - 找到未被标记对象并且有_gc字段的userdata单独保存下来（这个在回收阶段需要调用回调函数）
+  - 遍历所有弱引用table，根据选项删除里面没有被标记的key/value
+3. 清扫(sweep): 释放内存
+4. 收尾(finalization). 调用阶段2收集到的特殊userdata回调函数
+
+Lua在5.1之后开始使用增量式的收集器：GCSTEP就是增量收集器标志。调用增量收集器有几个时机：
+- GCSTEPPAUSE. 一轮结束之后假设我们正在使用m字节的内存，那么等待到使用 m * pause 字节再出发下一轮。
+- GCSTESTEPMUL. 根据内存分配的速度假设是x bytes/s, 那么垃圾回收速度需要控制在 x * step bytes/s左右。
+此外gc函数还可以临时地关闭gc和打开gc, 这样对某些延迟敏感的应用可以很好地控制延迟。
+
+#+BEGIN_SRC c
+/*
+** garbage-collection function and options
+*/
+
+#define LUA_GCSTOP		0
+#define LUA_GCRESTART		1
+#define LUA_GCCOLLECT		2
+#define LUA_GCCOUNT		3
+#define LUA_GCCOUNTB		4
+#define LUA_GCSTEP		5
+#define LUA_GCSETPAUSE		6
+#define LUA_GCSETSTEPMUL	7
+#define LUA_GCISRUNNING		9
+
+LUA_API int (lua_gc) (lua_State *L, int what, int data);
+
+#+END_SRC

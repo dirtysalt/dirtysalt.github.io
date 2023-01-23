@@ -1,0 +1,57 @@
+#+title: Lock-Based/Lock-Free/Wait-Free之间区别
+
+摘自 《The Art of Writing Efficient Programs》 https://learning.oreilly.com/library/view/the-art-of/9781800208117/
+
+下面几个程序分别是 lock-based/wait-free/lock-free的
+
+#+BEGIN_SRC cpp
+// ==== lock-based ====
+std::mutex m;
+size_t count;
+{
+  std::lock_guard l(m);
+  ++count;
+}
+
+// ==== wait-free =====
+std::atomic<size_t> count;
+count.fetch_add(1, std::memory_order_relaxed);
+
+// ==== lock-free =====
+std::atomic<size_t> count;
+size_t c = count.load(std::memory_order_relaxed);
+
+while (!count.compare_exchange_strong(c, c + 1,
+     std::memory_order_relaxed, std::memory_order_relaxed)) {}
+#+END_SRC
+
+大致区别如下所说：wait-free不需要等待，lock-free不需要显示锁但是会有等待，因为在不断地进行重试。
+
+#+BEGIN_QUOTE
+We have just seen examples of the three main types of concurrent programs:
+- In a wait-free program, each thread is executing the operations it needs and is always making progress toward the final goal; there is no waiting for access, and no work needs to be redone.
+- In a lock-free program, multiple threads may be trying to update the same shared value, but only one of them will succeed. The rest will have to discard the work they have already done based on the original value, read the updated value, and do the computation again. But at least one thread is always guaranteed to commit its work and not have to redo it; thus, the entire program is always making progress, although not necessarily at full speed.
+- Finally, in a lock-based program, one thread is holding the lock that gives it access to the shared data. Just because it's holding the lock does not mean it's doing anything with this data, though. So, when the concurrent access happens, at most one thread is making progress, but even that is not guaranteed.
+#+END_QUOTE
+
+----------
+
+UPDATE: <Lock-free programming with modern C++ - Timur Doumler [ACCU 2017]>
+
+lock-free: at least one thread will always make progress
+
+wait-free: all threads will always make progress
+
+----------
+
+https://github.com/apache/incubator-brpc/blob/master/docs/cn/atomic_instructions.md
+
+#+BEGIN_QUOTE
+原子指令能为我们的服务赋予两个重要属性：wait-free和lock-free。前者指不管OS如何调度线程，每个线程都始终在做有用的事；后者比前者弱一些，指不管OS如何调度线程，至少有一个线程在做有用的事。如果我们的服务中使用了锁，那么OS可能把一个刚获得锁的线程切换出去，这时候所有依赖这个锁的线程都在等待，而没有做有用的事，所以用了锁就不是lock-free，更不会是wait-free。为了确保一件事情总在确定时间内完成，实时系统的关键代码至少是lock-free的。在百度广泛又多样的在线服务中，对时效性也有着严苛的要求，如果RPC中最关键的部分满足wait-free或lock-free，就可以提供更稳定的服务质量。事实上，brpc中的读写都是wait-free的，具体见IO。
+
+值得提醒的是，常见想法是lock-free或wait-free的算法会更快，但事实可能相反，因为：
+- lock-free和wait-free必须处理更多更复杂的race condition和ABA problem，完成相同目的的代码比用锁更复杂。代码越多，耗时就越长。
+- 使用mutex的算法变相带“后退”效果。后退(backoff)指出现竞争时尝试另一个途径以临时避免竞争，mutex出现竞争时会使调用者睡眠，使拿到锁的那个线程可以很快地独占完成一系列流程，总体吞吐可能反而高了。
+
+mutex导致低性能往往是因为临界区过大（限制了并发度），或竞争过于激烈（上下文切换开销变得突出）。lock-free/wait-free算法的价值在于其保证了一个或所有线程始终在做有用的事，而不是绝对的高性能。但在一种情况下lock-free和wait-free算法的性能多半更高：就是算法本身可以用少量原子指令实现。实现锁也是要用原子指令的，当算法本身用一两条指令就能完成的时候，相比额外用锁肯定是更快了。
+#+END_QUOTE

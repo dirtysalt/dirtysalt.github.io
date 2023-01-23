@@ -1,0 +1,44 @@
+#+title: 虚函数的额外开销
+
+CK代码里面使用了获取虚函数地址的方式来减少虚函数调用开销
+
+src/AggregateFunctions/IAggregateFunction.h
+
+#+BEGIN_SRC c++
+class IAggregateFunction : public std::enable_shared_from_this<IAggregateFunction>
+{
+    /** The inner loop that uses the function pointer is better than using the virtual function.
+      * The reason is that in the case of virtual functions GCC 5.1.2 generates code,
+      *  which, at each iteration of the loop, reloads the function address (the offset value in the virtual function table) from memory to the register.
+      * This gives a performance drop on simple queries around 12%.
+      * After the appearance of better compilers, the code can be removed.
+      */
+    using AddFunc = void (*)(const IAggregateFunction *, AggregateDataPtr, const IColumn **, size_t, Arena *);
+    virtual AddFunc getAddressOfAddFunction() const = 0;
+    // codes ...
+}
+
+template <typename Derived>
+class IAggregateFunctionHelper : public IAggregateFunction
+{
+private:
+    static void addFree(const IAggregateFunction * that, AggregateDataPtr place, const IColumn ** columns, size_t row_num, Arena * arena)
+    {
+        static_cast<const Derived &>(*that).add(place, columns, row_num, arena);
+    }
+
+public:
+    AddFunc getAddressOfAddFunction() const override { return &addFree; }
+    // codes ...
+}
+#+END_SRC
+
+从注释里面可以看到，低版本虚函数实现有些问题，到了高版本编译器应该就没有问题了。我理解是
+- 差的编译器用的方法是 lea (, rcx, rbx) rax; call *rax. 其中rcx是虚表的偏移量. 低版本编译器没有办法保证是常量
+- 好的编译器是 mov 0x32(rbx) rax; call *rax; 其中 0x32 是虚表的偏移量
+- 静态函数就是 call 0x16eff ，其中地址是常量
+
+普通函数（静态链接）相比虚函数的优势有下面这些：
+1. 函数地址是常量，虚函数需要从内存中获取函数地址
+2. 如何普通函数实现在头文件中可以被内联
+3. 低版本编译器的虚函数偏移是不确定的，导致每次需要重新计算函数地址

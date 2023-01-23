@@ -1,0 +1,57 @@
+#+title: bcc & bpftrace
+
+** 参考命令
+*** stackcount
+
+#+BEGIN_QUOTE
+sudo stackcount -P -p `doris-find-process` -D 10 -f '/home/disk2/zy/DorisDB/output/be/lib/starrocks_be:_ZN9starrocks10vectorized17ORCHdfsFileStream4readEPvmm' | flamegraph.pl --width 2400 --hash --bgcolors=grey > orc_read_stack_count.svg
+#+END_QUOTE
+
+*** bpftrace ustack/sum
+
+#+BEGIN_QUOTE
+run-bpftrace -e 'u:/home/disk2/zy/DorisDB/output/be/lib/starrocks_be:_ZN9starrocks10vectorized17ORCHdfsFileStream4readEPvmm { @[ustack] = sum(arg2); } ' > orc_read_stack_size.out
+
+stackcollapse-bpftrace.pl < orc_read_stack_size.out | flamegraph.pl --width 2400 --hash --bgcolors=grey > orc_read_stack_size.svg
+#+END_QUOTE
+
+*** bpftrace ustack/time
+
+#+BEGIN_QUOTE
+run-bpftrace -e 'uprobe:/home/disk2/zy/DorisDB/output/be/lib/starrocks_be:_ZNK9starrocks20HdfsRandomAccessFile7read_atEmRKNS_5SliceE { @ts[tid] = nsecs; } uretprobe:/home/disk2/zy/DorisDB/output/be/lib/starrocks_be:_ZNK9starrocks20HdfsRandomAccessFile7read_atEmRKNS_5SliceE { @[ustack]=(nsecs-@ts[tid]); delete(@ts[tid]) } ' > hdfs_read_time.out
+
+stackcollapse-bpftrace.pl < hdfs_read_time.out | flamegraph.pl --width 2400 --hash --bgcolors=grey > hdfs_read_time.svg
+#+END_QUOTE
+
+*** argdist
+
+#+BEGIN_QUOTE
+sudo argdist -d 10 -i 10 -p `doris-find-process` -H 'p:/home/disk2/zy/DorisDB/output/be/lib/starrocks_be:_ZN9starrocks10vectorized17ORCHdfsFileStream4readEPvmm(void*this, void*buf,u64 length,u64 offset):u64:length'
+#+END_QUOTE
+
+** Enable Frame Pointer
+
+https://cmake.org/cmake/help/latest/envvar/CXXFLAGS.html
+
+这个环境变量会影响到cmake里面c/c++默认编译参数
+
+```
+export CXXFLAGS="-fno-omit-frame-pointer ${CXXFLAGS}"
+export CFLAGS="-fno-omit-frame-pointer ${CFLAGS}"
+```
+
+When introducing thirdparty, make sure compiler option `-fno-omit-frame-pointer` is enabled. By default it's disabled, which makes profiling hard.  https://gcc.gnu.org/onlinedocs/gcc-10.3.0/gcc/Optimize-Options.html. The ovehead of it can be offset by observablity.
+
+BPF Performance Tools.pdf Chapter2
+
+> On x86_64 today, most software is compiled with gcc’s defaults, breaking frame pointer stack traces. Last time I studied the performance gain from frame pointer omission in our production environment, it was usually less than one percent, and it was often so close to zero that it was difficult to measure. Many microservices at Netflix are running with the frame pointer reenabled, as the performance wins found by CPU profiling outweigh the tiny loss of performance.
+
+** JIT Symbols (Java, Node.js)
+
+https://www.brendangregg.com/perf.html#JIT_Symbols
+
+Programs that have virtual machines (VMs), like Java's JVM and node's v8, execute their own virtual processor, which has its own way of executing functions and managing stacks. If you profile these using perf_events, you'll see symbols for the VM engine, which have some use (eg, to identify if time is spent in GC), but you won't see the language-level context you might be expecting. Eg, you won't see Java classes and methods.
+
+perf_events has JIT support to solve this, which requires the VM to maintain a /tmp/perf-PID.map file for symbol translation. Java can do this with perf-map-agent, and Node.js 0.11.13+ with --perf_basic_prof. See my blog post Node.js flame graphs on Linux for the steps.
+
+Note that Java may not show full stacks to begin with, due to hotspot on x86 omitting the frame pointer (just like gcc). On newer versions (JDK 8u60+), you can use the -XX:+PreserveFramePointer option to fix this behavior, and profile fully using perf. See my Netflix Tech Blog post, Java in Flames, for a full writeup, and my Java flame graphs section, which links to an older patch and includes an example resulting flame graph. I also summarized the latest in my JavaOne 2016 talk Java Performance Analysis on Linux with Flame Graphs.

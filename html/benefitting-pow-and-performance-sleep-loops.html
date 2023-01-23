@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Benefitting Power and Performance Sleep Loops</title>
+<meta name="author" content="dirtysalt" />
+<meta name="generator" content="Org Mode" />
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content" class="content">
+<h1 class="title">Benefitting Power and Performance Sleep Loops</h1>
+<p>
+<a href="https://software.intel.com/content/www/us/en/develop/articles/benefitting-power-and-performance-sleep-loops.html">https://software.intel.com/content/www/us/en/develop/articles/benefitting-power-and-performance-sleep-loops.html</a>
+</p>
+
+<p>
+如何更好地使用使用自旋锁：
+</p>
+<ol class="org-ol">
+<li>如果只是简单地不断地去check spinlock, 那么会非常占用CPU。</li>
+<li>如果使用sleep(0)或者是sched_yield()的话，那么会导致ring3 -&gt; ring0的context switch. 延迟会非常高。</li>
+<li>最好的方式检查几轮spinlock, 然后使用sleep(0), sched_yield()切换出去，如此往复。</li>
+</ol>
+
+<p>
+不过在检查spinlock的时候，可以使用 mm_pause 这个指令。使用这个指令可以告诉CPU, 接下来的指令是是要去check spinlock, 所以不用full-speed地去检查，比如完全填满流水线这样，最后功能也能节省4%。这个指令之后接下来的执行可能会延迟一段时间，但是这个延迟时间是不可控，完全由CPU去决定的，所以我们不能依赖或者是假设这个延迟。
+</p>
+
+<blockquote>
+<p>
+Essentially, the pause instruction delays the next instruction's execution for a finite period of time. By delaying the execution of the next instruction, the processor is not under demand, and parts of the pipeline are no longer being used, which in turn reduces the power consumed by the processor.
+</p>
+
+<p>
+The pause  instruction can be used in conjunction with a Sleep(0) to construct something similar to an exponential back-off in situations where the lock or more work may become available in a short period of time, and the performance may benefit from a short spin in ring 3. It is important to note that the number of cycles delayed by the pause instruction may vary from one processor family to another. You should avoid using multiple pause instructions, assuming you will introduce a delay of a specific cycle count.  Since you cannot guarantee the cycle count from one system to the next, you should check the lock in between each pause to avoid introducing unnecessarily long delays on new systems.
+</p>
+</blockquote>
+
+<p>
+这个指令按照Intel文档解释来说，就是专门给spinlock场景设计的，从文档看上去这个指令的latency很高（不知道这个latency是不是就是到接下来执行指令的延迟）。
+</p>
+
+<blockquote>
+<p>
+void _mm_pause (void)
+#include &lt;emmintrin.h&gt;
+Instruction: pause
+CPUID Flags: SSE2
+Provide a hint to the processor that the code sequence is a spin-wait loop. This can help improve the performance and power consumption of spin-wait loops.
+</p>
+
+<p>
+Architecture Latency Throughput (CPI)
+Skylake 140 140
+</p>
+</blockquote>
+
+<p>
+最后实现出来的代码长的是这个样子的：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-cpp"><span class="org-constant">ATTEMPT_AGAIN</span>:
+  <span class="org-keyword">if</span> (<span class="org-negation-char">!</span>acquire_lock())
+  {
+    <span class="org-comment-delimiter">/* </span><span class="org-comment">Spin on pause max_spin_count times before backing off to sleep</span><span class="org-comment-delimiter"> */</span>
+    <span class="org-keyword">for</span>(<span class="org-type">int</span> <span class="org-variable-name">j</span> = 0; j &lt; max_spin_count; ++j)
+    {
+      <span class="org-comment-delimiter">/* </span><span class="org-comment">pause intrinsic</span><span class="org-comment-delimiter"> */</span>
+      _mm_pause();
+      <span class="org-keyword">if</span> (read_volatile_lock())
+      {
+        <span class="org-keyword">if</span> (acquire_lock())
+
+        {
+          <span class="org-keyword">goto</span> <span class="org-constant">PROTECTED_CODE</span>;
+        }
+      }
+    }
+
+    <span class="org-comment-delimiter">/* </span><span class="org-comment">Pause loop didn't work, sleep now</span><span class="org-comment-delimiter"> */</span>
+    Sleep(0);
+    <span class="org-keyword">goto</span> <span class="org-constant">ATTEMPT_AGAIN</span>;
+  }
+<span class="org-constant">PROTECTED_CODE</span>:
+  get_work();
+  release_lock();
+  do_work();
+</pre>
+</div>
+</div>
+<div id="content"><!-- DISQUS BEGIN --><div id="disqus_thread"></div><script>/***  RECOMMENDED CONFIGURATION VARIABLES: EDIT AND UNCOMMENT THE SECTION BELOW TO INSERT DYNAMIC VALUES FROM YOUR PLATFORM OR CMS.*  LEARN WHY DEFINING THESE VARIABLES IS IMPORTANT: https://disqus.com/admin/universalcode/#configuration-variables*/var disqus_config = function () {this.page.url = 'https://dirtysalt.github.io/html/benefitting-pow-and-performance-sleep-loops.html';this.page.identifier = 'benefitting-pow-and-performance-sleep-loops.html';};(function() {var d = document, s = d.createElement('script');s.src = 'https://dirlt.disqus.com/embed.js';s.setAttribute('data-timestamp', +new Date());(d.head || d.body).appendChild(s);})();</script><noscript>Please enable JavaScript to view the <a href="https://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript><!-- DISQUS END --></div></body>
+</html>

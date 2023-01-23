@@ -1,0 +1,170 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>SWAR explained: parsing eight digits</title>
+<meta name="author" content="dirtysalt" />
+<meta name="generator" content="Org Mode" />
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content" class="content">
+<h1 class="title">SWAR explained: parsing eight digits</h1>
+<p>
+<a href="https://lemire.me/blog/2022/01/21/swar-explained-parsing-eight-digits/">https://lemire.me/blog/2022/01/21/swar-explained-parsing-eight-digits/</a>
+</p>
+
+<p>
+整个变换过程如下
+</p>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-right" />
+
+<col  class="org-left" />
+
+<col  class="org-right" />
+
+<col  class="org-right" />
+
+<col  class="org-right" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">expr</th>
+<th scope="col" class="org-left">0</th>
+<th scope="col" class="org-left">1</th>
+<th scope="col" class="org-left">2</th>
+<th scope="col" class="org-right">3</th>
+<th scope="col" class="org-left">4</th>
+<th scope="col" class="org-right">5</th>
+<th scope="col" class="org-right">6</th>
+<th scope="col" class="org-right">7</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left">X</td>
+<td class="org-left">b0</td>
+<td class="org-left">b1</td>
+<td class="org-left">b2</td>
+<td class="org-right">b3</td>
+<td class="org-left">b4</td>
+<td class="org-right">b5</td>
+<td class="org-right">b6</td>
+<td class="org-right">b7</td>
+</tr>
+
+<tr>
+<td class="org-left">Y = (X + (10X &gt;&gt;8)) &amp; mask0</td>
+<td class="org-left">b0 + 10b1</td>
+<td class="org-left">0</td>
+<td class="org-left">10b3 + b2</td>
+<td class="org-right">0</td>
+<td class="org-left">10b5+b4</td>
+<td class="org-right">0</td>
+<td class="org-right">10b7+b6</td>
+<td class="org-right">0</td>
+</tr>
+
+<tr>
+<td class="org-left">Z = (Y + (100*Y&gt;&gt;16)) &amp; mask1</td>
+<td class="org-left">1000b3+100b2+10b1+b0</td>
+<td class="org-left">X</td>
+<td class="org-left">0</td>
+<td class="org-right">0</td>
+<td class="org-left">1000b7+100b6+10b5+b4</td>
+<td class="org-right">X</td>
+<td class="org-right">0</td>
+<td class="org-right">0</td>
+</tr>
+
+<tr>
+<td class="org-left">T = (Z + (10000*Z) &gt;&gt; 32) &amp; mask2</td>
+<td class="org-left">(1000b7+100b6+10b5+b4)*10000 + 1000b3+100b2+10b1+b0</td>
+<td class="org-left">X</td>
+<td class="org-left">X</td>
+<td class="org-right">X</td>
+<td class="org-left">0</td>
+<td class="org-right">0</td>
+<td class="org-right">0</td>
+<td class="org-right">0</td>
+</tr>
+</tbody>
+</table>
+
+<div class="org-src-container">
+<pre class="src src-cpp"><span class="org-type">uint32_t</span> <span class="org-function-name">toint</span>(<span class="org-keyword">const</span> <span class="org-type">char</span>* <span class="org-variable-name">digits</span>) {
+    <span class="org-type">uint64_t</span> <span class="org-variable-name">X</span>;
+    memcpy(&amp;X, digits, 8);
+    X -= 0x3030303030303030;
+
+    <span class="org-type">uint64_t</span> <span class="org-variable-name">mask0</span> = 0x00ff00ff00ff00ff;
+    <span class="org-type">uint64_t</span> <span class="org-variable-name">Y</span> = ((((10 &lt;&lt; 8) + 1) * X) &gt;&gt; 8) &amp; mask0;
+    <span class="org-type">uint64_t</span> <span class="org-variable-name">mask1</span> = 0x0000ffff0000ffff;
+    <span class="org-type">uint64_t</span> <span class="org-variable-name">Z</span> = ((((100 &lt;&lt; 16) + 1) * Y) &gt;&gt; 16) &amp; mask1;
+    <span class="org-type">uint64_t</span> <span class="org-variable-name">T</span> = ((((10000UL &lt;&lt; 32) + 1) * Z) &gt;&gt; 32);
+    <span class="org-keyword">return</span> (<span class="org-type">uint32_t</span>)T;
+}
+</pre>
+</div>
+
+<p>
+文章里面的变换可以这里的差异是，在第二步的时候是0-4, 2-6这样配对，而不是0-2, 4-6这样配对。看上去好像效率会更好些，因为不存在数据依赖。
+</p>
+
+<hr />
+
+<p>
+另外一篇文章 <a href="https://lemire.me/blog/2022/04/28/removing-characters-from-strings-faster-with-avx-512/">https://lemire.me/blog/2022/04/28/removing-characters-from-strings-faster-with-avx-512/</a> AVX512里面有个指令很有意思 `_mm512_mask_compressstoreu_epi8`
+</p>
+
+<pre class="example" id="orgedd6ef1">
+size := 8
+m := base_addr
+FOR j := 0 to 63
+	i := j*8
+	IF k[j]
+		MEM[m+size-1:m] := a[i+7:i]
+		m := m + size
+	FI
+ENDFOR
+</pre>
+
+<p>
+可以根据mask进行memcpy, 这个好像在现实中蛮有用的。
+</p>
+
+<p>
+接着作者又跟进了一篇 <a href="https://lemire.me/blog/2022/05/10/faster-bitset-decoding-using-intel-avx-512/">https://lemire.me/blog/2022/05/10/faster-bitset-decoding-using-intel-avx-512/</a>, 里面有个指令也差不多，只不过没有做store memory而是到reg上 `_mm512_maskz_compress_epi8`. 这个好处是，存在reg上还可以做额外的操作，而放在memory上之后做操作还需要重新load上来。
+</p>
+
+<pre class="example" id="org19e63e4">
+size := 8
+m := 0
+FOR j := 0 to 63
+	i := j*8
+	IF k[j]
+		dst[m+size-1:m] := a[i+7:i]
+		m := m + size
+	FI
+ENDFOR
+dst[511:m] := 0
+dst[MAX:512] := 0
+</pre>
+</div>
+<div id="content"><!-- DISQUS BEGIN --><div id="disqus_thread"></div><script>/***  RECOMMENDED CONFIGURATION VARIABLES: EDIT AND UNCOMMENT THE SECTION BELOW TO INSERT DYNAMIC VALUES FROM YOUR PLATFORM OR CMS.*  LEARN WHY DEFINING THESE VARIABLES IS IMPORTANT: https://disqus.com/admin/universalcode/#configuration-variables*/var disqus_config = function () {this.page.url = 'https://dirtysalt.github.io/html/swar-explained-parsing-eight-digits.html';this.page.identifier = 'swar-explained-parsing-eight-digits.html';};(function() {var d = document, s = d.createElement('script');s.src = 'https://dirlt.disqus.com/embed.js';s.setAttribute('data-timestamp', +new Date());(d.head || d.body).appendChild(s);})();</script><noscript>Please enable JavaScript to view the <a href="https://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript><!-- DISQUS END --></div></body>
+</html>

@@ -1,0 +1,117 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>比特币挖矿的泊松分布问题(指数分布)</title>
+<meta name="author" content="dirtysalt" />
+<meta name="generator" content="Org Mode" />
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content" class="content">
+<h1 class="title">比特币挖矿的泊松分布问题(指数分布)</h1>
+<p>
+<a href="https://twitter.com/SatoshiLite/status/978913057999998976">https://twitter.com/SatoshiLite/status/978913057999998976</a>
+</p>
+
+<blockquote>
+<p>
+Let's test your knowledge of Bitcoin mining. Bitcoin is designed such that a block is mined every 10 minutes on average.
+</p>
+
+<p>
+If 5 minutes has passed since the last block was mined, what's the expected amount of time before the next block is mined?
+</p>
+</blockquote>
+
+<p>
+这里问题是首先我们需要假定出矿间隔是泊松分布。如果是泊松分布的话，如果平均出矿时间是10分钟的话，那么lambda = 10.
+</p>
+
+<p>
+然后我们可以用程序来做个模拟：
+</p>
+<ul class="org-ul">
+<li>首先用lambda = 10的泊松分布产生N个点</li>
+<li>排除那些值小于5的点，剩余的就是之后可能出现的点</li>
+<li>然后看剩余的点平均值</li>
+</ul>
+
+<div class="org-src-container">
+<pre class="src src-Python">#!/usr/bin/env python
+# coding:utf-8
+# Copyright (C) dirlt
+
+import numpy as np
+
+def run(lam, thres, n):
+    values = np.random.poisson(lam=lam, size=n)
+    values = np.array([x for x in values if x &gt; thres])
+    print('n = {}, # = {}, avg = {}'.format(n, len(values), values.mean()))
+
+
+lam = 10
+thres = 5
+for n in (100 * 1000, 1000 * 1000, 5 * 1000 * 1000):
+    run(lam, thres, n)
+
+</pre>
+</div>
+
+<p>
+输出结果如下，可以看到实际结果其实并不是10min, 而是在10.4min左右。
+这个解释是，在接下来的10.4分钟内，平均会发生一次事件。
+</p>
+
+<pre class="example" id="orgdf8cabf">
+n = 100000, # = 93291, avg = 10.434715031460698
+n = 1000000, # = 932709, avg = 10.401006101581523
+n = 5000000, # = 4664554, avg = 10.404514558090655
+</pre>
+
+<hr />
+
+<p>
+UPDATE@202001: 我觉得这个模型用指数模型建模更合适。泊松分布式一段时间内独立事件的发生次数，而指数分布则是两次独立事件发生时间的间隔。
+这里就是两个block之间产生的平均时间间隔10min. 指数分布的期望正好就是lambda, 所以lambda=10. 程序和上面类似，只不过我们改用指数分布做模拟。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-comment-delimiter">#</span><span class="org-comment">!/usr/bin/env python</span>
+<span class="org-comment-delimiter"># </span><span class="org-comment">coding:utf-8</span>
+<span class="org-comment-delimiter"># </span><span class="org-comment">Copyright (C) dirlt</span>
+
+<span class="org-py-import-from">import</span> numpy <span class="org-keyword">as</span> np
+
+<span class="org-py-def-class">def</span> <span class="org-function-name">run</span>(lam, thres, n):
+    <span class="org-py-variable-name">values</span> = np.random.exponential(<span class="org-py-variable-name">lam</span>=lam, <span class="org-py-variable-name">size</span>=n)
+    <span class="org-py-variable-name">values</span> = np.array([x <span class="org-keyword">for</span> x <span class="org-keyword">in</span> values <span class="org-keyword">if</span> x &gt; thres])
+    <span class="org-keyword">print</span>(<span class="org-string">'n = {}, # = {}, avg = {}'</span>.format(n, <span class="org-py-builtins">len</span>(values), values.mean()))
+
+
+<span class="org-py-variable-name">lam</span> = <span class="org-py-number">10</span>
+<span class="org-py-variable-name">thres</span> = <span class="org-py-number">5</span>
+<span class="org-keyword">for</span> n <span class="org-keyword">in</span> (<span class="org-py-number">100</span> * <span class="org-py-number">1000</span>, <span class="org-py-number">1000</span> * <span class="org-py-number">1000</span>, <span class="org-py-number">5</span> * <span class="org-py-number">1000</span> * <span class="org-py-number">1000</span>):
+    run(lam, thres, n)
+</pre>
+</div>
+
+<p>
+输出结果如下，实际结果就是15min. 这个解释是下次block到来的平均时间是15min. 而此时已经过去了5min, 所以平均还要等待10min.
+</p>
+
+<pre class="example" id="org5429684">
+n = 100000, # = 60571, avg = 14.929722202106614
+n = 1000000, # = 605959, avg = 15.006197564991856
+n = 5000000, # = 3032462, avg = 15.00148591494115
+</pre>
+
+<p>
+泊松分布和指数分布两者时间是存在一定关系的：<a href="https://www.ruanyifeng.com/blog/2015/06/poisson-distribution.html">泊松分布和指数分布：10分钟教程 - 阮一峰的网络日志</a>. 对于单位时间内发生次数这种离散量，
+应该使用泊松分布，而对于两次事件的时间间隔这种连续量，应该使用指数分布。
+</p>
+</div>
+<div id="content"><!-- DISQUS BEGIN --><div id="disqus_thread"></div><script>/***  RECOMMENDED CONFIGURATION VARIABLES: EDIT AND UNCOMMENT THE SECTION BELOW TO INSERT DYNAMIC VALUES FROM YOUR PLATFORM OR CMS.*  LEARN WHY DEFINING THESE VARIABLES IS IMPORTANT: https://disqus.com/admin/universalcode/#configuration-variables*/var disqus_config = function () {this.page.url = 'https://dirtysalt.github.io/html/poission-distribution-in-bitcoin-mining.html';this.page.identifier = 'poission-distribution-in-bitcoin-mining.html';};(function() {var d = document, s = d.createElement('script');s.src = 'https://dirlt.disqus.com/embed.js';s.setAttribute('data-timestamp', +new Date());(d.head || d.body).appendChild(s);})();</script><noscript>Please enable JavaScript to view the <a href="https://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript><!-- DISQUS END --></div></body>
+</html>

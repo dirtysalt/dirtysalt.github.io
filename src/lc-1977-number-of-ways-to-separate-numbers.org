@@ -1,0 +1,94 @@
+#+title: LC 1977. 划分数字的方案数
+
+https://leetcode-cn.com/problems/number-of-ways-to-separate-numbers/
+
+这题目有两个DP需要解决，第一个DP就是解决字面上的问题，第二个DP则是需要在实现中细化得到的。
+
+状态方程是 `dp[i][j]` 表示结尾为 `s[i:j+1]` 的组合数，其中
+- dp[i][j] += dp[i][j-1] 这个比较好理解
+- p=2*i-j, 如果 num[p:i] > num[i:j]. 考虑上个状态中等长字符串的情况，那么这次需要考虑 dp[p][i-1]
+- p=2*i-j, 如果 num[p-1:i] > num[i:j+1]. 考虑这个状态中等长字符串的情况，那么这次需要考虑 dp[p-1][i-1]
+
+#+BEGIN_SRC python
+class Solution:
+    def numberOfCombinations(self, num: str) -> int:
+        if not num or num[0] == '0': return 0
+        MOD = 10 ** 9 + 7
+        n = len(num)
+
+        dp = [[0] * n for _ in range(n)]
+        for i in range(n):
+            dp[0][i] = 1
+
+        for i in range(1, n):
+            if num[i] == '0': continue
+            for j in range(i, n):
+                if (j - 1) >= i:
+                    dp[i][j] += dp[i][j - 1]
+
+                    # check some cases not counted before.
+                    # num[p..i-1] and num[i..j-1]
+                    p = 2 * i - j
+                    if p >= 0 and num[p] != '0':
+                        if num[p:i] > num[i:j]:
+                            dp[i][j] += dp[p][i - 1]
+
+                p = 2 * i - j
+                # num[p-1..i-1] and num[i..j]
+                if p >= 1 and num[p - 1] != '0':
+                    if num[p - 1:i] <= num[i:j + 1]:
+                        dp[i][j] += dp[p - 1][i - 1]
+
+                dp[i][j] %= MOD
+
+        ans = 0
+        for i in range(n):
+            # print(dp[i][n - 1])
+            ans += dp[i][n - 1]
+        ans = ans % MOD
+        return ans
+#+END_SRC
+
+但是实测的时候就会发现， `num[p:i] > num[i:j]` 这个字符串比较代价太高了，而且测试集合中的超长case都是相同的字符，所以一个办法就是预先计算好子字符串的hash。先比较hash是否相同，这样可以节省不少开销。
+
+#+BEGIN_SRC python
+        hash = [[0] * n for _ in range(n)]
+
+        for i in range(n):
+            acc = 0
+            for j in range(i, n):
+                x = ord(num[j]) - ord('0')
+                acc = acc * 11 + x
+                acc = acc % MOD2
+                hash[i][j] = acc
+#+END_SRC
+
+不过这题还有个更好的解法，就是针对两个子字符串，我们可以预先计算LCP(longest common prefix). 可以首先计算出 s[i..] 和 s[j..] 的最大公共长度 d,
+之后比较 s[i:k] 和 s[j:k] 的话可以直接比较 s[i+d:k] 和 s[j+d:k]. 虽然这里写的是子串，但是第一个字符肯定是不同的，所以比较也会非常迅速。
+
+#+BEGIN_SRC python
+        lcp = [[0] * n for _ in range(n)]
+
+        for i in reversed(range(n)):
+            for j in reversed(range(n)):
+                if num[i] == num[j]:
+                    if (i + 1) < n and (j + 1) < n:
+                        lcp[i][j] = lcp[i + 1][j + 1]
+                    else:
+                        lcp[i][j] = 0
+                    lcp[i][j] += 1
+
+###
+                    p = 2 * i - j
+                    d = lcp[p][i]
+                    if p >= 0 and num[p] != '0' and num[p + d:i] > num[i + d:j]:
+                        dp[i][j] += dp[p][i - 1]
+
+###
+                p = 2 * i - j
+                d = lcp[p - 1][i]
+                # num[p-1..i-1] and num[i..j]
+                if p >= 1 and num[p - 1] != '0' and num[p - 1 + d:i] <= num[i + d:j + 1]:
+                    dp[i][j] += dp[p - 1][i - 1]
+
+#+END_SRC

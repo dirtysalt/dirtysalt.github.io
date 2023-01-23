@@ -1,0 +1,63 @@
+#+title: SWAR explained: parsing eight digits
+
+https://lemire.me/blog/2022/01/21/swar-explained-parsing-eight-digits/
+
+整个变换过程如下
+
+| expr                              | 0                                                   | 1  | 2         |  3 | 4                    |  5 |       6 |  7 |
+|-----------------------------------+-----------------------------------------------------+----+-----------+----+----------------------+----+---------+----|
+| X                                 | b0                                                  | b1 | b2        | b3 | b4                   | b5 |      b6 | b7 |
+| Y = (X + (10X >>8)) & mask0       | b0 + 10b1                                           | 0  | 10b3 + b2 |  0 | 10b5+b4              |  0 | 10b7+b6 |  0 |
+| Z = (Y + (100*Y>>16)) & mask1     | 1000b3+100b2+10b1+b0                                | X  | 0         |  0 | 1000b7+100b6+10b5+b4 |  X |       0 |  0 |
+| T = (Z + (10000*Z) >> 32) & mask2 | (1000b7+100b6+10b5+b4)*10000 + 1000b3+100b2+10b1+b0 | X  | X         |  X | 0                    |  0 |       0 |  0 |
+
+#+BEGIN_SRC cpp
+uint32_t toint(const char* digits) {
+    uint64_t X;
+    memcpy(&X, digits, 8);
+    X -= 0x3030303030303030;
+
+    uint64_t mask0 = 0x00ff00ff00ff00ff;
+    uint64_t Y = ((((10 << 8) + 1) * X) >> 8) & mask0;
+    uint64_t mask1 = 0x0000ffff0000ffff;
+    uint64_t Z = ((((100 << 16) + 1) * Y) >> 16) & mask1;
+    uint64_t T = ((((10000UL << 32) + 1) * Z) >> 32);
+    return (uint32_t)T;
+}
+#+END_SRC
+
+文章里面的变换可以这里的差异是，在第二步的时候是0-4, 2-6这样配对，而不是0-2, 4-6这样配对。看上去好像效率会更好些，因为不存在数据依赖。
+
+----------
+
+另外一篇文章 https://lemire.me/blog/2022/04/28/removing-characters-from-strings-faster-with-avx-512/ AVX512里面有个指令很有意思 `_mm512_mask_compressstoreu_epi8`
+
+#+BEGIN_EXAMPLE
+size := 8
+m := base_addr
+FOR j := 0 to 63
+	i := j*8
+	IF k[j]
+		MEM[m+size-1:m] := a[i+7:i]
+		m := m + size
+	FI
+ENDFOR
+#+END_EXAMPLE
+
+可以根据mask进行memcpy, 这个好像在现实中蛮有用的。
+
+接着作者又跟进了一篇 https://lemire.me/blog/2022/05/10/faster-bitset-decoding-using-intel-avx-512/, 里面有个指令也差不多，只不过没有做store memory而是到reg上 `_mm512_maskz_compress_epi8`. 这个好处是，存在reg上还可以做额外的操作，而放在memory上之后做操作还需要重新load上来。
+
+#+BEGIN_EXAMPLE
+size := 8
+m := 0
+FOR j := 0 to 63
+	i := j*8
+	IF k[j]
+		dst[m+size-1:m] := a[i+7:i]
+		m := m + size
+	FI
+ENDFOR
+dst[511:m] := 0
+dst[MAX:512] := 0
+#+END_EXAMPLE
