@@ -56,6 +56,9 @@ X_HEAD_BEGIN = """<!-- Global site tag (gtag.js) - Google Analytics -->
 """.replace('\n','')
 
 setup_profile = 'simple'
+setup_profile = 'emacs'
+setup_profile = 'yinwang'
+setup_profile = 'org'
 with open('./themes/%s-setup.txt' % setup_profile) as fh:
     HEAD_END = fh.read().replace('root/','/').replace('\n','')
 
