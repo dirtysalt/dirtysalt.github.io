@@ -14,4 +14,4 @@
 
 [An Amateur Alchemist’s Adventure](./src/blogs.org)
 
-[计算机科学主题列表](./src/index.org)
+[文件索引](./src/index.org)
