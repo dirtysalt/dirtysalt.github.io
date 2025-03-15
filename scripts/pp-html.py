@@ -110,6 +110,9 @@ GISGUS_BODY_END = """
 
 BODY_END = GISGUS_BODY_END
 
+# disable giscus
+BODY_END = ""
+
 # ============================================================
 def replace_codes_link(x):
     user = os.environ.get('USER', 'dirlt')
