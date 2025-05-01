@@ -37,6 +37,49 @@
 #endif
 #+END_SRC
 
+然后我对这几个实现做了下benchmark，做的比较简单，都是在固定大小(4096)个int32数组上做测试：
+- avx512 505ns
+- avx2 973ns
+- avx2x (实际使用了avx512f+vl) 804ns
+- native (+prefetch) 1671ns
+
+我的直觉是如果数组比较小的话，可能差距没有这么大。如果是数组比较大的话,avx512>avx2x>avx2.因为那个avx2实现需要有2 passes, 可能cache locality不是特别好。
+
+链接里面给出了解决方法，就是针对一个Block做2 passes, 感觉这样对cache会更好。
+
+#+BEGIN_EXAMPLE
+---------------------------------------------------------------------------
+Benchmark                                 Time             CPU   Iterations
+---------------------------------------------------------------------------
+BM_int32_avx512_prefix_sum/4096         505 ns          505 ns      1387154
+BM_int32_avx512_prefix_sum/8192        1017 ns         1017 ns       688849
+BM_int32_avx512_prefix_sum/16384       2336 ns         2335 ns       299731
+BM_int32_avx512_prefix_sum/32768       4665 ns         4665 ns       149991
+BM_int32_avx2_prefix_sum/4096           973 ns          973 ns       719452
+BM_int32_avx2_prefix_sum/8192          1934 ns         1934 ns       361978
+BM_int32_avx2_prefix_sum/16384         4204 ns         4204 ns       166237
+BM_int32_avx2_prefix_sum/32768         8399 ns         8398 ns        83391
+BM_int32_avx2x_prefix_sum/4096          804 ns          803 ns       871364
+BM_int32_avx2x_prefix_sum/8192         1607 ns         1607 ns       435556
+BM_int32_avx2x_prefix_sum/16384        3208 ns         3207 ns       218231
+BM_int32_avx2x_prefix_sum/32768        6411 ns         6411 ns       109205
+BM_int32_native_prefix_sum/4096        1671 ns         1670 ns       419114
+BM_int32_native_prefix_sum/8192        3340 ns         3339 ns       209865
+BM_int32_native_prefix_sum/16384       6684 ns         6683 ns       104963
+BM_int32_native_prefix_sum/32768      13336 ns        13334 ns        52479
+BM_int64_avx512_prefix_sum/4096         980 ns          980 ns       712131
+BM_int64_avx512_prefix_sum/8192        1942 ns         1942 ns       360513
+BM_int64_avx512_prefix_sum/16384       3882 ns         3881 ns       180216
+BM_int64_avx512_prefix_sum/32768       7760 ns         7759 ns        90254
+BM_int64_native_prefix_sum/4096        1671 ns         1671 ns       418874
+BM_int64_native_prefix_sum/8192        3462 ns         3461 ns       202279
+BM_int64_native_prefix_sum/16384       6910 ns         6909 ns       101323
+BM_int64_native_prefix_sum/32768      13805 ns        13804 ns        50588
+#+END_EXAMPLE
+
+
+-----------
+
 下面是avx2的实现代码
 
 #+BEGIN_SRC C++
