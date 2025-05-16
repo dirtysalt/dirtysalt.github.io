@@ -1,5 +1,42 @@
 #+title: 网络文章@202505
 
+----------
+A very funny but tricky bug I came across recently (Still need to confirm in CI/CD env [[Bugfix] Fix avx512 unaligned store by dirtysalt · Pull Request #59035 · StarRocks/starrocks](https://github.com/StarRocks/starrocks/pull/59035))
+
+if you write avx2 instruction like, compiler respects your intention and generates "unaligned store"
+
+#+BEGIN_QUOTE
+_mm256_storeu_si256((__m256i*)p, x);
+#+END_QUOTE
+
+however if you write avx512 instruction like, compiler maybe think you give a hint that `p` is aligned to 64B, and generates "aligned store"
+
+#+BEGIN_QUOTE
+_mm512_storeu_si512((__m512i*)p, x);
+#+END_QUOTE
+
+And according to gpt explanation, it's because definition of `__m512i` is
+
+#+BEGIN_QUOTE
+typedef long long __m512i __attribute__((__vector_size__(64), __aligned__(64)));
+#+END_QUOTE
+
+Here are the instructions that generated SIGSEGV
+
+#+BEGIN_EXAMPLE
+   0x0000000029b7382e <+331>:   je     0x29b7383d <starrocks::delta_decode_chain_int32_avx512(int32_t*, int, int32_t, int32_t&)+346>
+   0x0000000029b73830 <+333>:   mov    $0x40,%esi
+   0x0000000029b73835 <+338>:   mov    %rax,%rdi
+   0x0000000029b73838 <+341>:   call   0x19824bf0 <__asan_report_store_n>
+=> 0x0000000029b7383d <+346>:   vmovdqa64 %zmm0,-0x180(%r13)
+   0x0000000029b73844 <+353>:   vpxor  %xmm0,%xmm0,%xmm0
+   0x0000000029b73848 <+357>:   lea    -0x100(%r13),%rax
+   0x0000000029b7384f <+364>:   mov    %rax,%rdx
+   0x0000000029b73852 <+367>:   shr    $0x3,%rdx
+   0x0000000029b73856 <+371>:   add    $0x7fff8000,%rdx
+#+END_EXAMPLE
+
+
 -------
 ETH Zurich Talk Jeff 2025.Apr14
 
