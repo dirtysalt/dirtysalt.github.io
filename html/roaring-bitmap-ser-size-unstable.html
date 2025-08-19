@@ -16,15 +16,15 @@
 <h2>Table of Contents</h2>
 <div id="text-table-of-contents" role="doc-toc">
 <ul>
-<li><a href="#org7c2691b">1. 问题复现</a></li>
-<li><a href="#orgba0de29">2. 问题分析</a></li>
-<li><a href="#orgce5a7ff">3. 复现代码</a></li>
+<li><a href="#org7f32cee">1. 问题复现</a></li>
+<li><a href="#orgfef3f2f">2. 问题分析</a></li>
+<li><a href="#orgb578e8d">3. 复现代码</a></li>
 </ul>
 </div>
 </div>
 
-<div id="outline-container-org7c2691b" class="outline-2">
-<h2 id="org7c2691b"><span class="section-number-2">1.</span> 问题复现</h2>
+<div id="outline-container-org7f32cee" class="outline-2">
+<h2 id="org7f32cee"><span class="section-number-2">1.</span> 问题复现</h2>
 <div class="outline-text-2" id="text-1">
 <p>
 复现代码可以看最末尾，运行结果如下：
@@ -38,7 +38,7 @@
 <li>`(bitmap ^ bitmap2).cardinality() = 0` 可以认为两个bitmap语义上完全一致。</li>
 </ul>
 
-<pre class="example" id="orgbc9b58b">
+<pre class="example" id="orgede8cb7">
 allocate size 1073
 write size 1073
 =========
@@ -52,8 +52,8 @@ check equality. card = 0
 </div>
 </div>
 
-<div id="outline-container-orgba0de29" class="outline-2">
-<h2 id="orgba0de29"><span class="section-number-2">2.</span> 问题分析</h2>
+<div id="outline-container-orgfef3f2f" class="outline-2">
+<h2 id="orgfef3f2f"><span class="section-number-2">2.</span> 问题分析</h2>
 <div class="outline-text-2" id="text-2">
 <p>
 这个问题只有在 `bitmap_serialize_version=2` 的时候才会出现。当 `bitmap_serialize_version=2` 的时候，roaring bitmap可能会使用 `array_of_uint32` 而不是 `container` 的方式。其中 `container` 格式是最开始的格式，几乎就是将内存印象dump出去，能够完整地保留原始的数据结构。而使用 `array_of_uint32` 的话，是将bitmap value原始值存储起来，反序列化的时候重新将这些value添加进来。这种存储格式对于稀疏bitmap非常有帮助，缺点就是前后内存格式可能会出现差别。
@@ -61,10 +61,10 @@ check equality. card = 0
 
 <div class="org-src-container">
 <pre class="src src-C++"><span class="org-type">size_t</span> <span class="org-function-name">roaring_bitmap_size_in_bytes</span>(<span class="org-keyword">const</span> <span class="org-type">roaring_bitmap_t</span> *<span class="org-variable-name">r</span>) {
-    <span class="org-type">size_t</span> <span class="org-variable-name">portablesize</span> = roaring_bitmap_portable_size_in_bytes(r); <span class="org-comment-delimiter">// </span><span class="org-comment">&lt;-- container&#26684;&#24335;</span>
-    <span class="org-type">uint64_t</span> <span class="org-variable-name">sizeasarray</span> = roaring_bitmap_get_cardinality(r) * <span class="org-keyword">sizeof</span>(uint32_t) +
-                         <span class="org-keyword">sizeof</span>(uint32_t); <span class="org-comment-delimiter">// </span><span class="org-comment">&lt;-- array of uint32 &#26684;&#24335;</span>
-    <span class="org-keyword">return</span> portablesize &lt; sizeasarray ? portablesize + 1 : (<span class="org-type">size_t</span>)sizeasarray + 1;
+    <span class="org-type">size_t</span> <span class="org-variable-name">portablesize</span> = roaring_bitmap_portable_size_in_bytes(r); <span class="org-comment-delimiter">// </span><span class="org-comment">&lt;-- container&#26684;&#24335;
+</span>    <span class="org-type">uint64_t</span> <span class="org-variable-name">sizeasarray</span> = roaring_bitmap_get_cardinality(r) * <span class="org-keyword">sizeof</span>(uint32_t) +
+                         <span class="org-keyword">sizeof</span>(uint32_t); <span class="org-comment-delimiter">// </span><span class="org-comment">&lt;-- array of uint32 &#26684;&#24335;
+</span>    <span class="org-keyword">return</span> portablesize &lt; sizeasarray ? portablesize + 1 : (<span class="org-type">size_t</span>)sizeasarray + 1;
 }
 
 <span class="org-type">size_t</span> <span class="org-function-name">roaring_bitmap_serialize</span>(<span class="org-keyword">const</span> <span class="org-type">roaring_bitmap_t</span> *<span class="org-variable-name">r</span>, <span class="org-type">char</span> *<span class="org-variable-name">buf</span>) {
@@ -121,13 +121,13 @@ roaring bitmap里面有3类container: bitset(B), array(A), run(R) (可以认为�
 </div>
 </div>
 
-<div id="outline-container-orgce5a7ff" class="outline-2">
-<h2 id="orgce5a7ff"><span class="section-number-2">3.</span> 复现代码</h2>
+<div id="outline-container-orgb578e8d" class="outline-2">
+<h2 id="orgb578e8d"><span class="section-number-2">3.</span> 复现代码</h2>
 <div class="outline-text-2" id="text-3">
 <div class="org-src-container">
-<pre class="src src-C++"><span class="org-comment-delimiter">/* </span><span class="org-comment">coding:utf-8</span>
-<span class="org-comment"> * Copyright (C) dirlt</span>
-<span class="org-comment-delimiter"> */</span>
+<pre class="src src-C++"><span class="org-comment-delimiter">/* </span><span class="org-comment">coding:utf-8
+ * Copyright (C) dirlt
+</span><span class="org-comment-delimiter"> */</span>
 
 <span class="org-preprocessor">#include</span> <span class="org-string">&lt;cstdio&gt;</span>
 <span class="org-preprocessor">#include</span> <span class="org-string">&lt;roaring/roaring.hh&gt;</span>
