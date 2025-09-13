@@ -418,28 +418,6 @@ uh, which we never see.
 
 Um, and- and wh- which statistically it's extremely unlikely
 
-# Chapter 2
-
-But in principle, because of all the collisions between them
-
-there could be some sort of weird conspiracy that- that
-
-um, like maybe there's a microscopic demon called Maxwell's demon that will
-
-um.
-
-..
-
-Every time a oxygen and nitrogen atom collide
-
-they will bounce off in such a way that the oxygen sort of drifts onto one side and then nitrogen goes to the other
-
-and, uh, you could have an extremely improbable configuration emerge
-
-uh, which we never see.
-
-Um, and- and wh- which statistically it's extremely unlikely
-
 but mathematically it's possible that this can happen and we can't rule it out.
 
 Um, and this is a s- situation that shows up a lot in mathematics.
@@ -625,6 +603,48 @@ How does that help you get closer to the proof of something?
 Right.
 
 So it provides what's called an ob- obstruction in mathematics.
+
+Um, so, so what I did was that
+
+uh, basically if I turned off the
+
+um, certain parts of the equation so that.
+
+..
+
+Which usually when you turn off certain interactions make it less nonlinear
+
+it makes it more regular and less likely to blow up.
+
+But I found that by turning off a very well designed set of
+
+of, of, of, of, of interactions
+
+I could force all the energy to blow up
+
+uh, in finite time.
+
+So what that means is that if you wanted to prove
+
+um, global regularity for Navier-Stokes, um, for the actual equation
+
+you had, uh, you must use some feature of the true equation
+
+which, which my artificial equation, um, does not satisfy.
+
+So it, it rules out certain, um
+
+certain approaches.
+
+So, um, it's.
+
+..
+
+The thing about math is, is, is it's not just about finding
+
+uh, you know, taking a technique that is gonna work and applying it
+
+# Chapter 2
 
 Um, so, so what I did was that
 
@@ -903,28 +923,6 @@ um, um.
 ..
 
 every time you- you get energy at one scale
-
-you- you push it immediately to the next scale as- as fast as possible.
-
-This is sort of the naive way to- to- to- to force blow up
-
-um, which is like in five and higher dimensions this works.
-
-Um, but in three dimensions there was this funny phenomenon that I discovered
-
-that if you- if you keep.
-
-..
-
-if- if you change the laws of physics
-
-you just always keep trying to push, um
-
-the energy into smaller and smaller scales, um
-
-what happens is that the energy s- starts getting spread out into multi- ma- many scales at once
-
-# Chapter 3
 
 you- you push it immediately to the next scale as- as fast as possible.
 
@@ -1394,7 +1392,27 @@ Um, but basically through engineering, you know
 
 by, by, by s- specially designing things in a very special way you can make clever constructions.
 
-# Chapter 4
+# Chapter 3
+
+Like, uh, it's gonna be, um
+
+you can't just directly take the constructions in the game of life and plunk them in
+
+but again, it just, it shows it's possible.
+
+You know, there's a kind of emergence that happens with these cellular automata local rules.
+
+Mm-hmm.
+
+Maybe it's similar to fluids, I don't know
+
+but local rules operating at scale can create these incredibly complex dynamic structures.
+
+Do you think any of that is amenable to mathematical analysis?
+
+Do we have the tools to say something profound about that?
+
+The thing is you can get this emergent very complicated structures
 
 but only with very carefully prepared initial conditions
 
@@ -1894,28 +1912,6 @@ there's, uh, there's a lot less sort of speculation about
 
 you know, suppose I did this, what would happen?
 
-# Chapter 5
-
-Um, in almost any other discipline, uh
-
-you start with conclusions, you know, I want to do this
-
-I want to build a bridge, you know
-
-I want, I want to, to make money
-
-I want to do this, okay?
-
-And then you, you, you find the paths to get there.
-
-Um, a lot.
-
-..
-
-there's, uh, there's a lot less sort of speculation about
-
-you know, suppose I did this, what would happen?
-
 Um, you know, planning and, and modeling.
 
 Um, uh, speculative fiction maybe is, is one other place
@@ -2121,6 +2117,48 @@ the.
 I don't believe it's providing a kind of formal explanation of the different positions.
 
 No.
+
+It's just saying which position is better or not
+
+and then you can intuit as a human being
+
+and then from that, we humans can construct- Yes.
+
+.
+
+.
+
+a theory of the matter.
+
+Right.
+
+You've mentioned the Plato's cave allegory.
+
+Mm-hmm.
+
+So in case people don't know, it's where people are observing shadows of reality
+
+not reality itself, and they believe what they're observing to be reality.
+
+Is that, in some sense, what mathematicians and maybe all humans are doing
+
+is, um, looking at shadows of reality?
+
+Do.
+
+..
+
+is it possible for us to truly access reality?
+
+Well, there are these three ontological things.
+
+There's actual reality, there's our observations, and our- our models.
+
+Um, and- and technically, they are distinct
+
+and I think they will always be distinct
+
+# Chapter 4
 
 It's just saying which position is better or not
 
@@ -2467,28 +2505,6 @@ and we can prove in various cases that
 that these, these bell curves, these Gaussians emerge
 
 and it is a satisfying, satisfying explanation.
-
-Um, sometimes they don't.
-
-Um, so, so if you have many different inputs and they're all correlated in some s- systemic way
-
-then y- you can get something very far from a bell curve to show up.
-
-Uh, and this is also important to know when such a system fails.
-
-So universality is not a 100% reliable thing to rely on at that
-
-um, um.
-
-..
-
-there the global financial crisis was a, a famous example of this.
-
-Uh, people thought that, uh, um
-
-mortgage de- defaults, um, um, had this sort of
-
-# Chapter 6
 
 Um, sometimes they don't.
 
@@ -3042,7 +3058,27 @@ which I also find beautiful and fun, uh
 
 where people use different programming languages to try to write the shortest possible program that accomplishes a particular task.
 
-# Chapter 7
+# Chapter 5
+
+for, um, writing code well so that other people can use it
+
+build upon it and so on, and has fewer bugs and whatever.
+
+Mm-hmm.
+
+Um, and there's similar things with math- mathematics
+
+so.
+
+Yeah, the.
+
+..
+
+ First of all, there's so many beautiful things there and Conway is one of the great minds
+
+uh, in mathematics ever and computer science.
+
+Uh, just even considering the space of proofs- Yeah.
 
 .
 
@@ -3628,28 +3664,6 @@ This is why analogies are so important, you know?
 
 I mean, so yeah, when.
 
-# Chapter 8
-
-.
-
-like you mentioned.
-
-Yeah.
-
-Yeah, yeah, yeah.
-
-That now we're just.
-
-..
-
-It's- it's very hard to use our limited ape descendants of
-
-uh, uh, cognition to intuit what that reality really is like.
-
-This is why analogies are so important, you know?
-
-I mean, so yeah, when.
-
 ..
 
 The round Earth is not intuitive because we're- we're stuck on it.
@@ -3928,6 +3942,48 @@ because of the curvature of the sphere, um
 
 there's- there was a certain non-linear effect, which was a non-perturbative effect.
 
+# Chapter 6
+
+If- if- if you wiggle an arrow, it will- it will propagate and- and make all the arrows move kind of like
+
+uh, sheaves of wheat in a wheat field.
+
+And I was interested in the global regularity problem again for this ques- like
+
+is it possible for- for all the energy here to- to collect at a point?
+
+So the equation I considered was actually what's called a critical equation
+
+where it's actually the behavior at all scales is roughly the same
+
+um, and I was able barely to show that- um
+
+that you couldn't actually force a scenario where all the energy concentrated at one point
+
+that the energy w- I had to dismiss a little bit
+
+and the moment it disappeared a little- a little bit
+
+it would- it would- it would stay regular.
+
+Yeah, this was back in 2000.
+
+That was part of why I got interested in Navier-Stokes afterwards
+
+actually.
+
+Yeah, so I developed some techniques to
+
+um, solve that problem.
+
+So part of it is- it- it was
+
+um, this problem is really non-linear, uh
+
+because of the curvature of the sphere, um
+
+there's- there was a certain non-linear effect, which was a non-perturbative effect.
+
 It was, when you sort of looked at it normally
 
 it- it looked larger than the linear effects of the wave eq- equation
@@ -4145,28 +4201,6 @@ you know, if I wanted to plot a function before
 which is moderately complicated as some iteration or something
 
 you know, I'd had to, to remember how to set up a Python program and
-
-and, and, and, and how does a full loop work and
-
-and debug it and it would've taken two hours and so forth.
-
-And, and now I can do it in 10
-
-15 minutes as, as much.
-
-Um, yeah, I'm, I'm using more and more
-
-uh, computers to do simple ex- uh
-
-explorations.
-
-Let's talk about AI a l- a little bit if we could.
-
-So, um, maybe a good entry point is just talking about computer assisted proofs in general.
-
-Can you describe the lean formal proof programming language and how it can help as a proof assistant and maybe how you started using it and how
-
-# Chapter 9
 
 and, and, and, and how does a full loop work and
 
@@ -4712,15 +4746,35 @@ So math research projects sort of by their nature
 
 when you start, you don't really know how to do the problem.
 
-Um, it's not like an engineering project where some other theory has been established for decades and it's
+# Chapter 7
 
-it's implementation is the main difficulty.
+..
 
-You have to figure out even what is the right path.
+have never met in person, um, and I'm.
 
-Uh, so, so this is what I said about
+..
 
-# Chapter 10
+may not know actually even whether they're.
+
+..
+
+um, how reliable they are in, in
+
+in their, um, um, in, in the proof they give me.
+
+But Lean gives me a certificate of, of trust
+
+um, so I can do, I can do trustless mathematics.
+
+So there's so many interesting questions.
+
+There's.
+
+..
+
+So, so one, you're, you're known for being a great collaborator.
+
+So what is the right way to approach solving a difficult problem in mathematics when you're collaborating?
 
 Are you doing a divide and conquer type of thing or are you brain s-.
 
@@ -5320,28 +5374,6 @@ it becomes gamed, um, and then it is no longer a useful measure.
 
 Oh, humans, always ga-  Yeah, yeah
 
-# Chapter 11
-
-It's an interesting.
-
-..
-
-At, at least it's a very interesting metric.
-
-Yeah, I think it's interesting to study.
-
-I mean, I think you can, you can do studies of
-
-of whether these are better predictors.
-
-Um, there's this problem called Goodhart's law.
-
-If a statistic is actually used to incentivize performance
-
-it becomes gamed, um, and then it is no longer a useful measure.
-
-Oh, humans, always ga-  Yeah, yeah
-
 no- A- always gaming the systems.
 
 No, I mean, it's, it's, it's rational.
@@ -5529,6 +5561,48 @@ Um, like you can make a few minor grammatical errors and a speaker in a second l
 Um, yeah, but, but formal language
 
 yeah, you know, if- if you get one little thing wrong
+
+um, I think that the whole thing is- is- is nonsense.
+
+Got it.
+
+Um, even formal to formal is- is- is very hard.
+
+There, there are different incompatible, um, uh
+
+proof assistant languages.
+
+Uh, there's Lean but also Coq and Isabelle and- and so forth.
+
+And I keep.
+
+..
+
+Even converting from a formal language to an informal language
+
+um, is, uh, is an unsolved
+
+basically unsolvable problem.
+
+That is fascinating.
+
+Okay, so, uh, but once you have an informal language
+
+they're using, um, their RL-trained model, so some- something akin to AlphaZero that they use in Go- Yes.
+
+ .
+
+..
+
+to then try to come up with proofs.
+
+They also have a model, I believe it's a separate model for geometric problems.
+
+Yes.
+
+So what impresses you about this system and
+
+# Chapter 8
 
 um, I think that the whole thing is- is- is nonsense.
 
@@ -5861,28 +5935,6 @@ we, we've, we've had human-generated mathematics that's very low quality
 um, uh, like, you know, su- submissions maybe who don't have the formal training and so forth.
 
 But if a human proof is bad, you can tell it's bad pretty quickly.
-
-Mm-hmm.
-
-It makes really basic mistakes.
-
-But the AI-generated proofs, they can look superficially flawless- Yeah.
-
-.
-
-.
-
-uh, and it's partly because that's what the reinforcement learning has actually trained them to do
-
-uh, to, to make things.
-
-..
-
-to, to produce text that looks like c- um
-
-uh, what is correct, which for many applications is good enough.
-
-# Chapter 12
 
 Mm-hmm.
 
@@ -6488,19 +6540,39 @@ Um, AI is getting quite good at literature review.
 
 Um, I mean there's still a problem with
 
-um, hallucinating, you know, references that don't exist.
+# Chapter 9
 
-Um, but this I think is a solvable problem.
+with AI to propose things and then the human goes and tries it and it
 
-If you train in the right way and so forth
+and the contract doesn't work, um, but the
 
-you can, you can.
+it might pose a different idea, um
 
-..
+it, it's hard to disentangle exactly.
 
-And um, and verify, um, using the internet.
+Um, there are certainly math results which could only have been accomplished because there was a math
 
-# Chapter 13
+method, human mathematician and an AI involved.
+
+Um, but it's hard to sort of disentangle credit.
+
+Um, I mean these tools, they, they do not
+
+uh, replicate all the skills needed to do mathematics.
+
+But they can replicate sort of some non-trivial percentage of them
+
+you know, 30, 40%.
+
+So they can fill in gaps, um
+
+you know, so uh, coding is, is
+
+is a good example, you know, so I
+
+I, um, um, it's annoying for me to code in Python and I'm not
+
+I'm not a native, um, I'm not a professional programmer.
 
 Um, but um, the- with AI the fr- the friction cost of doing it is much reduced.
 
@@ -7030,28 +7102,6 @@ you couldn't see how to, um, resolve in any way
 
 uh, that you couldn't do any surgery to.
 
-# Chapter 14
-
-where the, uh, the surface sort of creates a.
-
-..
-
-behaves like a, like a, like a
-
-a barbell and it, it, it pinches at a point.
-
-Some s- some singularities are simple enough that you can still see what to do next
-
-you just make a snip and then you can turn one surface into two and you evolve them separately.
-
-But there was, there was a con- the prospect that there's some really nasty
-
-like, knotted singularities showed up that you
-
-you couldn't see how to, um, resolve in any way
-
-uh, that you couldn't do any surgery to.
-
 Mm-hmm.
 
 Um, so you need to classify all the singularities
@@ -7350,6 +7400,48 @@ not sure we would've started the project.
 
 You know, sometimes actually having the incorrect.
 
+# Chapter 10
+
+And this term turned out to be worse than the other 12 terms put together.
+
+Um, in fact, we could not estimate this term.
+
+Um, and we tried for a few more months
+
+uh, and all different permutations and there was always this one thing
+
+one term that we could not control.
+
+Um, and so like, um, this was very frustrating.
+
+Um, but because we had already invested months and months of effort into this already
+
+um, we stuck at this.
+
+We, we tried increasingly desperate things and
+
+and crazy things.
+
+Um, and after two years, we found an approach which is actually somewhat different by quite a bit from our initial
+
+um, strategy, which did actually, didn't generate these problematic terms and
+
+and, and actually solved the problem.
+
+So we, we solved the pr- problem after two years.
+
+But if we hadn't had that initial full storm of nearly solving the problem
+
+we would have given up by month two or something
+
+and, and worked on an easier problem.
+
+Um, yeah, if we had known it would take two years 
+
+not sure we would've started the project.
+
+You know, sometimes actually having the incorrect.
+
 ..
 
 you know, it's, it's like Columbus traveling to the New Y- New World.
@@ -7575,28 +7667,6 @@ We, it's been-.
 amazingly hard to relate the two.
 
 And we should say that the twin prime conjecture is just that.
-
-It posits that there are infinitely many pairs of prime numbers that differ by two.
-
-Yes.
-
-Now, the interesting thing is that you have been very successful at pushing forward the field in answering these complicated questions
-
-uh, of this variety, like you mentioned
-
-the green tile theorem.
-
-It proves that prime numbers contain arithmetic progressions of any length.
-
-Right.
-
-Which is mind-blowing that you can prove something like that.
-
-Right.
-
-Yeah, so what we've realized because of th- this
-
-# Chapter 15
 
 It posits that there are infinitely many pairs of prime numbers that differ by two.
 
@@ -8222,23 +8292,43 @@ Um.
 
 Twin prime and Goldbach prime?
 
-Twin prime, I think we will keep getting- Ten years?
+# Chapter 11
 
-.
+uh, for fun.
+
+Uh, and usually you get nowhere.
+
+Yeah, yeah, so you have to learn to just say
+
+"Okay, fine.
+
+I.
 
 ..
 
-keep getting more partial results.
+Once again, uh, nothing happened.
 
-Um, uh, it does need at least one.
+I wi- I will move on.
 
-..
+" Um, yeah, very occasionally one of these problems I actually solved.
 
-Uh, this parity barrier is, is the biggest remaining obstacle.
+Uh, uh, well, sometimes as you say
 
-Um, there are simpler versions of the conjecture where we are getting really close.
+uh, you think you solved it and then you're euphoric for
 
-# Chapter 16
+uh, maybe 15 minutes and then you think
+
+"I should check this 'cause this is too easy
+
+too good to be true.
+
+" And it usually is.
+
+What's your gut say about when these problems would be
+
+uh, solved?
+
+Um.
 
 ..
 
@@ -8766,28 +8856,6 @@ uh, s- s- having a fra- mathematical framework to say anything about cellular au
 
 maybe the same kind of framework is required- Yeah.
 
-# Chapter 17
-
-You could, you could, you could, uh
-
-um, you could make a program that if
-
-if your number you insert in was encoded as a prime
-
-it would sink to zero, it would go down
-
-otherwise it would go up, uh, and things like that.
-
-Um, so the general class of problems is
-
-is really, uh, as complicated as all the mathematics.
-
-Some of the mystery of the cellular automata that we talked about
-
-uh, s- s- having a fra- mathematical framework to say anything about cellular automata
-
-maybe the same kind of framework is required- Yeah.
-
 Yeah.
 
 .
@@ -9009,6 +9077,48 @@ No, he's, he's somewhat of an outlier
 um, even among mathematicians who tend to
 
 uh, to have, uh, somewhat idealistic views.
+
+Um, I've never met him.
+
+Uh, I think I'd be interested to meet him one day
+
+but I, I never had the chance.
+
+I, I know people who met him.
+
+He's always had strong views about certain things.
+
+Um, you know, I mean, it's
+
+it's not like he was completely isolated from the
+
+the math community.
+
+I mean, he would, he would give talks and- Mm-hmm.
+
+.
+
+..
+
+and write papers and so forth.
+
+Um, but at some point he just decided not to engage with the rest of the community.
+
+He was, he was disillusioned or something.
+
+Um, I don't know.
+
+Um, and he decided to, to, uh
+
+uh, to peace out, uh, and
+
+you know, collect mushrooms in St Petersburg or something.
+
+Right.
+
+And, and that's, that's fine, you know.
+
+# Chapter 12
 
 Um, I've never met him.
 
@@ -9377,28 +9487,6 @@ they can't be good mathematicians.
 I mean, they could be math, good mathematicians in
 
 in a very different style, uh, and we need people w- with a different style.
-
-Um, and, you know, even if.
-
-..
-
-Uh, and sometimes too much focus is given on the
-
-on the person who d- does the last step to complete
-
-um-.
-
-..
-
-a, a project in mathematics or elsewhere that's
-
-that's really taken, you know, centuries or decades of lots and lots of building on lots of previous work.
-
-Um, but that's a s- a story that's difficult to tell
-
-um, if you're not an expert because
-
-# Chapter 18
 
 Um, and, you know, even if.
 
@@ -9926,23 +10014,43 @@ It seems like programming is somehow maybe just a feeling
 
 but it feels more accessible to folks than math.
 
-Yeah.
+# Chapter 13
 
-Math is seen as this like extreme, especially modern mathematics
+um, amateur mathematicians can like discover new primes and so forth.
 
-seen as this extremely difficult to enter area and programming is not.
+But, but previously because we have to verify every single contribution
 
-So that could be just an entry point.
+um, like most mathematical research projects, it would not help to have input from the general public.
 
-You can execute code and you can get results.
+In fact it would probably, it would just be
 
-You know, you can print out how the world pretty quickly.
+be time-consuming because just error checking and everything.
 
-Yeah.
+Um, but you know, one thing about these formalization projects is that they are bringing together more.
 
-Um, you know, like if, uh
+..
 
-# Chapter 19
+bringing in more people.
+
+So I'm sure there are high school students who have already contributed to some of these
+
+these formalizing projects, who contribute to MathLib.
+
+Um, you know, you don't need to be a PhD holder to just work on this one atomic thing.
+
+There's something about the formalization here that also
+
+uh, uh, at the very first step opens it up to the programming community too.
+
+Yes.
+
+The people who are already comfortable- Yes.
+
+.
+
+..
+
+with programming.
 
 It seems like programming is somehow maybe just a feeling
 
@@ -10481,28 +10589,6 @@ Yeah.
 Yeah, yeah.
 
 So we're already like a collective intelligence.
-
-Yes, yeah.
-
-I guess.
-
-Uh, so- so humanity plural has much more intelligence in principle
-
-on its good days-  .
-
-..
-
-than- than- than the individual humans put together.
-
-Uh, it can also have less, okay?
-
-But, uh, um, yeah, so yeah
-
-mathemat- method- the mathematical community plural is- is- is incredibly super intelligent
-
-uh, entity, um, that, uh, no single human mathematician can- can come close to- to- to replicating.
-
-# Chapter 20
 
 Yes, yeah.
 

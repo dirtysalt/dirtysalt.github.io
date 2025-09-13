@@ -330,28 +330,6 @@ But what's happening now, uh, r- really I spent much of the '90s and the late 19
 
 I wrote a series of books about it.
 
-# Chapter 2
-
-uh, also non-obvious, but it's just, there's a first
-
-a kind of settlement, a stabilization of where the people are living
-
-then they start using agriculture, then they start getting urban centers and that kind of stuff.
-
-It seems like an entirely reasonable argument.
-
-Every- everything, everything about that makes sense.
-
-There is no doubt that you're seeing, uh
-
-evolutionary progress, uh, social evolution taking, taking place in those thousands of years before Sumer
-
-uh, emerges.
-
-But what's happening now, uh, r- really I spent much of the '90s and the late 1980s investigating this issue of a lost civilization.
-
-I wrote a series of books about it.
-
 But by 2002 when I published a book called Underworld
 
 which was the re- most massive and most heavy book that I've ever written because I was writing very defensively at the time.
@@ -489,6 +467,48 @@ The, the people who created Gobekli Tepe were all hunter-foragers at the beginni
 But by the time Gobekli Tepe was finished
 
 and it was definitely deliberately finished, closed off
+
+closed down, deliberately buried, covered with earth
+
+covered with rubble, uh, and then topped off with a hill
+
+which is, which is why Gobekli Tepe is called
+
+um, what it is.
+
+Gobekli Tepe means potbellied hill or the hill of the navel.
+
+For a long time, Gobekli Tepe was thought to be just a hill that looked a bit like a pot belly.
+
+Can you say how i- it was discovered?
+
+I think, I think this is one of the most fascinating- Well- .
+
+..
+
+things on earth, period.
+
+So maybe can you say what it is?
+
+Yeah.
+
+And how it was discovered?
+
+ Well, Go- Gobekli Tepe is, uh
+
+first of all the, the oldest fully elaborated megalithic site that we know of anywhere in the world.
+
+It doesn't mean the older ones won't be found
+
+but it is the oldest so far found.
+
+Um, the part of the site that's been excavated
+
+which is a tiny percentage of the whole site
+
+we do know, my first visit to Gobekli Tepe was in 2013
+
+# Chapter 2
 
 closed down, deliberately buried, covered with earth
 
@@ -685,28 +705,6 @@ And while it was being elaborated as a site
 we see agriculture.
 
 ..
-
-I'm gonna use the word being introduced.
-
-Uh, it had n- there'd been no sign of it before and suddenly it's there
-
-and to me that's another of the mysteries about Gobekli Tepe.
-
-And then with the new work that- that's being done
-
-we realized that it's part of a much wider phenomenon
-
-uh, which spreads across an enormous distance.
-
-Um, and- and, um, the puzzling thing is that after Gobekli Tepe
-
-there almost seems to be a decline.
-
-Things- things fall down again, and- and then we enter this long slow process of the Neolithic
-
-thousands of years, uh, gradual developments until we come to ancient Sumer and- and- and Mesopotamia.
-
-# Chapter 3
 
 I'm gonna use the word being introduced.
 
@@ -1086,9 +1084,29 @@ Some scholars would s- would say it was a bit less than that
 
 a bit more, but you're talking fractions.
 
-It's, it's in that area, 25,920 years.
+# Chapter 3
 
-# Chapter 4
+What's c- what constellation is housing the sun at dawn on the spring equinox?
+
+Uh, right now it's Pisces.
+
+In another 150 years or so, it'll be Aquarius.
+
+We, we do live in the dawning of the age of Aquarius.
+
+Uh, back in the time of, um
+
+the late ancient Egyptians, it was Aries
+
+going back to the time of Ramesses or before.
+
+Before that, it was Taurus.
+
+And so on and so forth.
+
+It's backwards through the zodiac, uh, until 12
+
+500 years ago, you come to the age of Leo when the constellation of Leo houses the sun on the spring equinox.
 
 Now this process unfolds very, very, very
 
@@ -1482,28 +1500,6 @@ uh, and, and including oceanography as well.
 
 Um, uh, and, and, uh, they are collectively puzzled by the sudden onset of the Younger Dryas
 
-# Chapter 5
-
-.
-
-..
-
-that resulted in such rapid environmental change, so can you explain this hypothesis?
-
-Yes, um, the y- the Younger Dryas Impact Hypothesis
-
-YDIH for short, uh, is, uh
-
-is not a lunatic fringe theory as its opponents often attempt to write it off.
-
-Um, it's the work of more than 60 major scientists
-
-uh, working across many different disciplines, including archeology
-
-uh, and, and including oceanography as well.
-
-Um, uh, and, and, uh, they are collectively puzzled by the sudden onset of the Younger Dryas
-
 and by the fact that is, it is accompanied 12
 
 800 years ago by a distinct layer in the earth.
@@ -1627,6 +1623,48 @@ Like, what explains this huge dip in temperature and then rise in temperature?
 The abrupt cessation of the global meridional overturning circulation of which the Gulf Stream is the best known part.
 
 Uh, the main theory that's been put forward up to now
+
+and I don't dispute that theory at all
+
+is that the sudden freeze was becau- was caused by the cutting off of the Gulf Stream
+
+basically, uh, which is part of the central heating system of our planet so no
+
+no wonder it became c- c- cold.
+
+But what's not really been addressed before is why that happened
+
+why the Gulf Stream was cut, why a sudden pulse of melt water went into the world ocean and
+
+and it was s- so much of it and it was so cold that it actually stopped the Gulf Stream in its tracks.
+
+And that's where the Younger Dryas Impact Hypothesis offers a very elegant and very satisfactory solution
+
+uh, to the problem.
+
+Now, the hypothesis of course is broader than that.
+
+Uh, amongst the scientists working on it are
+
+for example, Bill Napier, an astrophysicist and astronomer.
+
+Um, they have assembled a great deal of evidence which suggests that the culprit in the Younger Dryas impact event
+
+or events, was what we now call the torrid meteor stream
+
+uh, which the earth still passes through twice a year.
+
+It's now about 30 million kilometers wide.
+
+Takes the earth a couple of days to
+
+to pass through it on its orbit.
+
+It passed through it in June and it passes through it at the end of October.
+
+The suggestion is that the torrid meteor stream is the end product of a very large comet that entered the solar system round about 20
+
+# Chapter 4
 
 and I don't dispute that theory at all
 
@@ -1793,28 +1831,6 @@ Um, the, so, so it's, it's a hypothesis that has its opponents and even within
 within those of us who are looking at the alternative side of history
 
 there are different points of view.
-
-Uh, Robert Schoch from Boston University, the geologist who demonstrated that the erosion on the Sphinx may well have been caused by exposure to a long period of very heavy rainfall
-
-uh, he doesn't go for the Younger Dryas Impact Hypothesis.
-
-He think, he, he fully accepts that the Younger Dryas was a global cataclysm
-
-uh, and that the extinctions took place
-
-but he thinks it was caused by some kind of massive solar outburst.
-
-So there, there, what everybody's agreed on is the Younger Dryas was bad
-
-um, but there is dispute about what caused it.
-
-I personally have found the Younger Dryas Impact Hypothesis to be the most persuasive
-
-uh, which most effectively explains all the evidence.
-
-How important is the impact hypothesis to your understanding of
-
-# Chapter 6
 
 Uh, Robert Schoch from Boston University, the geologist who demonstrated that the erosion on the Sphinx may well have been caused by exposure to a long period of very heavy rainfall
 
@@ -2160,11 +2176,31 @@ uh, and that it, over the thousands of years it became damaged
 
 it became eroded, particularly the part of it that
 
-that sticks out, the head.
+# Chapter 5
 
-Uh, there were periods when the Sphinx was completely covered in sand but still the head stuck out.
+There's a, there's a bit of a
 
-# Chapter 7
+a twist, is they're not, they're not quite right.
+
+But as you precess the stars backwards, as you go back
+
+and back, and back, and you come to around 10
+
+500 BC, 12 and a half thousand years ago
+
+in the Younger Dryas, you find that suddenly they line up perfectly
+
+they match perfectly with the three pyramids on the ground.
+
+And that's the same moment that the Great Sphinx
+
+an equinoctial monument, aligned perfectly to the rising sun on the spring equinox.
+
+Anybody can test this for themselves, just
+
+just go to Giza on the 21st of March
+
+be there before dawn, stand behind the Sphinx
 
 and you will see the sun rising directly in line with the gaze of the Sphinx.
 
@@ -2494,28 +2530,6 @@ uh, quite- quite recognizable, but the dispute around it is whether that is a ge
 
 uh, or whether Howard Vyse, uh, actually put it there himself
 
-# Chapter 8
-
-In the top of these five chambers, a British adventurer and vandal called Howard Vyse
-
-who- who dynamited his way into those chambers in the first place
-
-allegedly found.
-
-..
-
-well, he claims he found the graffiti
-
-uh, uh, a piece of graffiti left by a work gang naming the Pharaoh Khufu
-
-and it's true.
-
-I've been in that chamber and there is the cartouche of Khufu there
-
-uh, quite- quite recognizable, but the dispute around it is whether that is a genuine piece of graffiti dating from the Old Kingdom
-
-uh, or whether Howard Vyse, uh, actually put it there himself
-
 uh, because he was in desperate need of money at the time.
 
 Um, I'm not sure what the answer to that question is.
@@ -2647,6 +2661,48 @@ It means the first time.
 This is when the gods walked the earth.
 
 Uh, this is when, uh, seven sages brought wisdom to ancient Egypt
+
+uh, and that is seen as the origin of ancient Egyptian civilization.
+
+There are king lists in.
+
+..
+
+By the ancient Egyptians themselves, there are king lists that go wa- go back way beyond the first dynasty
+
+go back 30,000 years into the past in ancient Egypt
+
+considered to be entirely mythical by Egyptologists.
+
+But nevertheless, it's interesting that there's that
+
+that reference to, to remote time.
+
+Now, what you also have in Egypt are what might almost be described as secret societies.
+
+Uh, the Followers of Horus are one of those specifically tasked with bringing forward the knowledge from the first time
+
+uh, into later periods.
+
+Uh, the Souls of Pe and Nekhen are another one of these
+
+um, mysterious secret society groups who are possessors of knowledge that they transmit to the future.
+
+And, and what I'm broadly suggesting is that those survivors of the Younger Dryas cataclysm who settled in Giza may have been relatively small in number.
+
+It's interesting that, that they are referred to in the
+
+the Edfu Building Texts as Seven Sages because that repeats again and again.
+
+It, it's, it's also in Mesopotamia, uh
+
+it's Seven Sages, Seven Apkallu, who come out of the waters of the Persian Gulf and
+
+and teach people all the skills of agriculture and of architecture and of astronomy.
+
+It's found, it's found all around the world that there was a relatively small number of people who took refuge in Giza
+
+# Chapter 6
 
 uh, and that is seen as the origin of ancient Egyptian civilization.
 
@@ -2863,28 +2919,6 @@ Uh, maybe, maybe there was, um.
 ..
 
 There was a cultural value where it was felt
-
-it was felt that it was not appropriate to interfere with the lives of hunter foragers at that time.
-
-Uh, maybe it was felt that, that they should keep their distance from them.
-
-Just, just as even today, uh, there is a feeling that we shouldn't be interfering too much with the uncontacted tribes in the Amazon rainforest.
-
-Uh, although in- interestingly, some of those
-
-some of those tribes are now using cell phones.
-
-Um-  yeah.
-
-.
-
-..
-
-that possibility may have been there in, in the past and only when we come to a
-
-to a global cataclysm does it become essential to have outreach and actually to take refuge amongst those hunter forager populations.
-
-# Chapter 9
 
 it was felt that it was not appropriate to interfere with the lives of hunter foragers at that time.
 
@@ -3288,13 +3322,33 @@ Maybe I should have been a bit gentler and a bit kinder and I've tried to reflec
 
 uh, and, and, and to bring also many more indigenous
 
-uh, voices into the second season as well as the voices of many more archeologists.
+# Chapter 7
 
-Yeah.
+and that the best way to stop that is to stop me
 
-In general, I got a chance to get a glimpse of the archeology community and
+uh, to shut me down, to get me canceled
 
-# Chapter 10
+and basically requiring Netflix to re- relabel my series from a documentary to a science fiction
+
+which is what they actually had the temerity to suggest to Netflix
+
+uh, that would.
+
+..
+
+If that had gone through, if Netflix had listened to them
+
+that would have effectively been the cancellation of my documentary series.
+
+It would no longer have been ranked under
+
+under documentary, so it was a deliberate attempt to shut me down and
+
+and I see that going on again and again and it's so unfortunate and so unnecessary.
+
+I've become very defensive towards archeology.
+
+I, I, I hit back.
 
 Well, after 30 years of these attacks on my work
 
@@ -3720,28 +3774,6 @@ Um, I, I think it's, I think it's quite unlikely
 
 given the, given the very thin survival of ships the further back you go in time
 
-# Chapter 11
-
-and you could say there was a ship that sank here
-
-but the ship itself has, the ship itself has gone.
-
-Uh, the fact is, we know that our ancestors were seafarers as much as 50
-
-000 years ago, and no ship has survived to testify to that.
-
-Yet we accept that they were.
-
-Do you think, do you think one day we'll find a ship that's 10
-
-20, 30, 40, 50,000 years old?
-
-Uh, it's not impossible.
-
-Um, I, I think it's, I think it's quite unlikely
-
-given the, given the very thin survival of ships the further back you go in time
-
 uh, with the oldest, as I say
 
 being about 6,000 years old now.
@@ -3980,6 +4012,48 @@ And he's also a- a very determined character.
 
 He- he- he- he doesn't give up.
 
+# Chapter 8
+
+And I recognize that.
+
+I, I was definitely up against a superior debater
+
+uh, in that debate.
+
+I'm not sure that I have those debating skills
+
+and I certainly-  .
+
+..
+
+didn't have them on, on that particular day.
+
+I also admire about Flint, uh, something else
+
+which is that he was willing to be there.
+
+Uh, most archaeologists don't want to talk to me at all.
+
+They want to insult me from the sidelines.
+
+Uh, they want to make sure that Wikipedia keeps on calling me a pseudoarchaeologist or a per- purveyor of pseudoarchaeological theories.
+
+They want to make sure that the hints of-.
+
+..
+
+racism are there, but they actually don't want to sit down and confront me.
+
+At least Flint was willing to do that
+
+and I'm grateful to him for that, and I- I think in- in that sense it is an important encounter between people with
+
+uh, let's say, an alternative view of history and those with a very much mainstream view of history that archeology gives us.
+
+And he's also a- a very determined character.
+
+He- he- he- he doesn't give up.
+
 So all- all of those things about him
 
 I- I admire and- and- and respect.
@@ -4139,28 +4213,6 @@ and that's another thing that I regret about some archeologists
 is that their mission seems to be to drain all mystery out of the past
 
 to suck it dry like some kind of vampire sucking the blood out of the past
-
-and to reduce it to a series of numbers
-
-uh, that, uh, that appear to be scientific.
-
-I- I think that's- that's most unfortunate.
-
-The past is deeply mysterious.
-
-The whole- the whole story of life on Earth is deeply mysterious.
-
-I- I mean, we were talking about the timeline of- of human beings
-
-but you know, if you go 
-
-if you go back to the formation of the Earth itself
-
-if I've got the figures right, it's about four and a half billion years ago that the Earth supposedly formed.
-
-It was then incredibly hot and inhospitable to life
-
-# Chapter 12
 
 and to reduce it to a series of numbers
 
@@ -4546,11 +4598,31 @@ Diplopterys cabrerana, uh, which the leaves of that vine also contain DMT.
 
 So the ayahuasca vine on its own is not going to give you a visionary journey
 
-and the leaves that contain DMT on their own
+# Chapter 9
 
-whether they come from Diplopterys or whether they come from chakruna are not gonna give you a visionary journey.
+Uh, and- and, uh, I do see them as- as scientists
 
-# Chapter 13
+in a very proper use of the word.
+
+But do you think something like ayahuasca was a part of that process?
+
+Yes.
+
+Ayahuasca is the result of shamanistic investigation of what's available in the Amazon.
+
+Uh, of course, ayahuasca is all the fad in Western industrialized societies today and- and some people see it as a miracle cure for all kind of ailments and problems.
+
+And perhaps it is, perhaps it can be
+
+uh, in- in certain ways.
+
+Ayahuasca itself is not an Amazonian word.
+
+It- it comes from the Quechua language and it means "the vine of souls" or "the vine of the dead".
+
+Uh, but the ayahuasca vine is only one of two principal ingredients in the ayahuasca brew
+
+and the other ingredient are leaves that contain dimethyltryptamine
 
 and there are two sources of that.
 
@@ -4824,28 +4896,6 @@ you're looking, if you're lucky, at 10 minutes
 
 or if you're unlucky, if it's a bad journey
 
-# Chapter 14
-
-uh, might have the head of a bird and the body of a human being and so on and so forth.
-
-And that they communicate with us in the visionary state.
-
-Interestingly, although this sounds like woo-woo, and it is an area that most scientists would steer clear of at risk of their careers
-
-there is very serious work now being done at Imperial College in London and at the University of California at San Diego where volunteers are being given extended DMT.
-
-There's a new technology, uh, DMTX, uh
-
-where the DMT is fed directly into the bloodstream by drip
-
-and it's possible to keep the individual in the peak DMT state
-
-uh, which normally when you smoke or vape DMT
-
-you're looking, if you're lucky, at 10 minutes
-
-or if you're unlucky, if it's a bad journey
-
 because those 10 minutes can seem like forever.
 
 Um, but, uh, with DMTX, with the drip feeding of DMT into the bloodstream
@@ -4965,6 +5015,48 @@ which is the role of government in controlling our consciousness.
 Uh, and in my opinion, the, the
 
 the so-called war on drugs is one of the fundamental abuses of human rights that have been undertaken in the past
+
+in the past 60 years.
+
+Uh, it should be a Republican issue.
+
+If I understand the Republican Party correctly, the Republican Party believes in individual freedom for adults as much as possible
+
+uh, and particularly the freedom to make choices over their own bodies.
+
+Uh, but in the case of even cannabis
+
+I know, th- it's one of the great things that's happening in America
+
+it's, it's happening state by state where cannabis is being
+
+is being legalized and that draconian hand of government is being taken off the back of people who are
+
+who are consuming a medicine that is far less harmful than alcohol
+
+which is glorified, uh, in, in our society.
+
+Um, we cannot say that we are free if we allow a government to dictate to us what experiences we may or may not have in our inner consciousness while doing no harm to others.
+
+And the point there is, we already have a whole raft of laws that deal with us when we do harm to others.
+
+Do we really need laws that tell us what we may and may
+
+or may not experience in the inner sanctum of our own consciousness?
+
+I think it's a fundamental violation of adult sovereignty.
+
+Uh, and we would have much less drug problems if these drugs were all legalized and made available to people without shaming them
+
+without, without punishing them in any way
+
+but just part of normal social life.
+
+And then you could be sure that you were getting good product rather than really shitty product which has been cut with all sorts of other things.
+
+Ultimately, the way forward is for adults to take responsibility for their own behavior and for society to allow that to happen and not to have big government taking responsibility for decisions that should be in the hands of individuals.
+
+# Chapter 10
 
 in the past 60 years.
 
@@ -5225,28 +5317,6 @@ That makes humans really uncomfortable.
 Yeah.
 
 Because we are at the top of the food chain.
-
-We consider ourselves truly special, and to consider that there's other things that could be special- Mm-hmm.
-
-.
-
-..
-
-is, uh, is scary.
-
-Well, look how other people make us uncomfortable too.
-
-I mean, look at the state of the world today.
-
-Uh, all the conflicts that are, that
-
-that, that are raging.
-
-Uh, that's, that's because we're afraid.
-
-When I say we, I'm speaking nation by nation
-
-# Chapter 15
 
 We consider ourselves truly special, and to consider that there's other things that could be special- Mm-hmm.
 
@@ -5680,11 +5750,31 @@ And, and, um, I would like to live as
 
 as long as I'm, my, my body is
 
-is, is healthy enough to make living worthwhile.
+# Chapter 11
 
-Um, but I don't fear death.
+Yeah, it's the great mystery.
 
-# Chapter 16
+It's the great mystery that we all share
+
+and those cultures that have investigated it, and ancient Eg- ancient Egypt is the best example
+
+uh, have investigated it thoroughly and map out the journey that we make after death.
+
+But that notion of a journey after death
+
+and of hazards and challenges along the way
+
+and ultimately of a judgment, uh, that notion is found right around the world and it
+
+and it even manifests into the three monotheistic faiths that are still present in the world today.
+
+Well, you're one such human.
+
+Uh, and you've said you contemplate your own death.
+
+Yeah.
+
+Are y- are you afraid of it?
 
 No.
 

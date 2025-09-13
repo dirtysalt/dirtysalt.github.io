@@ -370,28 +370,6 @@ okay well
 
  that must be true about the world that was somehow in you know associated with physics
 
-# Chapter 2
-
- significance through the work of people like euclid maybe 300 bc euclid
-
- tried to axiom atomics
-
- he tried to say these are just things that we can say are true that
-
- we can then build up as a purely logical matter of deduction all
-
- of the things that we might know about for example geometry
-
- and it was completely unclear at the time to
-
- what extent like physics might be axia metal
-
- and to what extent the statement that euclid makes you know two parallel lines never meet to
-
- what extent that was a statement that was sort of a a fact
-
- that must be true about the world that was somehow in you know associated with physics
-
  or something that was merely a mathematical assertion from
 
  which you could prove things and it really took a long long time before
@@ -549,6 +527,48 @@ okay well
  the motions of planets that way and so on and you realized well actually it's
 
  a lot simpler you can you can make a sort of technical
+
+ change in the way things work
+
+ and you can make it a lot simpler
+
+ if you don't imagine that
+
+ the sun goes around the earth doesn't
+
+ really matter to the mathematics whether
+
+ the sun goes around the earth or the earth goes around the sun but
+
+ you can avoid some technical
+
+ details if you assume
+
+ that the sun is at the center
+
+ and the earth is going round isn't the other planets going around those
+
+ and
+
+ so he kind of introduced that as largely a technical innovation very late in his life
+
+ and i think
+
+ what was interesting in a sense to me about that is that
+
+ yes
+
+ it was a technical innovation didn't
+
+ even give better results
+
+ didn't get better results than ptolemy actually i think he gave worse results than ptolemies
+
+ way of setting things up
+
+ but in a sense there was a a certain it started kind of a shockwave of a realization that
+
+# Chapter 2
 
  change in the way things work
 
@@ -757,28 +777,6 @@ okay well
  because you know it had been claimed by copernicus
 
  and
-
- so on that you know the earth was going around the sun things like that this
-
- was kind of like a miniature solar system that
-
- was operating around jupiter and it kind of also gave
-
- the sense that some of these kind of principles of physics that
-
- we kind of had an idea applied
-
- and the terrestrial domain also would apply to things in the heavens
-
- and things that were like things orbiting jupiter
-
- and so on so it was sort of a big a big realization that
-
- that these kinds of
-
- essentially mathematical
-
-# Chapter 3
 
  so on that you know the earth was going around the sun things like that this
 
@@ -1212,7 +1210,27 @@ okay well
 
  and that's when he came up with his inverse square law of gravity this
 
-# Chapter 4
+# Chapter 3
+
+ far from obvious that it will keep going
+
+ and with
+
+ if and that if a force isn't acting on it because actually a force
+
+ is usually acting on it it's the force of friction and
+
+ so this was a the idea that there was this sort of perfect
+
+ version of this where the thing will just keep going
+
+ and without
+
+ if there's no force acts on it wasn't self-evidently
+
+ obvious it was a it was really a mathematical
+
+ idealization that was significant
 
  and that was newton's first law well
 
@@ -1624,28 +1642,6 @@ okay well
 
  the flow of fluids the flow of fluids has this very complicated
 
-# Chapter 5
-
- things together but sort of the the the thing of the 1800s
-
- in addition to sort of very elaborate development of of theories that were spin-offs of newton's mechanics
-
- and calculus
-
- i mean they're the main spin-offs that develops were
-
- solid mechanics and fluid mechanics
-
- the theory of stresses
-
- and solids
-
- and the theory of the flow of fluids stresses
-
- and solids turns out to be a much easier problem
-
- the flow of fluids the flow of fluids has this very complicated
-
  issue of fluid turbulence when a fluid flows rapidly
 
  a fluid is flowing slowly just sort of slides around objects
@@ -1783,6 +1779,48 @@ okay well
  how electric
 
  and magnetic fields would work one of the implications of those was
+
+ that there will be it would be possible to produce waves electromagnetic waves
+
+ and within a decade hertz had observed electromagnetic
+
+ waves and had figured out and had basically created the first radio
+
+ and it didn't take very long it took come less
+
+ than a decade before there was actual real radio being used
+
+ and people were transmitting messages the had been given done on wires with telegrams
+
+ and so on they were using you know in morse code they were sending messages
+
+ purely through electromagnetic waves
+
+ so that was kind of the the realization that tim that
+
+ that came out of the mathematics that maxwell had done that
+
+ there should be a magnetic waves and by golly there actually were electromagnetic
+
+ waves and they made radio
+
+ so
+
+ so that was kind of the big
+
+ development of of the late 1800s was this idea of electromagnetism
+
+ electrical magnetic fields things like radios
+
+ and those those sorts of things
+
+ so
+
+ the another
+
+ so another thing that was happening in
+
+# Chapter 4
 
  that there will be it would be possible to produce waves electromagnetic waves
 
@@ -2001,28 +2039,6 @@ okay well
  and other forms of energy
 
  and things that were known
-
- from mechanics things about the the energy of motion that
-
- was understood from mechanics
-
- and
-
- and by the way following newton
-
- and so on the idea of the conservation momentum
-
- the conservation of mechanical energy these
-
- were things that had emerged from mechanics
-
- but it wasn't clear sort of how heat fitted into that well then 1850
-
- ish sort of big big
-
- point the first law of thermodynamics the
-
-# Chapter 6
 
  from mechanics things about the the energy of motion that
 
@@ -2444,9 +2460,29 @@ okay well
 
  you wrote down chemical reactions you could things worked very nicely when
 
- there was sort of integer multiples of things that showed up all over the place it
+# Chapter 5
 
-# Chapter 7
+ it i mean the the idea of entropy got kind of a boost in 1940s
+
+ when claude shannon introduced
+
+ the idea of information as
+
+ a measure of sort of the compressibility of data
+
+ because basically his information measure is exactly - the
+
+ boltzmann's entropy measure
+
+ okay
+
+ so another big thing from the 1600s
+
+ from the from sorry from the 1800s was
+
+ was
+
+ the the whole notion of atoms really becoming real and you
 
  know it had been known chemistry had developed a lot lots
 
@@ -2838,28 +2874,6 @@ okay well
 
  and special relativity was invented as this way to reconcile
 
-# Chapter 8
-
- and you would have expected from the galilean principle that you
-
- can't tell in your emotion you would have expected that you
-
- would have something where the speed of the of the photons that
-
- were coming out of the flashlight would be the speed of the thing that was that
-
- you were emitting them from plus the speed of light but that isn't
-
- what happened according to maxwell's equations
-
- okay
-
- so then 1905 einstein
-
- and then special relativity
-
- and special relativity was invented as this way to reconcile
-
  what maxwell's equations said with the lack of an ether drift and to explain
 
  how the speed of light can really be constant
@@ -3015,6 +3029,48 @@ okay well
  and discovered that most of the time you know most of an atom from most
 
  of the time you shoot now for particle
+
+ and atom it just goes straight through
+
+ but just very rarely it's it's deflected a long way and
+
+ so rather food's interpretation of that was most of the atoms kind of just empty space but
+
+ there's something in the middle maybe of an atom that is a hard lump a nucleus that will will
+
+ bounce the alpha particle back and so that was the discovery of the atomic nucleus
+
+ and soon
+
+ it was understood that there were protons in the atomic nucleus that
+
+ were sort of particles that were part of the that
+
+ along with electrons formed atoms it
+
+ was known that isotopes existed
+
+ and it was a little bit confusing
+
+ how that worked and it wasn't until the 1930s that separate free neutrons were observed
+
+ i mean the the really weird thing about neutrons you know the tonic nucleus is made of protons
+
+ and neutrons
+
+ and in all the sort of matter that we are used to that isn't radioactive the protons
+
+ and neutrons just sit there in the nucleus of the atom they're
+
+ just completely stable they don't nothing happens to them
+
+ but
+
+ if you have a free neutron if you just manage to separate
+
+ out just a neutron on its own the neutron undergoes radioactive decay in about 15 minutes
+
+# Chapter 6
 
  and atom it just goes straight through
 
@@ -3241,28 +3297,6 @@ okay well
  the wave function is kind of related to the probability that the electron will
 
  be doing this thing or that thing um
-
- and there was a one interpretation of quantum mechanics which are emerge around the same time was
-
- okay just think of it as the wave function
-
- which is a function of complex function real
-
- imaginary parts that you can work out the probability when you actually say
-
- you want to know what happened in the atom you can
-
- just say i'm going to measure it and then
-
- what
-
- happened will be governed by a probability
-
- that is the modulus squared of the wave function
-
- and that was kind of the the interpretation
-
-# Chapter 9
 
  and there was a one interpretation of quantum mechanics which are emerge around the same time was
 
@@ -3662,9 +3696,29 @@ okay well
 
  that can sort of pop into existence
 
- and then disappear again for a for a for a photon that can happen over a long
+# Chapter 7
 
-# Chapter 10
+ but there had a pretty big mass that was a mass kind
+
+ of like maybe a tenth the mass of a proton that would
+
+ be the the the electron as one 1800s the mass of a proton actually
+
+ it's very light compared to a proton
+
+ um
+
+ so the
+
+ that
+
+ there would be um this other particle i'm
+
+ not sure if he named it anyway it became called the pi on or
+
+ the pi meson i'm
+
+ not sure if your caller named it um
 
  but anyway the he suggested that there might be such a particle
 
@@ -4068,28 +4122,6 @@ okay well
 
  so another thing that came up in the 1940s was sort of a reinterpretation of quantum mechanics the
 
-# Chapter 11
-
- was like this years of computer time thing and you
-
- could measure it and it was exactly right there's
-
- very impressive result of quantum electrodynamics through
-
- from the 1940s onwards after analyzation
-
- had gotten rid of the the
-
- kind of oh we don't know what's going on type type thing that was what happened
-
- so
-
- okay
-
- so that was that was quantum electrodynamics
-
- so another thing that came up in the 1940s was sort of a reinterpretation of quantum mechanics the
-
  sort of schroeder introversion the heisenberg version these were ways to compute things in quantum mechanics
 
  um the
@@ -4249,6 +4281,48 @@ okay well
  these particles just sort of emerge as
 
  some sort of consistency condition from each other
+
+ okay
+
+ so that was theory number one okay
+
+ theory number two which
+
+ emerged in 1964 ish particularly
+
+ another friend of mine named murray gell-mann um was
+
+ responsible for this one together
+
+ with person called george reich who is also a good friend of mine i'm the
+
+ was this idea of of quarks
+
+ so
+
+ the idea of course was maybe
+
+ these particles like protons aren't actually elementary maybe
+
+ inside a proton there are actually in the case of a proton three quarks
+
+ and originally
+
+ marika man kind of invented that idea a little bit like the way that you know dalton
+
+ had done the atomic theory of just sort of counting things and looking at how
+
+ what constituents
+
+ would have to exist just to make the numbers work out although
+
+ murray sort of packaged that in a somewhat more elaborate theory of li algebras
+
+ and li groups theory of sort of fancy mathematics of symmetries
+
+ but in case what it really came down to was you just count if
+
+# Chapter 8
 
  okay
 
@@ -4491,28 +4565,6 @@ okay well
  it's always the worst is always
 
  remembering the history that involved
-
- that that one was involved in but any case the
-
- okay another little sideshow here
-
- oh yeah 280 that's that that's the freeway that that
-
- i was forgetting that's
-
- the one that crosses over the stefan
-
- area accelerators hunter i'm the
-
- in any case the
-
- okay
-
- so so back to this i'm i'm gonna try
-
- and i don't have too much more to talk about but
-
-# Chapter 12
 
  that that one was involved in but any case the
 
@@ -4932,13 +4984,33 @@ okay well
 
  okay i'm leaving out the thing
 
- called spontaneously broken gauge theory so one of the issues have been renormalization important
+# Chapter 9
 
- idea let you calculate things in quantum electrodynamics question
+ the thing that was working
 
- was were these other gauge theories including these ones that involved things like the w
+ so that kind of fueled
 
-# Chapter 13
+ a lot of work another
+
+ sort of unexpected discovery
+
+ was made in 1977
+
+ the thing called the b quark was discovered also
+
+ a thing called the tau leptin
+
+ which was i mentioned the muon
+
+ which is kind of like just like the electron
+
+ but 206 times heavier there's also the tau leptin
+
+ which is just like the the muon
+
+ but gosh it has a mass of about 1.7
+
+ gev i'd
 
  have to do the math which i can't immediately do in my head but it's about
 
@@ -5334,28 +5406,6 @@ okay well
 
  and longitude to describe a position on the earth if you use latitude
 
-# Chapter 14
-
- a guy called karl schwarzschild had had
-
- worked out a solution stein stein's equations they corresponded to a spherical object like a star
-
- and the gravity associated with that and that solution
-
- had a prediction it said that there would be four in certain cases an event horizon
-
- but it was completely not understood
-
- what that meant at that time it was some see these equations are complicated
-
- and there's a question of of the event horizon was sort of a similarity in the equations
-
- and that the thing is that it's easy to get singularities
-
- and equations for example let's say using latitude
-
- and longitude to describe a position on the earth if you use latitude
-
  and longitude
 
  what happens at the north pole you have kind of a weird singularity of of the of the longitude
@@ -5497,6 +5547,48 @@ okay well
  popping up in different places by
 
  the way one thing that was also a confusion
+
+ that lasted a long time was
+
+ the question of antimatter
+
+ and where was the antimatter in the universe because
+
+ the the most obvious theories the big bang would produce equal amounts of matter and antimatter it
+
+ was discovered in 1964 a thing called cp violation
+
+ also
+
+ related to time reversal violation it's
+
+ a phenomenon whereby there's sort of a difference between particles
+
+ most things about particles
+
+ and antiparticles the same but some particles
+
+ and antiparticles have a strain have some strange small differences particularly
+
+ the neutral k on so the original example
+
+ um
+
+ but
+
+ in any case there was still this mystery
+
+ and when i was a kid still a big mystery
+
+ why is there more matter you
+
+ know why don't we see a bunch of you
+
+ know could there be antimatter galaxies
+
+ could the andromeda galaxy be made of antimatter we didn't know actually
+
+# Chapter 10
 
  that lasted a long time was
 
@@ -5711,28 +5803,6 @@ okay well
  which would sort of emerge from some sophisticated theory for whatever it's done in physics
 
  and whatever it will do in physics it is spun off a lot of very nice mathematics
-
- and the sort of merger of mathematics with physics that
-
- has been associated with it is really very powerful i
-
- mean i might say that in the physics
-
- that i've been doing recently i think that
-
- string theory it's mathematics is quite relevant although its underlying structure
-
- is not the same but you know string theory has been re
-
- sort of recast once before i think it can happen again
-
- and still leave the same string theory structure intact
-
- so to speak but the thing that that happened in
-
- so quantum gravity big thing in the 1980s 1990s
-
-# Chapter 15
 
  and the sort of merger of mathematics with physics that
 

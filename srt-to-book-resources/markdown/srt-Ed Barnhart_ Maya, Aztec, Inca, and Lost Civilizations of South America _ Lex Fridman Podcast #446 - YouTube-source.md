@@ -394,28 +394,6 @@ And in the Americas when the things
 
 that they were used to hunting went away
 
-# Chapter 2
-
-a huge thing that happened was all the megafauna went away.
-
-When the climate changed enough, the mammoths died out
-
-and the bison died out.
-
-And there was just, they had to come up
-
-with different ways of doing things.
-
-We were hunters and gatherers
-
-and we had things we got from hunting
-
-and we got things we got from gathering.
-
-And in the Americas when the things
-
-that they were used to hunting went away
-
 and they had to make do with rabbits there, you know,
 
 the gathering started to be a much more important thing.
@@ -630,6 +608,48 @@ before that, which is fascinating.
 
 When the bridge closed, DNA mutated.
 
+# Chapter 2
+
+that's almost certainly happening closer
+
+to 30,000 years ago.
+
+And now the thing that seems like madness,
+
+but might be true is that it could have been as early as 60,
+
+a lot of the DNA things are suggesting
+
+that the very first migration
+
+could have come across as early as 60.
+
+And when I was a younger archeologist,
+
+it was heresy to go beyond this 12,500.
+
+You were a wacko if you said that,
+
+but now it's really very clear that they came over
+
+at least by 30,000 and the bridge opened
+
+and closed and open and closed.
+
+- That's during the ice age. - Right.
+
+- I mean, that's crazy, right, that is crazy.
+
+- Yeah, I mean, you know, they didn't roll in
+
+and immediately make New York, but there were people
+
+and there were definitely not people here
+
+before that, which is fascinating.
+
+When the bridge closed, DNA mutated.
+
 And so we have specific kinds of haplogroup
 
 that are here in the Americas that don't exist otherwise.
@@ -787,28 +807,6 @@ it was only that far edge of the Celtic world, Ireland
 that they were like, ah, we're not gonna mess
 
 with those guys on that island.
-
-We'll leave them be, so now it looks like that's the heart
-
-of Celtic tradition, but actually it's the fringe.
-
-- So if it is 60,000 years ago,
-
-these are really early humans.
-
-- Yeah, and there were consistent things
-
-that have been coming out for decades
-
-about very old Carbon 14 dates in the Amazon
-
-and in the Andes area that everybody just dismissed.
-
-It's, no, it didn't get a date of 40,000 years,
-
-but I think we're gonna come back around
-
-# Chapter 3
 
 We'll leave them be, so now it looks like that's the heart
 
@@ -1238,7 +1236,27 @@ but actually I'm pretty sure
 
 that Huaca Prieta's first pyramid was about capping
 
-# Chapter 4
+a smelly pile of trash.
+
+# Chapter 3
+
+he ends up making something with a fat base
+
+and a tiny top.
+
+And I think that, you know, building something big
+
+and tall together is one of those human things.
+
+Like we built that, that will be here after we're gone.
+
+People remember who we were.
+
+We are all, if there's any human commonality,
+
+it's fear of our own deaths and that we were nothing
+
+and no one will ever remember us.
 
 I think that the first big monuments like that were probably
 
@@ -1668,28 +1686,6 @@ the capital of that Chavin culture.
 
 And he keeps showing up through every culture,
 
-# Chapter 5
-
-and use that methodology, there's a single face
-
-with goggle eyes and fangs and claws on his hands and feet
-
-and snakes coming off of his head and off of his belt.
-
-He's got really identifiable traits.
-
-He also likes to sever people's heads off
-
-and carry them around.
-
-But he's the fanged deity
-
-and he's there, he shows up in Chavin de Huantar,
-
-the capital of that Chavin culture.
-
-And he keeps showing up through every culture,
-
 even thousands of miles away
 
 throughout the next two millennium,
@@ -1849,6 +1845,48 @@ And he showed up in all sorts of forms.
 But he was always Zeus.
 
 I think that the fanged deity manifests himself
+
+through people and animals throughout the art.
+
+And that there are missing stories of mythology
+
+that we don't have anymore.
+
+- And across hundreds of years, thousands
+
+of years from Chavin to Moche to Inca as you're saying.
+
+- Right, Wari has them too.
+
+Tiwanaku, that famous place Pumapunku,
+
+he's all over there.
+
+- I wonder how those ideas spread and morph
+
+of this fanged deity.
+
+- I think people walked and proselytized
+
+and places like Chavin,
+
+there's a later one in Inca times called Pachacamac
+
+that are pilgrimage places where people come in
+
+to be healed if they're sick,
+
+but also just to pay homage to the powers that be.
+
+So Chavin was a place where people from the Amazon
+
+and people from the coast were all coming together.
+
+In fact, we saw it in the archeology there.
+
+There's these interesting labyrinths under the pyramids
+
+# Chapter 4
 
 through people and animals throughout the art.
 
@@ -2079,28 +2117,6 @@ which is the hallucinogen,
 which is in the Amazon side, it was ayahuasca.
 
 On the coast, it was San Pedro Cactus.
-
-But that's what allows you to actually see that other world.
-
-- Yeah, I went to the Amazon recently
-
-and did Ayahuasca, a very high dose of it.
-
-- Bold move.
-
-- When in Rome.
-
-How far back does that go?
-
-- Oh, I think longer than anybody can remember.
-
-But I mean, it's a natural plant that's been there forever.
-
-I think that it's thousands and thousands of years.
-
-That's another thing Chavin de Huantar, I was talking about,
-
-# Chapter 6
 
 But that's what allows you to actually see that other world.
 
@@ -2532,7 +2548,27 @@ The other places they don't.
 
 you have to ask the right question
 
-# Chapter 7
+# Chapter 5
+
+And what they're saying is that
+
+that really dark earth couldn't have just got that way
+
+through natural forest processes
+
+that sometime in the distant past that forest wasn't there
+
+and there was major farming
+
+and human activity to the point
+
+where they totally turned the soil black
+
+and it's much more enriched.
+
+And when I took a trip into the Amazon,
+
+I went from Manaus up the river, the black river a couple
 
 of days and went and met some different communities
 
@@ -2946,28 +2982,6 @@ I've got the monster in me like everybody does.
 
 And I think that these, you know, it's cultural norms
 
-# Chapter 8
-
-So they get very aggressive
-
-in attacking whoever they come across.
-
-- And not just foreigners, they attack each other.
-
-The Yanomami are famous for just having
-
-never ending feuds with each other.
-
-- What do you think of the philosophy behind that?
-
-- I don't, you know, I'm a relatively peaceful person,
-
-but I've got, you know,
-
-I've got the monster in me like everybody does.
-
-And I think that these, you know, it's cultural norms
-
 that become institutionalized.
 
 For the Yanomami, they really,
@@ -3129,6 +3143,48 @@ You know, the truth is, a lot of the questions in the Amazon
 and what we're talking about now is the Peten
 
 and the mountains there.
+
+Those aren't places archeologists wanna live.
+
+They're horrible, I mean, I've been there.
+
+I don't wanna live in a tent and eat rations.
+
+I wanna live in a nice town.
+
+So a lot of the places where the answers are,
+
+we still really haven't gotten there
+
+'cause it takes a special person to be educated enough
+
+to know what they're looking at
+
+and tough enough to want to be there.
+
+I've done my tour of duty,
+
+I'm now in a nice little podcast studio.
+
+But seriously, the Maya, the first hint
+
+that we see people who are culturally Maya very close
+
+to where the time period
+
+for that Chavin culture is about 1800 BCE.
+
+There's a culture that's some called the Mokaya, not Maya,
+
+but they're on the Pacific coast
+
+where Guatemala and Mexico connect.
+
+It's called the Soconusco.
+
+And those are the first people
+
+# Chapter 6
 
 Those aren't places archeologists wanna live.
 
@@ -3363,28 +3419,6 @@ and then you have the Amazon.
 - So the West of the Andes
 
 and the Amazon are very distinct.
-
-So when you refer to the Andean region,
-
-is that referring to the Andes and the Amazon
-
-or just the Andes?
-
-- Just the Andes and the coast to the Pacific there.
-
-That's Andean civilization.
-
-- So did the Maya make it to the Andes, the Andean region?
-
-- Not that archeology can prove,
-
-but it's almost certain
-
-that they interacted with each other.
-
-Number one, it's just, you know, it's biased to think
-
-# Chapter 9
 
 So when you refer to the Andean region,
 
@@ -3818,11 +3852,31 @@ It can go into the future
 
 or the past for billions of years in the system they made,
 
-just like our system is.
+# Chapter 7
 
-- So can you speak to the three components here
+that are not being called science at the moment.
 
-# Chapter 10
+You know, their math is incredible.
+
+Their hydraulic engineering is incredible.
+
+Their chemistry is incredible.
+
+And so I hope to talk about these things differently
+
+as a way to get people
+
+to recognize the achievements in a different way.
+
+- Yeah, I mean, unquestionably incredible scientific work
+
+in the astronomy sense, especially here.
+
+Can you speak to all the sophisticated aspects
+
+of the Mayan calendar that they've developed?
+
+- I don't know, you got another five hours.
 
 - [Lex] Let's go.
 
@@ -4260,28 +4314,6 @@ and calendars, they never say anything like that.
 
 In fact, there's a handful of dates that tell us
 
-# Chapter 11
-
-I had so many lectures around the country that was,
-
-it's like Garrett Morrison Saturday Night Live.
-
-The apocalypse was very, very good to me.
-
-- I mean, but that is pretty interesting.
-
-So technically it would be in the what, in the fifth now?
-
-- Yeah, technically we'd be in the fifth.
-
-Though, my argument was that actually, if you look
-
-through all the corpus of Maya mathematics
-
-and calendars, they never say anything like that.
-
-In fact, there's a handful of dates that tell us
-
 that the fourth creation does continue farther on.
 
 That that baktun place should have 20 baktuns in it.
@@ -4423,6 +4455,48 @@ They're different time periods.
 - Why do you think there was the myth
 
 of the previous creations?
+
+Did they have some kind
+
+of long multi-generational memory of prior civilizations?
+
+- It may have had some echo in the flood myths.
+
+- It's the same kind
+
+of major myths carried through long periods of time.
+
+- There's a lot of different opinions about it.
+
+And you know, like if they were all 13,
+
+if we have five creations, like the Aztec said,
+
+and they were all 13, they would come up
+
+to roughly 25,000 something years,
+
+which is very close to that processional cycle.
+
+So some people are like, they designed it all
+
+to be one completion of the procession of the equinoxes.
+
+- And I mean that.
+
+- I don't believe that one,
+
+but that one sure sounds good, doesn't it?
+
+That's gonna get a lot of internet hits.
+
+- And one of the things I do obviously wonder
+
+about is why the flood myth is part of
+
+like most societies and most religions?
+
+# Chapter 8
 
 Did they have some kind
 
@@ -4645,28 +4719,6 @@ the hieroglyphic code and what it takes to break it?
 - Oh boy, I mean, what a thing.
 
 We had kind of a Rosetta Stone.
-
-We had a page out of Diego de Landa's book,
-
-a priest who was converting the Maya in Yucatan asked
-
-his informants about their writing system
-
-and what every sound meant.
-
-And he was convinced they had a alphabet like we do.
-
-So he got this Maya guy sat down in Spanish
-
-and he said, okay,
-
-you're gonna write all the symbols right here in my book.
-
-Write an A here, write a B here, write a C here.
-
-And that guy just wrote all of the sounds
-
-# Chapter 12
 
 We had a page out of Diego de Landa's book,
 
@@ -5096,13 +5148,33 @@ but they're using them to affect as a record.
 
 the social organization of the Maya was?
 
-Like, what maybe if there was a hierarchy,
+# Chapter 9
 
-maybe what the political structure was,
+they're like, oh yeah, yeah, yeah.
 
-if there was a leader, different roles, you know, priests
+- There are some communities that are using them.
 
-# Chapter 13
+There's a couple of them that we had high hopes for.
+
+And then it was apparent
+
+that they were just making shit up.
+
+They didn't actually know how to read it.
+
+They just knew it used to be read.
+
+So they like made a bunch of stuff about what it says.
+
+And they bring it out and they act like they can read it,
+
+but then when you ask 'em the details, they don't know.
+
+But then on a much simpler level,
+
+there's llama herders who keep a string in their pocket
+
+and they've got the knots equaling
 
 how many llamas they have.
 
@@ -5546,28 +5618,6 @@ Copan was this beautiful city, lineage of 17 kings.
 
 But the last kings
 
-# Chapter 14
-
-One thing we can see archeologically is that every one
-
-of the cities became overpopulated.
-
-They were too popular,
-
-and we think that they pushed the limits
-
-of their capacity to feed and house people.
-
-We see it in lots of the cities at the end
-
-of the classic period that people are seasonally starving.
-
-I remember really stark evidence in Copan, Honduras.
-
-Copan was this beautiful city, lineage of 17 kings.
-
-But the last kings
-
 and the last elite burials that we dig from the city center,
 
 the teeth are the telling part.
@@ -5721,6 +5771,48 @@ and that they had this migration that went through
 kind of a hero's journey where they go
 
 to this snake mountain place
+
+and they encounter the birth of the war god,
+
+that they'll worship after this.
+
+And how they stepped into the valley of Mexico as the last,
+
+the lost brothers of everyone in the Valley of Mexico,
+
+they said that they all came from the north.
+
+Near Aztlan is a place, a cave
+
+with seven different passages called Chicomoztoc.
+
+And that all the people
+
+who spoke the language nahuatl came from the cave.
+
+And most of them went early to the Valley of Mexico.
+
+And in the Aztecs story,
+
+they were just the lost tribe.
+
+They were the last brothers to come in.
+
+But then they show up late game,
+
+and they become mercenaries.
+
+They just start working
+
+for communities in the valley of Mexico.
+
+And this takes place in the 1300s.
+
+So about 200 years before Cortez shows up,
+
+the Aztecs show up to the Valley of Mexico,
+
+# Chapter 10
 
 and they encounter the birth of the war god,
 
@@ -5957,28 +6049,6 @@ in competition with each other.
 Though a unified force, I guess, you know,
 
 probably an analogy between like the Navy and the Air Force.
-
-You know, they had a good natured competition
-
-of who was better, but they were the same force.
-
-So those were their symbolic warriors,
-
-dressed up in all of their finery.
-
-And they would come at people with these two forces.
-
-And it was very unlike anything
-
-that had happened before in Mesoamerica.
-
-Again, I think I could draw a parallel
-
-to what happened in Europe.
-
-You know, the famous Henry the V moment in Agincourt where,
-
-# Chapter 15
 
 You know, they had a good natured competition
 
@@ -6406,21 +6476,41 @@ for freaking out about eating humans.
 
 So I kind of assume that some level
 
-of cannibalism would have to do with, you know,
+# Chapter 11
 
-eating the heart to gain the spirit
+and they're doing another one of these huge Aztec buffets
 
-of the person or something like this.
+and parties to honor them, and it happens.
 
-- In certain, like, you know,
+The guy says, you know, hey, do you like dinner?
 
-deer hunting rituals, things for sure.
+Like, oh yeah, it's a nice dinner.
 
-But the Aztecs, no, they just liked eating humans.
+Well, it's humans, you're eating humans.
 
-It was part of the fear factor too.
+See, I told you they were good.
 
-# Chapter 16
+And Alvarado just freaks out.
+
+And he has the guards close the doors
+
+and he murders everyone in the party.
+
+Women, children, nobody has weapons.
+
+He just murders everyone,
+
+and that's what spazzes the Aztecs out
+
+to eventually murder Montezuma who was their captive,
+
+and then try to murder all of them.
+
+And it was all Pedro Alvarado's fault
+
+for freaking out about eating humans.
+
+- Just a little practical joke.
 
 - It was just, they thought it was funny, he did not.
 
@@ -6880,28 +6970,6 @@ to get a osteology collection together of various animals.
 
 So if we got bones from an excavation, we could see
 
-# Chapter 17
-
-But the Maya, they love it.
-
-And every Maya person, if we find a grave,
-
-they're like, yeah, look at that, bones, cool.
-
-Can I touch?
-
-They're not spooked about it at all.
-
-They think it's exciting.
-
-I one time helped out
-
-a physical anthropologist in town in Copan
-
-to get a osteology collection together of various animals.
-
-So if we got bones from an excavation, we could see
-
 what kind of animal it was based on the collection.
 
 And this family said, well,
@@ -7057,6 +7125,48 @@ and wiped it while it was soft.
 Lots of talk about soft stones turning hard too,
 
 I haven't been able to prove it.
+
+This is one of these, you know,
+
+end of my archeological career chapters.
+
+I'm either gonna prove myself wrong or prove it.
+
+But I think they used acids.
+
+My dad's a chemist
+
+and he told me a long time ago that there's no way,
+
+there's no naturally occurring acids.
+
+But my current theory, actually,
+
+I got the idea initially from the show Breaking Bad,
+
+I don't know if you ever saw that show,
+
+but there's a point in which they're trying
+
+to dissolve a body.
+
+And they're using hydrofluoric acid
+
+and it goes right through the ceiling.
+
+That hydrofluoric acid is so fascinating.
+
+You know, it won't go through plastic.
+
+And you can also bring it in inert parts
+
+and then combine it.
+
+The Inca made tons of jewelry out of fluoride.
+
+Fluoride is big in the Andes.
+
+# Chapter 12
 
 This is one of these, you know,
 
@@ -7295,28 +7405,6 @@ into mostly the people we call the Pueblo people
 who are still there today, like Zuni and Hopi people.
 
 So we've got these two clusters.
-
-The very first major community in North America is
-
-in the most unlikely place.
-
-It's in northern Louisiana.
-
-People think I'm crazy when I say this,
-
-but there is a pyramid in northern Louisiana,
-
-a big one at a site called Poverty Point
-
-that is 3,500 years old.
-
-So it's the same age as the pyramids in Egypt.
-
-And it is a giant thing
-
-just poking out of the bayous of Louisiana.
-
-# Chapter 18
 
 The very first major community in North America is
 
@@ -7736,21 +7824,41 @@ And so they went to Greenland
 
 and then kind of island hopped over to Canada.
 
-But I think the culture
+# Chapter 13
 
-that was in that area was named the Dorset.
+And it's exciting to be part of piecing this old religion
 
-But they would have nothing to do with the Vikings.
+and its mythology back together.
 
-They attacked the Viking settlement every day
+- Just since a lot of people kind of refer
 
-and did not give them an inch
+to Christopher Columbus
 
-until they decided it was just worthless.
+as the person who discovered America.
 
-And they left it, you know, the Vikings attacked Ireland
+I read that the Vikings reached North America
 
-# Chapter 19
+much earlier in 1000 BCE.
+
+And why do you think they didn't expand and colonize?
+
+- Because they got their ass kicked.
+
+- Okay, simple. - It's the truth.
+
+It is absolutely true that the Vikings were here.
+
+There's a great site in Nova Scotia
+
+called L'Anse aux Meadows,
+
+which definitely has what's left of a Viking colony.
+
+It was Leif Erik
+
+and his father Erik the Red, who they got kind
+
+of kicked outta Europe 'cause they apparently
 
 couldn't stop murdering people.
 
@@ -8168,28 +8276,6 @@ But yeah, you know, like with nuclear weapons,
 
 the bad stuff might actually lead to the death of everybody.
 
-# Chapter 20
-
-But I also have a faith in human ingenuity
-
-that we humans like to create
-
-a really difficult situation
-
-and then come up with ways to get out
-
-of that difficult situation.
-
-And in so doing, innovate and create a lot of awesome stuff
-
-and sometimes cause a lot of suffering,
-
-but on the whole, on average, make a better world.
-
-But yeah, you know, like with nuclear weapons,
-
-the bad stuff might actually lead to the death of everybody.
-
 - I guess there's always that chance.
 
 But I am an optimist.
@@ -8349,6 +8435,48 @@ based on what preserved.
 - That's so beautiful as a thought experiment.
 
 Like what would archeologists be really wrong about
+
+and what would they could possibly be right about.
+
+- Washington DC was clearly made by a combination
+
+of the Egyptians and the Greeks and the Romans,
+
+because that's what all the architecture is.
+
+- Yeah, and would they be able
+
+to reconstruct the important empires,
+
+the powerful empires and the warring empires.
+
+- For that matter,
+
+have me and my colleagues done that at all?
+
+I'm almost certain that the Maya would just gut laugh
+
+at what I think I know what they were.
+
+- I wonder, do you ever think about like what
+
+we just as a human civilization are wrong about the most,
+
+like mainstream archeology, just like a suspicion,
+
+what could we get completely wrong?
+
+Well, one way to get something wrong is
+
+totally like lost civilization.
+
+Like an obviously gigantic civilization that was there
+
+along with the Maya or something like this
+
+in the 10,000 years ago.
+
+# Chapter 14
 
 and what would they could possibly be right about.
 
@@ -8613,28 +8741,6 @@ I will be hurt today somehow.
 I don't know how, I don't know how badly,
 
 where on my body it will occur, but it's gonna happen
-
-because it was the jungle.
-
-- So in the jungle, what's the process like?
-
-Like what do you have to do to map it?
-
-- Well, it was tricky too
-
-because it was also a national forest.
-
-So the forestry department didn't want us
-
-to cut down anything more than we had to.
-
-So we basically just cut tunnels through the foliage
-
-and I would, we'd map everything twice.
-
-The first thing we'd do is I'd go in, find a building,
-
-# Chapter 21
 
 because it was the jungle.
 

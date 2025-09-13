@@ -2730,28 +2730,6 @@ civilizational
 
  a
 
-# Chapter 2
-
-civilizational
-
-civilizational
-
-civilizational
-
-civilizational
-
-civilizational
-
-civilizational
-
-civilizational
-
-civilizational
-
-civilizational
-
- a
-
 different
 
 different
@@ -4149,6 +4127,48 @@ the
  all
 
 these
+
+these
+
+these
+
+these
+
+these
+
+these
+
+these
+
+these
+
+ other words
+
+we
+
+we
+
+we
+
+we
+
+we
+
+we
+
+we
+
+we
+
+we
+
+we
+
+we
+
+ engineering
+
+# Chapter 2
 
 these
 
@@ -5641,28 +5661,6 @@ that's
 that's
 
 that's
-
-that's
-
- be
-
-interested
-
-interested
-
-interested
-
-interested
-
-interested
-
-interested
-
-interested
-
- movie that
-
-# Chapter 3
 
 that's
 
@@ -8700,7 +8698,27 @@ forms
 
  the robust concept that
 
-# Chapter 4
+# Chapter 3
+
+are
+
+are
+
+are
+
+are
+
+are
+
+are
+
+are
+
+are
+
+are
+
+are
 
  different
 
@@ -11410,28 +11428,6 @@ the
 
  it
 
-# Chapter 5
-
-the
-
-the
-
-the
-
-the
-
-the
-
-the
-
-the
-
-the
-
-the
-
- it
-
 something
 
 something
@@ -12936,6 +12932,48 @@ kinds
 
  about
 
+# Chapter 4
+
+there's
+
+there's
+
+there's
+
+there's
+
+there's
+
+there's
+
+there's
+
+ discrete
+
+kinds
+
+kinds
+
+kinds
+
+kinds
+
+kinds
+
+kinds
+
+kinds
+
+kinds
+
+kinds
+
+kinds
+
+kinds
+
+ about
+
 it
 
 it
@@ -14399,28 +14437,6 @@ question
  and
 
 time
-
-time
-
-time
-
-time
-
-time
-
-time
-
-time
-
-time
-
-time
-
-time
-
- one
-
-# Chapter 6
 
 time
 
@@ -17542,7 +17558,27 @@ computer
 
  and
 
-# Chapter 7
+# Chapter 5
+
+computing
+
+computing
+
+computing
+
+computing
+
+ we have a quantum
+
+computer
+
+computer
+
+computer
+
+computer
+
+computer
 
 computer
 
@@ -20410,28 +20446,6 @@ thinking
 
  possible
 
-# Chapter 8
-
-that's
-
- an observer
-
-thinking
-
-thinking
-
-thinking
-
-thinking
-
-thinking
-
-thinking
-
-thinking
-
- possible
-
 rewriting orders
 
 rewriting orders
@@ -21990,6 +22004,48 @@ pulses
 
  about
 
+# Chapter 6
+
+ know random star
+
+somewhere
+
+somewhere
+
+somewhere
+
+somewhere
+
+somewhere
+
+somewhere
+
+somewhere
+
+ you know it's a periodic series of
+
+pulses
+
+pulses
+
+pulses
+
+pulses
+
+pulses
+
+pulses
+
+pulses
+
+pulses
+
+pulses
+
+pulses
+
+ about
+
 the origin
 
 the origin
@@ -23505,28 +23561,6 @@ that
 that
 
 that
-
-that
-
-that
-
-that
-
-that
-
-that
-
-that
-
-that
-
-that
-
-that
-
- doing
-
-# Chapter 9
 
 that
 
@@ -26610,7 +26644,27 @@ you
 
  elaborate thing
 
-# Chapter 10
+# Chapter 7
+
+for
+
+for
+
+for
+
+ we do is is we
+
+build this
+
+build this
+
+build this
+
+build this
+
+build this
+
+build this
 
  until
 
@@ -29784,28 +29838,6 @@ from
 
  ego as
 
-# Chapter 11
-
-from
-
-from
-
-from
-
-from
-
-from
-
-from
-
-from
-
-from
-
-from
-
- ego as
-
 well
 
 well
@@ -31426,6 +31458,48 @@ in the interests of
 
  writing
 
+# Chapter 8
+
+areas
+
+areas
+
+areas
+
+areas
+
+areas
+
+areas
+
+areas
+
+ know
+
+in the interests of
+
+in the interests of
+
+in the interests of
+
+in the interests of
+
+in the interests of
+
+in the interests of
+
+in the interests of
+
+in the interests of
+
+in the interests of
+
+in the interests of
+
+in the interests of
+
+ writing
+
 that
 
 that
@@ -32851,28 +32925,6 @@ off
  other
 
 rules
-
-rules
-
-rules
-
-rules
-
-rules
-
-rules
-
-rules
-
-rules
-
-rules
-
-rules
-
- simple
-
-# Chapter 12
 
 rules
 
@@ -35848,7 +35900,47 @@ kind
 
  the
 
-old kind
+# Chapter 9
+
+definitely
+
+definitely
+
+definitely
+
+definitely
+
+definitely
+
+definitely
+
+ new
+
+kind
+
+kind
+
+kind
+
+kind
+
+kind
+
+kind
+
+kind
+
+kind
+
+kind
+
+kind
+
+kind
+
+kind
+
+ the
 
 old kind
 
@@ -35857,26 +35949,6 @@ old kind
 old kind
 
 old kind
-
-old kind
-
-old kind
-
-old kind
-
-old kind
-
-old kind
-
-old kind
-
-old kind
-
-old kind
-
- i
-
-# Chapter 13
 
 old kind
 
@@ -38824,28 +38896,6 @@ them
 
  you
 
-# Chapter 14
-
-them
-
-them
-
-them
-
-them
-
-them
-
-them
-
-them
-
-them
-
-them
-
- you
-
 know cellular
 
 know cellular
@@ -40342,6 +40392,48 @@ impact of
 
  things you can
 
+# Chapter 10
+
+for
+
+for
+
+for
+
+for
+
+for
+
+for
+
+for
+
+ the
+
+impact of
+
+impact of
+
+impact of
+
+impact of
+
+impact of
+
+impact of
+
+impact of
+
+impact of
+
+impact of
+
+impact of
+
+impact of
+
+ things you can
+
 download
 
 download
@@ -41787,28 +41879,6 @@ the
 the
 
 the
-
-the
-
-the
-
-the
-
-the
-
-the
-
-the
-
-the
-
-the
-
-the
-
- open
-
-# Chapter 15
 
 the
 
@@ -44738,6 +44808,48 @@ more rapid
 
  we've
 
+# Chapter 11
+
+from
+
+from
+
+from
+
+from
+
+from
+
+from
+
+from
+
+from
+
+from
+
+from
+
+ hasn't been
+
+more rapid
+
+more rapid
+
+more rapid
+
+more rapid
+
+more rapid
+
+more rapid
+
+more rapid
+
+more rapid
+
+ we've
+
 really
 
 really
@@ -44767,28 +44879,6 @@ know
 know
 
 know
-
-know
-
-know
-
-know
-
-know
-
-know
-
-know
-
-know
-
-know
-
-know
-
- it's
-
-# Chapter 16
 
 know
 
@@ -47956,28 +48046,6 @@ a
 
  the
 
-# Chapter 17
-
-a
-
-a
-
-a
-
-a
-
-a
-
-a
-
-a
-
-a
-
-a
-
- the
-
 whole
 
 whole
@@ -49341,6 +49409,48 @@ so shocking
 so shocking
 
 so shocking
+
+so shocking
+
+so shocking
+
+so shocking
+
+so shocking
+
+so shocking
+
+ and
+
+i
+
+i
+
+i
+
+i
+
+i
+
+i
+
+i
+
+i
+
+i
+
+i
+
+i
+
+i
+
+i
+
+ one
+
+# Chapter 12
 
 so shocking
 
@@ -50911,28 +51021,6 @@ legal
 have to argue
 
 have to argue
-
-have to argue
-
-have to argue
-
-have to argue
-
-have to argue
-
-have to argue
-
-have to argue
-
-have to argue
-
-have to argue
-
-have to argue
-
- more
-
-# Chapter 18
 
 have to argue
 
@@ -53716,6 +53804,48 @@ few
 
  of
 
+# Chapter 13
+
+humans
+
+humans
+
+humans
+
+humans
+
+humans
+
+ a
+
+few
+
+few
+
+few
+
+few
+
+few
+
+few
+
+few
+
+few
+
+few
+
+few
+
+few
+
+few
+
+few
+
+ of
+
 impact
 
 impact
@@ -53767,28 +53897,6 @@ cellular automata is
  this
 
 but
-
-but
-
-but
-
-but
-
-but
-
-but
-
-but
-
-but
-
-but
-
-but
-
- just
-
-# Chapter 19
 
 but
 
@@ -56653,28 +56761,6 @@ sense
 sense
 
 sense
-
- on
-
-inside
-
-inside
-
-inside
-
-inside
-
-inside
-
-inside
-
-inside
-
-inside
-
- computational
-
-# Chapter 20
 
  on
 
