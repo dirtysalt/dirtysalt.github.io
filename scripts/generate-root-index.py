@@ -39,7 +39,7 @@ def build_html(evernote_links, geekbang_links):
     parts.append("</head>")
     parts.append("<body>")
     parts.append("  <div id=\"content\" class=\"content\">")
-    parts.append("    <h1>Navigation</h1>")
+    parts.append("    <h1>An Amateur Alchemist's Adventure</h1>")
     parts.append("    <ul>")
     parts.append(li("Index", "html/index.html"))
     parts.append(li("Blogs", "html/blogs.html"))    
