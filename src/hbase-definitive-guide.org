@@ -117,8 +117,8 @@ Finally, given the current status of built-in security into Hadoop and HBase, it
     - First you should set the noatime option when mounting the file system to reduce the administrative overhead for the kernel to keep the access time for each file.（关闭access time，/etc/fstab with "/dev/sdd1  /data  ext3  defaults,noatime  0  0"）
     - By default it reserves a specific number of bytes in blocks for situations where a disk fills up but crucial system processes need this space to continue to function. This is really useful for critical disks, for example the one hosting the operating system, but it is less useful for the storage drives, and in a large enough cluster can have a significant impact on available storage capacities.（减少磁盘的预留空间，主要还是需要针对数据磁盘，不要针对系统磁盘）
     - tune2fs -m 1 <device-name> （1% reserved）
-  - Yahoo has publicly stated that it is using ext3 as their file system of choice on their large Hadoop cluster farm. This shows that although it is by far not the most current or modern file system that it does very well in large clusters. In fact, you are more likely to saturate your IO on other levels of the stack before reaching the limits of ext3.（Yahoo对ext3的使用证明还是比较稳定的，并且在ext3达到极限之前可能网络IO已经到达bottleneck)
-  - The biggest drawback of ext3 is that during the bootstrap process of the servers it requires the largest amount of time. Formatting a disk with ext3 can take minutes to complete and may become a nuisance when spinning up machines dynamically on a regular basis - although that is not very common practice. (ext3最大的缺点就在于启动server的时候消耗大量时间，并且做磁盘格式化的时候费时）
+  - Yahoo has publicly stated that it is using ext3 as their file system of choice on their large Hadoop cluster farm. This shows that although it is by far not the most current or modern file system that it does very well in large clusters. In fact, you are more likely to saturate your IO on other levels of the stack before reaching the limits of ext3.(Yahoo对ext3的使用证明还是比较稳定的，并且在ext3达到极限之前可能网络IO已经到达bottleneck)
+  - The biggest drawback of ext3 is that during the bootstrap process of the servers it requires the largest amount of time. Formatting a disk with ext3 can take minutes to complete and may become a nuisance when spinning up machines dynamically on a regular basis - although that is not very common practice. (ext3最大的缺点就在于启动server的时候消耗大量时间，并且做磁盘格式化的时候费时)
 
 - ext4
   - It is officially part of the Linux kernel since then end of 2008. To that extent it has only a few years to prove its stability and reliability. Nevertheless Google has announced to upgrade its storage infrastructure from ext2 to ext4. This can be considered a strong endorsement, but also shows the advantage of the extended filesystem (the ext in ext3, ext4, etc.) lineage to be upgradable in place. Choosing an entirely different file system like XFS would have made this impossible.（从2008年开始进入Linux kernel所以还需要一段时间的考验，但是google使用证明了其稳定性。在ext文件系统上面的升级是平滑的，而不像XFS一样不兼容的）
@@ -150,7 +150,7 @@ MapReduce Locality
 
 ** Chapter 8. Architecture
 *** Storage
-[[../images/hbase-architecture.png]]
+[[../images/Pasted-Image-20231225104528.png]]
 
 The HRegionServer opens the region and creates a corresponding HRegion object. When the HRegion is opened it sets up a Store instance for each HColumnFamily for every table as defined by the user beforehand. Each of the Store instances can in turn have one or more StoreFile instances, which are lightweight wrappers around the actual storage file called HFile. A Store also has a MemStore , and the HRegionServer a shared HLog instance
 - RegionServer(HRegionServer) 上面存在有多个 Region(HRegion)，一个Region对应一个Table里面多个连续的Row
@@ -158,7 +158,7 @@ The HRegionServer opens the region and creates a corresponding HRegion object. W
    - Put.setWriteToWAL(boolean) 控制是否写入WAL
    - The WAL is a standard Hadoop SequenceFile and it stores HLogKey instances.
    - These keys contain a sequential number as well as the actual data and are used to replay not yet persisted data after a server crash.
-- 每个Store有一个MemStore以及多个StoreFile(HFile的包装，存放在HDFS上）
+- 每个Store有一个MemStore以及多个StoreFile(HFile的包装，存放在HDFS上)
 
 *** Files
 #+BEGIN_EXAMPLE
@@ -214,13 +214,13 @@ drwxr-xr-x   - dirlt supergroup          0 2013-05-30 12:32 /home/dirlt/hbase/te
 *** HFile
 The actual storage files are implemented by the HFile class, which was specifically created to serve one purpose: store HBase's data efficiently. They are based on Hadoop's TFile class, and mimic the SSTable format used in Google's BigTable architecture.（可以参考 [[file:leveldb.org][leveldb]] 代码）
 
-[[../images/hbase-hfile-structure.png]]
+[[../images/Pasted-Image-20231225104835.png]]
 
 可以通过命令 "./bin/hbase org.apache.hadoop.hbase.io.hfile.HFile" 来查看hfile文件
 
 下面是KeyValue结构
 
-[[../images/hbase-keyvalue-format.png]]
+[[../images/Pasted-Image-20231225104412.png]]
 
 - The reason why in the example above the average key is larger than the value can be attributed to the contained fields in the key: it includes the fully specified dimensions of the cell. The key holds the row key, the column family name, the column qualifier, and so on.（注意包含了rowkey，column family，column qualifier，所以使得key存储空间还是比较大的）
 - On the other hand, compression should help mitigate this problem as it looks at finite windows of data, and all contained repetitive data is compressed efficiently. （但是压缩存储能够在很大程度上缓解这个问题）
@@ -235,7 +235,7 @@ The actual storage files are implemented by the HFile class, which was specifica
     - The minimum compaction size works slightly different: it is a threshold rather than a per file limit. It includes all files that are under that limit, up to the total number of files per compaction allowed.（参与compaction文件必须小于某个阈值，直到参与compaction文件数量满足之前的需求）
   - The algorithm uses *hbase.hstore.compaction.ratio* (defaults to 1.2, or 120%) to ensure that it does include enough files into the selection process. The ratio will also select files that are up to that size compared to the sum of the store file sizes of all newer files. The evaluation always checks the files from the oldest to the newest. This ensures that older files are compacted first. The combination of these properties allows to fine-tune how many files are included into a minor compaction.（这个参数主要是用来控制已经超过max compaction file size的文件，因为按照上面的逻辑一旦超过这个file size之后那么将没有可能进行compaction了。从oldest选择，知道file size超过所有的newer file size总和。我猜想这些同时这些文件数目必须超过compaction.min但是不能够大于compaction.max会比较有意义）
 
-[[../images/hbase-store-files-in-minor-compaction.png]]
+[[../images/Pasted-Image-20231225104426.png]]
 
 **** Major
 - It triggers a check on a regular basis, controlled by *hbase.server.thread.wakefrequency* (multiplied by *hbase.server.thread.wakefrequency.multiplier*, set to 1000, to run it less often than the other thread based tasks). （定期去检查是否需要做major compaction）
@@ -244,12 +244,12 @@ The actual storage files are implemented by the HFile class, which was specifica
 - If no major compaction is due, then a minor is assumed. Based on the above configuration properties, the server determines if enough files for a minor compaction are available and continues if that is the case.（如果检查没有不需要做major compaction的话，那么就会检查是否需要做minor compaction）
 
 *** WAL
-[[../images/hbase-wal-structure.png]]
+[[../images/Pasted-Image-20231225103936.png]]
 
 **** Format
 The figure shows three different regions, hosted on the same region server, and each of them covering a different row key range. Each of these regions shares the same single instance of HLog. This means that the data is written to the WAL in the order of arrival. This imposes some extra work needed when a log needs to be replayed (see the section called “Replay”). But since this happens rather seldom it is optimized to store data sequentially, giving it the best IO performance.
 
-[[../images/hbase-wal-shared.png]]
+[[../images/Pasted-Image-20231225103419.png]]
 
 
 Currently the WAL is using a Hadoop SequenceFile, which stores records as sets of key/values. （使用SequenceFile来保存WAL）

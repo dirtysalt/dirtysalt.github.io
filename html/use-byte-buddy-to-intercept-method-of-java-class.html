@@ -1,0 +1,156 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>使用ByteBuddy来截获Java类实现</title>
+<meta name="author" content="dirtysalt" />
+<meta name="generator" content="Org Mode" />
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content" class="content">
+<h1 class="title">使用ByteBuddy来截获Java类实现</h1>
+<p>
+最近要对一个Hadoop FileSystem类（以及子类）实现进行扩展。Hadoop FileSystem实现上比较简单，在许多地方只是假设整个JVM只有一个UGI存在，所以我需要在上面做一些扩展来支持多UGI：在进行一些方法调用之前需要切换UGI(UserGroupInformation)，这样可以来实现多账号切换。
+</p>
+
+<p>
+JDK本身好像也有接口代理的方式来截获类的实现，但是有个要求就是截获的必需是接口，而FileSystem在Hadoop里面是一个抽象类，所以还没有办法使用这种接口代理的方式来实现。
+</p>
+
+<p>
+问了ChatGPT，推荐的方式就是使用字节码来动态产生类。推荐的库有cglib, byte buddy和ASM. 我看ASM好像有点底层，cglib处于维护状态(主页上也推荐使用byte buddy), 所以看来还是byte buddy还行，毕竟我这个需求比较简单，可能用不上ASM这么强大的库。
+</p>
+
+<p>
+ChatGPT给了几个代码示例，结合我自己这边的需求，我稍微整理了几个pattern
+</p>
+<ul class="org-ul">
+<li>如果想截获某个类A的实现，那么最好先创建一个ProxyA extends A. 这里面可以自己写一个构造函数和增加字段。</li>
+<li>然后我们截获ProxyA下面的所有方法。如果ProxyA是一个抽象类的话，那么在截获的时候需要考虑使用 `superMethod` 调用</li>
+<li>一般需要截获所有的方法，因为某些方法可能并不是在A实现的，而是在A的父类里面实现的，所以可能你也想截获</li>
+<li>可以排除一些特定类下面的方法比如Object下面的，以及某些特殊的方法（比如ProxyA内部实现的方法，否则就会递归）</li>
+</ul>
+
+<hr />
+
+<p>
+以我这个case为例，因为每个对象都要绑定UGI，所以我定义了 `UGIObject` . 并且对FileSystem做了封装
+</p>
+
+<div class="org-src-container">
+<pre class="src src-Java">interface UGIObject {
+    UserGroupInformation getUGI();
+
+    Object getTarget();
+}
+
+abstract static class FSProxy extends FileSystem implements UGIObject {
+    private FileSystem target;
+    private UserGroupInformation ugi;
+
+    public FSProxy(FileSystem target, UserGroupInformation ugi) {
+        this.target = target;
+        this.ugi = ugi;
+    }
+
+    @Override
+    public UserGroupInformation getUGI() {
+        return ugi;
+    }
+
+    @Override
+    public FileSystem getTarget() {
+        return target;
+    }
+}
+</pre>
+</div>
+
+<p>
+在创建这个动态类型的时候，只截获感兴趣的实现。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-Java">public static Class buildFSProxyClass() {
+    Class&lt;FSProxy&gt; cls = FSProxy.class;
+    return new ByteBuddy()
+            .subclass(cls)
+            .method(ElementMatchers.not(ElementMatchers.isDeclaredBy(Object.class))
+                    .and(ElementMatchers.not(ElementMatchers.namedOneOf("getTarget", "getUGI"))))
+            .intercept(MethodDelegation.to(new GeneralInterceptor(cls.getSimpleName())))
+            .make()
+            .load(cls.getClassLoader(), ClassLoadingStrategy.Default.INJECTION)
+            .getLoaded();
+}
+
+static class GeneralInterceptor {
+    private String name;
+
+    public GeneralInterceptor(String name) {
+        this.name = name;
+    }
+
+    @RuntimeType
+    public Object intercept(@This Object self, @AllArguments Object[] args, @Origin Method method,
+                            @SuperMethod(nullIfImpossible = true) Method superMethod)
+            throws Exception {
+        UGIObject proxy = (UGIObject) self;
+        System.out.printf("      [X] %s: %s\n", name, method.toString());
+        // During initialization there is target.
+        if (proxy.getTarget() == null) {
+            return superMethod.invoke(proxy, args);
+        }
+
+        Object res = null;
+        UserGroupInformation ugi = proxy.getUGI();
+        Object target = proxy.getTarget();
+        // No need to switch current user.
+        if (ugi != null &amp;&amp; !UserGroupInformation.getCurrentUser().equals(ugi)) {
+            res = UGITools.doAs(ugi, () -&gt; method.invoke(target, args));
+        } else {
+            res = method.invoke(target, args);
+        }
+        return res;
+    }
+}
+</pre>
+</div>
+
+<p>
+最后选择合适的构造函数来进行创建
+</p>
+
+<div class="org-src-container">
+<pre class="src src-Java">public static FileSystem createFSProxy(FileSystem target, UserGroupInformation ugi) {
+    Object proxy = null;
+    try {
+        proxy = FSProxyClass.getConstructor(FileSystem.class, UserGroupInformation.class)
+                .newInstance(target, ugi);
+    } catch (Exception e) {
+        throw new RuntimeException(e);
+    }
+    FileSystem fs = (FileSystem) proxy;
+    return fs;
+}
+</pre>
+</div>
+
+<hr />
+
+<p>
+UPDATE@202312: 后面我发现这里面限制其实特别大，问题大致有两个：
+</p>
+<ul class="org-ul">
+<li>这个很难把所有的调用链全部都hook上，为了将全部调用链全部hook上，你可能还需要替换许多字段。</li>
+<li>final 方法是没有办法改写的。gpt的回答是jvm对final方法做了内联，没有办法进行子类化改写。</li>
+</ul>
+
+<p>
+所以感觉这种对象截获方法的实现，通常只能在第一层进行捕捉，而且需要确保还不是final方法，可以说限制比较大。
+</p>
+</div>
+</body>
+</html>

@@ -1,0 +1,184 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>GCC-10.3.0优化器在处理类型强转时的bug</title>
+<meta name="author" content="dirtysalt" />
+<meta name="generator" content="Org Mode" />
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content" class="content">
+<h1 class="title">GCC-10.3.0优化器在处理类型强转时的bug</h1>
+<p>
+下面代码使用-O2和-O3编译会得到不同的结果
+</p>
+
+<pre class="example" id="org2317aba">
+doris-sandbox04 :: ~/public » /home/disk1/doris-deps/toolchain/installed/gcc-10.3.0/bin/g++  -std=gnu++17  -O3  -msse4.2 -mavx2  -fopt-info-vec-optimized test.cpp -o opt3.s
+test.cpp:63:23: optimized: loop vectorized using 32 byte vectors
+/home/disk1/doris-deps/toolchain/installed/gcc-10.3.0/include/c++/10.3.0/ext/new_allocator.h:115:41: optimized: basic block part vectorized using 32 byte vectors
+/home/disk1/doris-deps/toolchain/installed/gcc-10.3.0/include/c++/10.3.0/ext/new_allocator.h:115:41: optimized: basic block part vectorized using 32 byte vectors
+test.cpp:82:18: optimized: basic block part vectorized using 32 byte vectors
+doris-sandbox04 :: ~/public » ./opt3.s
+4138674677912027985
+4138674677912027985
+4138674677912027985
+4138674677912027985
+doris-sandbox04 :: ~/public » /home/disk1/doris-deps/toolchain/installed/gcc-10.3.0/bin/g++  -std=gnu++17  -O2  -msse4.2 -mavx2  -fopt-info-vec-optimized test.cpp -o opt2.s
+doris-sandbox04 :: ~/public » ./opt2.s
+4138674677912027985
+17614482930881034518
+9674455539515676295
+16429943614018478328
+</pre>
+
+<p>
+复现代码如下：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-C++">
+<span class="org-preprocessor">#include</span> <span class="org-string">&lt;cstdint&gt;</span>
+<span class="org-preprocessor">#include</span> <span class="org-string">&lt;vector&gt;</span>
+<span class="org-preprocessor">#include</span> <span class="org-string">&lt;iostream&gt;</span>
+
+<span class="org-keyword">static</span> <span class="org-keyword">const</span> <span class="org-type">uint64_t</span> <span class="org-variable-name">MURMUR_PRIME</span> = 0xc6a4a7935bd1e995ULL;
+<span class="org-keyword">static</span> <span class="org-keyword">const</span> <span class="org-type">uint32_t</span> <span class="org-variable-name">MURMUR_SEED</span> = 0xadc83b19ULL;
+
+<span class="org-comment-delimiter">// </span><span class="org-comment">Our hash function is MurmurHash2, 64 bit version.
+</span><span class="org-comment-delimiter">// </span><span class="org-comment">It was modified in order to provide the same result in
+</span><span class="org-comment-delimiter">// </span><span class="org-comment">big and little endian archs (endian neutral).
+</span><span class="org-type">uint64_t</span> <span class="org-function-name">murmur_hash64A</span> (<span class="org-keyword">const</span> <span class="org-type">void</span>* <span class="org-variable-name">key</span>, <span class="org-type">int32_t</span> <span class="org-variable-name">len</span>, <span class="org-type">unsigned</span> <span class="org-type">int</span> <span class="org-variable-name">seed</span>) {
+    <span class="org-keyword">const</span> <span class="org-type">uint64_t</span> <span class="org-variable-name">m</span> = MURMUR_PRIME;
+    <span class="org-keyword">const</span> <span class="org-type">int</span> <span class="org-variable-name">r</span> = 47;
+    <span class="org-type">uint64_t</span> <span class="org-variable-name">h</span> = seed ^ (len * m);
+    <span class="org-keyword">const</span> <span class="org-type">uint8_t</span> *<span class="org-variable-name">data</span> = (<span class="org-keyword">const</span> <span class="org-type">uint8_t</span> *)key;
+    <span class="org-keyword">const</span> <span class="org-type">uint8_t</span> *<span class="org-variable-name">end</span> = data + (len-(len&amp;7));
+
+    <span class="org-keyword">while</span>(data != end) {
+        <span class="org-type">uint64_t</span> <span class="org-variable-name">k</span>;
+<span class="org-preprocessor">#if</span> (BYTE_ORDER == BIG_ENDIAN)
+        k = (<span class="org-type">uint64_t</span>) data[0];
+        k |= (<span class="org-type">uint64_t</span>) data[1] &lt;&lt; 8;
+        k |= (<span class="org-type">uint64_t</span>) data[2] &lt;&lt; 16;
+        k |= (<span class="org-type">uint64_t</span>) data[3] &lt;&lt; 24;
+        k |= (<span class="org-type">uint64_t</span>) data[4] &lt;&lt; 32;
+        k |= (<span class="org-type">uint64_t</span>) data[5] &lt;&lt; 40;
+        k |= (<span class="org-type">uint64_t</span>) data[6] &lt;&lt; 48;
+        k |= (<span class="org-type">uint64_t</span>) data[7] &lt;&lt; 56;
+<span class="org-preprocessor">#else</span>
+        k = *((<span class="org-type">uint64_t</span>*)data);
+<span class="org-preprocessor">#endif</span>
+
+        k *= m;
+        k ^= k &gt;&gt; r;
+        k *= m;
+        h ^= k;
+        h *= m;
+        data += 8;
+    }
+
+    <span class="org-keyword">switch</span>(len &amp; 7) {
+    <span class="org-keyword">case</span> 7: h ^= (<span class="org-type">uint64_t</span>)data[6] &lt;&lt; 48;
+    <span class="org-keyword">case</span> 6: h ^= (<span class="org-type">uint64_t</span>)data[5] &lt;&lt; 40;
+    <span class="org-keyword">case</span> 5: h ^= (<span class="org-type">uint64_t</span>)data[4] &lt;&lt; 32;
+    <span class="org-keyword">case</span> 4: h ^= (<span class="org-type">uint64_t</span>)data[3] &lt;&lt; 24;
+    <span class="org-keyword">case</span> 3: h ^= (<span class="org-type">uint64_t</span>)data[2] &lt;&lt; 16;
+    <span class="org-keyword">case</span> 2: h ^= (<span class="org-type">uint64_t</span>)data[1] &lt;&lt; 8;
+    <span class="org-keyword">case</span> 1: h ^= (<span class="org-type">uint64_t</span>)data[0];
+            h *= m;
+    };
+
+    h ^= h &gt;&gt; r;
+    h *= m;
+    h ^= h &gt;&gt; r;
+    <span class="org-keyword">return</span> h;
+}
+
+<span class="org-comment-delimiter">// </span><span class="org-comment">static const uint32_t MURMUR_SEED = 0xadc83b19ULL;
+</span><span class="org-comment-delimiter">// </span><span class="org-comment">uint64_t murmur_hash64A (const void* key, int32_t len, unsigned int seed);
+</span>
+<span class="org-type">void</span> <span class="org-function-name">update_double</span>(<span class="org-keyword">const</span> <span class="org-constant">std</span>::<span class="org-type">vector</span>&lt;<span class="org-type">double</span>&gt;&amp; <span class="org-variable-name">values</span>, <span class="org-constant">std</span>::<span class="org-type">vector</span>&lt;<span class="org-type">uint64_t</span>&gt;&amp; <span class="org-variable-name">hashes</span>) {
+    <span class="org-keyword">auto</span> <span class="org-variable-name">size</span> = values.size();
+    <span class="org-keyword">for</span> (<span class="org-type">int</span> <span class="org-variable-name">i</span> = 0; i &lt; size; ++i) {
+        <span class="org-keyword">auto</span> <span class="org-variable-name">v</span> = values[i];
+        <span class="org-type">uint64_t</span> <span class="org-variable-name">value</span> = murmur_hash64A(&amp;v, <span class="org-keyword">sizeof</span>(v), MURMUR_SEED);
+        hashes[i] = value;
+    }
+}
+
+<span class="org-keyword">const</span> <span class="org-type">int</span> <span class="org-variable-name">N</span> = 3;
+<span class="org-type">int</span> <span class="org-function-name">main</span>() {
+    <span class="org-type">uint64_t</span> <span class="org-variable-name">x</span> = 0;
+    <span class="org-type">uint64_t</span> <span class="org-variable-name">xv</span> = murmur_hash64A(&amp;x, <span class="org-keyword">sizeof</span>(x), MURMUR_SEED);
+    printf(<span class="org-string">"%llu\n"</span>, xv);
+
+    <span class="org-constant">std</span>::<span class="org-type">vector</span>&lt;<span class="org-type">double</span>&gt; <span class="org-variable-name">values</span>(N);
+    <span class="org-constant">std</span>::<span class="org-type">vector</span>&lt;<span class="org-type">uint64_t</span>&gt; <span class="org-variable-name">hashes</span>(N);
+
+    <span class="org-keyword">for</span> (<span class="org-type">int</span> <span class="org-variable-name">i</span> = 0; i &lt; N; ++i) {
+        values[i] = i + 1;
+    }
+    update_double(values, hashes);
+    <span class="org-keyword">for</span> (<span class="org-keyword">auto</span> <span class="org-variable-name">hash</span> : hashes) {
+        <span class="org-constant">std</span>::cout &lt;&lt; hash &lt;&lt; <span class="org-constant">std</span>::endl;
+    }
+    <span class="org-keyword">return</span> 0;
+}
+</pre>
+</div>
+
+
+<p>
+GCC官方回复如下： <a href="https://gcc.gnu.org/bugzilla/show_bug.cgi?id=100224">https://gcc.gnu.org/bugzilla/show_bug.cgi?id=100224</a>
+</p>
+
+<blockquote>
+<p>
+You are accessing 'double' via a pointer to uint64_t * here:
+</p>
+
+<p>
+k = <b>((uint64_t</b>)data);
+</p>
+
+<p>
+that violates type based aliasing rules.  You can use -fno-strict-aliasing to work around your bug or use
+</p>
+
+<p>
+typedef uint64_t aliasing_uint64_t __attribute__((may_alias));
+k = <b>((aliasing_uint64_t</b>)data);
+</p>
+</blockquote>
+
+<p>
+我有个比较有趣的观察是，如果使用这个murmurhash + seed去计算 uint64_t x= 0的话，得到的hash value也是 4138674677912027985 查看汇编代码的话，可以看到有类似下面的语句
+</p>
+
+<blockquote>
+<p>
+movabsq $4138674677912027985, %rdi
+</p>
+</blockquote>
+<p>
+然后在 update_counter 函数里面也有类似的数值，相当于把这个预先计算的值copy到了所有的结果上，而且还是向量化的copy.
+</p>
+
+<p>
+我的理解是，就像gcc bug里面那个人说的，编译器估计认为double地址和int64地址不会成为alias, 那么激进的优化策略就是假设int64地址上的内容为0，那么hash值就可以预先计算出来，然后只要copy出去就行。
+</p>
+
+<p>
+另外就是如果把mumurhash单独编译成为函数，是没有这个问题的，优化没有办法跨编译单元进行。
+</p>
+
+<p>
+gcc 编译参数 -fno-strict-aliasing - 云+社区 - 腾讯云 <a href="https://cloud.tencent.com/developer/article/1159055">https://cloud.tencent.com/developer/article/1159055</a>. 这篇文章里面说-O2就会把 -fstrict-aliasing 打开，但是我们开了-O2也没有遇到过着问题，也是比较奇怪。
+</p>
+</div>
+</body>
+</html>

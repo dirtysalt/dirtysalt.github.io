@@ -1,0 +1,176 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>LC 100259. 划分数组得到最小的值之和</title>
+<meta name="author" content="dirtysalt" />
+<meta name="generator" content="Org Mode" />
+<script>
+  window.MathJax = {
+    tex: {
+      ams: {
+        multlineWidth: '85%'
+      },
+      tags: 'ams',
+      tagSide: 'right',
+      tagIndent: '.8em'
+    },
+    chtml: {
+      scale: 1.0,
+      displayAlign: 'center',
+      displayIndent: '0em'
+    },
+    svg: {
+      scale: 1.0,
+      displayAlign: 'center',
+      displayIndent: '0em'
+    },
+    output: {
+      font: 'mathjax-modern',
+      displayOverflow: 'overflow'
+    }
+  };
+</script>
+
+<script
+  id="MathJax-script"
+  async
+  src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js">
+</script>
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content" class="content">
+<h1 class="title">LC 100259. 划分数组得到最小的值之和</h1>
+<p>
+<a href="https://leetcode.cn/problems/minimum-sum-of-values-by-dividing-array/description/">https://leetcode.cn/problems/minimum-sum-of-values-by-dividing-array/description/</a>
+</p>
+
+<p>
+这题目题解比较简单，在DP里面的话把 `andValue` 一起加入到了状态里面去了。之前没有仔细想过这个状态数量问题，这个我觉得题解解释比较清楚：因为And操作每次都会去消耗bit或者是保持bit, 所以其实 `andValue` 这个空间接近常量 \(log(max(nums))\)
+</p>
+
+<div class="org-src-container">
+<pre class="src src-Python">class Solution:
+    def minimumValueSum(self, nums: List[int], andValues: List[int]) -&gt; int:
+        n, m = len(nums), len(andValues)
+        INF = 1 &lt;&lt; 30
+
+        import functools
+        @functools.cache
+        def dfs(i, j, andv):
+            if n - i &lt; m - j: return INF
+            if j == m:
+                return 0 if i == n else INF
+
+            andv &amp;= nums[i]
+            if andv &lt; andValues[j]:
+                return INF
+
+            r = dfs(i + 1, j, andv)
+            if andv == andValues[j]:
+                r2 = dfs(i + 1, j + 1, -1) + nums[i]
+                r = min(r, r2)
+            return r
+
+        ans = dfs(0, 0, -1)
+        return ans if ans != INF else -1
+
+</pre>
+</div>
+
+
+<p>
+我最开始的思路比较复杂，运行时间很长，但是可以说下。我没有把这个 `andValue` 纳入到dp里面去，而只是记录 `dp[i][j]` 表示 `处理到i元素的时候，划分到了j段`.  动态规划方程可以是这样的。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-Python">for i in range(n):
+    for j in range(m):
+        if dp[i][j] == INF or (i + 1) == n: continue
+
+        if (andValues[j] &amp; nums[i + 1]) == andValues[j]:
+            # dp[i+1][j] &lt;- dp[i][j] - nums[i] + nums[i+1]
+            dp[i + 1][j] = min(dp[i + 1][j], dp[i][j] - nums[i] + nums[i + 1])
+
+        if (j + 1) &lt; m:
+            # or we can create a neww group.
+            p = find_first(i + 1, j + 1)
+            if p != -1:
+                dp[p][j + 1] = min(dp[p][j + 1], dp[i][j] + nums[p])
+</pre>
+</div>
+
+<p>
+但是这其中有个函数 `find_first` 比较耗时，它做的事情就是寻找min(p), 确保 `Ands(nums[i:p+1]) = andValues[j]`. 里面使用了二分算法比较耗时。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-Python">class Solution:
+    def minimumValueSum(self, nums: List[int], andValues: List[int]) -&gt; int:
+        n, m = len(nums), len(andValues)
+
+        BITS = 20
+        acc = [[0] * BITS for _ in range(n + 1)]
+        for i in range(n):
+            x = nums[i]
+            for b in range(BITS):
+                if x &amp; (1 &lt;&lt; b):
+                    acc[i + 1][b] += 1
+            for b in range(BITS):
+                acc[i + 1][b] += acc[i][b]
+
+        def query(s, e):
+            v = 0
+            for b in range(BITS):
+                c = acc[e + 1][b] - acc[s][b]
+                if c == (e - s + 1):
+                    v = v | (1 &lt;&lt; b)
+            return v
+
+        import functools
+        @functools.cache
+        def find_first(start, index):
+            value = andValues[index]
+            s, e = start, n - 1
+            while s &lt;= e:
+                m = (s + e) // 2
+                v = query(start, m)
+                if (v | value) == value:
+                    e = m - 1
+                else:
+                    s = m + 1
+            if s == n: return -1
+            v = query(start, s)
+            if v != value: return -1
+            return s
+
+        INF = 1 &lt;&lt; 30
+        dp = [[INF] * m for _ in range(n)]
+        p = find_first(0, 0)
+        if p == -1: return -1
+        dp[p][0] = nums[p]
+
+        for i in range(n):
+            for j in range(m):
+                if dp[i][j] == INF or (i + 1) == n: continue
+
+                if (andValues[j] &amp; nums[i + 1]) == andValues[j]:
+                    # dp[i+1][j] &lt;- dp[i][j] - nums[i] + nums[i+1]
+                    dp[i + 1][j] = min(dp[i + 1][j], dp[i][j] - nums[i] + nums[i + 1])
+
+                if (j + 1) &lt; m:
+                    # or we can create a neww group.
+                    p = find_first(i + 1, j + 1)
+                    if p != -1:
+                        dp[p][j + 1] = min(dp[p][j + 1], dp[i][j] + nums[p])
+
+        ans = dp[n - 1][m - 1]
+        return ans if ans != INF else -1
+</pre>
+</div>
+</div>
+</body>
+</html>

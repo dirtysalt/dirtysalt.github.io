@@ -4,7 +4,7 @@
 
 下面代码在profile的时候发现，每次循环的时候rax在和奇怪的地址进行比较 0x16181e0
 
-#+BEGIN_SRC c++
+#+BEGIN_SRC C++
 template <typename T>
 inline uint32_t FixedLengthColumnBase<T>::serialize(size_t idx, uint8_t* pos) {
     strings::memcpy_inlined(pos, &_data[idx], sizeof(T));
@@ -22,13 +22,13 @@ void FixedLengthColumnBase<T>::serialize_batch(uint8_t* __restrict__ dst, Buffer
 
 其中rax这里在和某个奇怪的地址进行比较。一个 `奇怪` 的怀疑是判断地址空间是否越界，如果越界的话会去resize空间大小。编译器没有办法确定slice_sizes大小是可以保证不会产生越界情况。
 
-[[../images/mysterious-memcpy-asm-code-0.jpg]]
+[[../images/Pasted-Image-20231225104949.png]]
 
 ** 避免使用vector
 
 改成下面这样的写法，似乎也不太行，那个奇怪的地址比较还在。不过代码好像清爽不少。
 
-#+BEGIN_SRC c++
+#+BEGIN_SRC C++
 template <typename T>
 inline uint32_t FixedLengthColumnBase<T>::serialize(size_t idx, uint8_t* pos) {
     strings::memcpy_inlined(pos, &_data[idx], sizeof(T));
@@ -45,7 +45,7 @@ void FixedLengthColumnBase<T>::serialize_batch(uint8_t* __restrict__ dst, Buffer
 }
 #+END_SRC
 
-[[../images/mysterious-memcpy-asm-code-0.jpg]]
+[[../images/Pasted-Image-20231225104949.png]]
 
 
 ** 反汇编 0x16181e0 地址
@@ -56,7 +56,7 @@ void FixedLengthColumnBase<T>::serialize_batch(uint8_t* __restrict__ dst, Buffer
 我觉得 `call *rax` 那个部分代码，是编译器认为如果长度不是1的话，那么就会跳转到原始的memcpy实现上。但是纯粹从C++代码来看，这个size是可以确定为 `sizeof(T)` 并且完全不会变的，不太清楚为什么编译器没有做这个优化，或者是完成这个推理。
 
 
-#+BEGIN_SRC asm
+#+BEGIN_SRC Asm
 output/be/lib/starrocks_be:     file format elf64-x86-64
 
 
@@ -96,7 +96,7 @@ uint32_t FixedLengthColumnBase<T>::serialize_default(uint8_t* pos) {
 
 ** 手工使用memcpy
 
-#+BEGIN_SRC c++
+#+BEGIN_SRC C++
 template <typename T>
 void FixedLengthColumnBase<T>::serialize_batch(uint8_t* __restrict__ dst, Buffer<uint32_t>& slice_sizes,
                                                size_t chunk_size, uint32_t max_one_row_size) {
@@ -115,4 +115,4 @@ void FixedLengthColumnBase<T>::serialize_batch(uint8_t* __restrict__ dst, Buffer
 
 可以看到最后生成的代码就没有这个奇怪的比较了。
 
-[[../images/mysterious-memcpy-asm-code-2.jpg]]
+[[../images/Pasted-Image-20231225104933.png]]

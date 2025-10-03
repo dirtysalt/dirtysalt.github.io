@@ -27,26 +27,26 @@ sysbench 1.0.17 (using system LuaJIT 2.0.4)
 
 为了避免user/kernel之间的data copy, 我们可以使用splice/vmsplice来搬运“数据”，不过实际上我们搬运的是指针。vmsplice可以直接将指针内容写入到fd中，而在pipe场景下面实际上就是写入到了pipe buffer中，然后等待另外一端读取出来。按照vmsplice文档说明（https://man7.org/linux/man-pages/man2/vmsplice.2.html） 里面有个SPLICE_F_GIFT参数表明这个user pages之后不在使用，而在另外一端可以直接使用 splice （https://man7.org/linux/man-pages/man2/splice.2.html） 配合SPLICE_F_MOVE直接move user pages而不是copy user pages. 另外这个page最好使用mmap来分配确保是page对齐，而不是使用malloc.
 
-[[../images/optimize-linux-pipe-case-0.svg]]
+[[../images/Pasted-Image-20231225105537.svg]]
 
 我始终感觉这里面user page的生命周期是比较奇怪的，比如在write这段开辟的user page, 如果MOVE到了read段，那么谁来释放这块内存？如果还是write端的话，那么必须有种机制来确保read段这边已经消费完毕了。在这个场景下面比较容易做到，因为pipe有个buffer上限，可以通过  /proc/sys/fs/pipe-max-size 或者是 F_SETPIPE_SZ 来进行设置，使用类似double buffer的方式，每个buffer都是pipe max size大小，当使用第二段的时候可以确保第一段已经使用完毕。
 
 这个优化的线索来源于perf中 copy_user_enhanced_fast_string.
 
-[[../images/optimize-linux-pipe-case-1.png]]
+[[../images/Pasted-Image-20231225103937.png]]
 
 ----------
 
 
-使用THP的好处是可以减少TLB miss. 在Linux下面HugePage分为两种：标准大页（huge pages）和透明大页（transparent huge pages) https://plantegg.github.io/2020/11/15/Linux%E5%86%85%E5%AD%98--HugePage/ 看上去想直接使用使用标准大页好像还有点麻烦 （https://www.kernel.org/doc/html/latest/admin-guide/mm/hugetlbpage.html）而使用THP的话使用 madvise / MADV_HUGEPAGE 就行（可能如果有kernel 大页的话也会直接使用？）
+使用THP的好处是可以减少TLB miss. 在Linux下面HugePage分为两种：标准大页（huge pages）和透明大页(transparent huge pages) https://plantegg.github.io/2020/11/15/Linux%E5%86%85%E5%AD%98--HugePage/ 看上去想直接使用使用标准大页好像还有点麻烦 （https://www.kernel.org/doc/html/latest/admin-guide/mm/hugetlbpage.html）而使用THP的话使用 madvise / MADV_HUGEPAGE 就行（可能如果有kernel 大页的话也会直接使用？）
 
 下图 https://en.wikipedia.org/wiki/Page_(computer_memory)#Multiple_page_sizes 是各种架构下面HP的大小，可以看到x86-64还支持1G（不知道THP能不能到1G）。x86-64使用4级page-table（地址存储在CR3寄存器上）, 每一级有9个bit，最后面12个bit用于定位page内部offset, 最高位的16bits不使用（实际使用48bits）
 
-[[../images/optimize-linux-pipe-case-2.png]]
+[[../images/Pasted-Image-20231225104052.png]]
 
 因为kernel里面始终是按照page这个概念来处理的，所以为了适应hugepage, page结构上做了某些调整如下图。head page存储的是实际物理地址，而之后的tail page则存储了head page来辅助定位物理地址。
 
-[[../images/optimize-linux-pipe-case-3.svg]]
+[[../images/Pasted-Image-20231225105536.svg]]
 
 #+BEGIN_QUOTE
 However, the reason for the improvements is not totally obvious. Naively, we might think that by using huge pages struct page will just refer to a 2MiB page, rather than 4KiB.
@@ -58,4 +58,4 @@ So to represent 2MiB huge page we’ll have 1 “head” struct page, and up to 
 
 这个优化的线索来源于 perf 中 get_user_pages_fast , 从文档上看像是要把 user page 在物理内存中pin住 https://github.com/torvalds/linux/blob/f443e374ae131c168a065ea1748feac6b2e76613/mm/gup.c#L2945 增加这个优化之后如果perf stat -e dTLB-load-misses，可以看到减少了接近50%.
 
-[[../images/optimize-linux-pipe-case-4.png]]
+[[../images/Pasted-Image-20231225103819.png]]

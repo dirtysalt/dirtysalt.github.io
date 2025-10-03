@@ -1,0 +1,161 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>LC 2699. 修改图中的边权</title>
+<meta name="author" content="dirtysalt" />
+<meta name="generator" content="Org Mode" />
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content" class="content">
+<h1 class="title">LC 2699. 修改图中的边权</h1>
+<p>
+<a href="https://leetcode.cn/problems/modify-graph-edge-weights/">https://leetcode.cn/problems/modify-graph-edge-weights/</a>
+</p>
+
+<p>
+完全没有啥思路，看了题目的几个提示之后想到了一个解法，也是这个 <a href="https://leetcode.cn/problems/modify-graph-edge-weights/solution/xiang-xi-fen-xi-liang-ci-dijkstrachou-mi-gv1m/">题解</a> 里面提到的错误解法。
+</p>
+
+<p>
+大致思路就是要做两边最短路：
+</p>
+
+<p>
+第一次找destionation -&gt; x的最短路，这里面记录为D1
+</p>
+
+<p>
+第二次找source -&gt; x的最短路，并且期间需要使用D1的结果
+</p>
+<ul class="org-ul">
+<li>假设当前找到了x, 长度是d, 并且有个(x,y)是不固定边</li>
+<li>我们现在可以尝试去修改这个(x,y), 让它成为最短路</li>
+<li>因为D1[y] = dest -&gt; y的最短路径，所以我们可以把(x,y)改为 target - d - D1[y]</li>
+</ul>
+
+<p>
+但是上面的修改并不一定保证，最后的最短路是 src -&gt; x -&gt; y -&gt; dest. 因为在第一次最短路里面dest-&gt;src并不一定经过(x,y)这个节点。
+</p>
+
+<p>
+我觉得可能这题最关键就是这里，题解里面提到的：
+</p>
+
+<blockquote>
+<p>
+如果 y 不在最短路上，修改 x - y 并不会对最短路产生影响，所以代码中并没有判断 y 是否在最短路上。
+</p>
+</blockquote>
+
+<p>
+我们每次发现这些边的时候直接去修改就好了，不用判断是否在最短路上。我们假设在最短路上，修改完成之后做一次检查，判断是否满足target就好。
+</p>
+
+<p>
+这种两次最短路的算法直接没有看过，比较新鲜。我的代码里面不好直接测试样例，所以增加了一个 `DOCHECK` 标记。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-Python">class Solution:
+    def modifiedGraphEdges(self, n: int, edges: List[List[int]], source: int, destination: int, target: int) -&gt; List[
+        List[int]]:
+
+        # build adj on fixed cost
+        # assign varied cost with 1.
+        adj = [[] for _ in range(n)]
+        disconnect = set()
+        for a, b, w in edges:
+            if w == -1:
+                disconnect.add((a, b))
+                disconnect.add((b, a))
+                w = 1
+            adj[a].append((b, w))
+            adj[b].append((a, w))
+
+        def shortest(s, e, adj):
+            visit = [-1] * n
+            import heapq
+            hp = []
+            hp.append((0, s, -1))
+            while hp:
+                (d, x, p) = heapq.heappop(hp)
+                if visit[x] != -1: continue
+                visit[x] = d
+                if x == e: break
+                for y, w in adj[x]:
+                    if visit[y] != -1: continue
+                    heapq.heappush(hp, (d + w, y, x))
+            return visit
+
+        if True:
+            D1 = shortest(destination, source, adj)
+            d = D1[source]
+            if d &gt; target:
+                return []
+
+        # dijkstra again with deterministic order.
+        def fixedWeight(s, e, adj, D):
+            visit = [-1] * n
+            hp = []
+            hp.append((0, s, -1, 0))
+            weight = {}
+            while hp:
+                (d, x, p, w) = heapq.heappop(hp)
+                if visit[x] != -1: continue
+                visit[x] = d
+                if p != -1:
+                    weight[(x, p)] = w
+                if x == e: break
+                for y, w in adj[x]:
+                    if (x, y) in disconnect:
+                        if D[y] != -1 and (d + D[y] + w) &lt;= target:
+                            w = target - d - D[y]
+                        else:
+                            w = target + 1
+                    if visit[y] != -1: continue
+                    heapq.heappush(hp, (d + w, y, x, w))
+            return visit, weight
+
+        D2, W = fixedWeight(source, destination, adj, D1)
+        if D2[destination] != target:
+            return []
+
+        output = []
+        for a, b, w in edges:
+            if w != -1:
+                output.append((a, b, w))
+                continue
+
+            w = W.get((a, b)) or W.get((b, a)) or w
+            if w == -1:
+                w = target + 1
+            output.append((a, b, w))
+        output = [list(x) for x in output]
+
+        DOCHECK = False
+        if os.environ.get('USER') == 'dirlt':
+            # print('mother')
+            DOCHECK = True
+
+        if DOCHECK:
+            def check(edges):
+                adj = [[] for _ in range(n)]
+                for a, b, w in edges:
+                    adj[a].append((b, w))
+                    adj[b].append((a, w))
+                D = shortest(source, destination, adj)
+                if D[destination] != target:
+                    print('FAILED', D[destination], target)
+
+            check(output)
+
+        return output
+</pre>
+</div>
+</div>
+</body>
+</html>

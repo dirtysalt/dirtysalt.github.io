@@ -6,7 +6,7 @@ FB内部是如何利用和改进Memcache集群的。在FB内部，memcache被集
 3. across region. 跨区域的集群
 文章下面分别从这3个层次讲了他们使用和改进的地方
 
-[[../images/fb-memcache-overview.png]]
+[[../images/Pasted-Image-20231225104307.png]]
 
 在Cluster级别上如何减少延迟和负载：
 1. 在Get请求上使用UDP而不是TCP直接去拿. 如果出现丢包(80%)或者是顺序错误(20%)的话，那么直接认为失败然后从storage层取数据，但是不回写到cache上。如果出现丢包通常以为机架上网络比较拥塞了，所以可能去直接去storage上拿回更好。产品上只有0.25%拿不到结果，而延迟可以减少20%. Set/Delete 还是走TCP并且连接mcrouter.
@@ -22,7 +22,7 @@ Region级别上主要是做Replication工作。所有web servers以及memcache s
 3. regional pool. 把多个cluster上的memcache组成pool. 因为多个cluster pool之间是replication的，所以内存利用率会较低。组成regional pool的话可以减少replication factor提高利用率，但是跨机架的带宽是单机架的40%左右，会有点稍高的延迟。
 4. cold cluster warmup. 如何对一个cold cluster做wamup, 可以将恢复过程从几天压缩到几个小时。思路就是client从从cold cluster拿不到的话，则从warmup cluster中拿到数据后回写一份到cold cluster上。但是里面有一致性问题。如果client在cold cluster上更新db，但是这个db数据并没有反应到wamup cluster上的话，那么写入cold cluster的数就是stale数据（我觉得也还好吧，最终还是会回来的，除非是delete操作）。解决办法就是，在cold cluster这个key上增加一个hold off time(2s),  在hold off time期间是不允许更新的。其实这个hold off time可以认为，这个delete propagation造成invalidation的时间是2s.  一旦cold cluster的hit rate到达一定标准，就认为warmup完成，就可以开始走正常逻辑了。
 
-[[../images/fb-memcache-invalidation-pipeline.png]]
+[[../images/Pasted-Image-20231225103315.png]]
 
 
 Across Regions 里面有点很有意思，就是如果是从non-master region发起的写（删除）操作的话，db数据到达non-master region db上需要一定的延迟。如果这个时候client开始读non-master region cache的话，就会出现不一致的问题。解决办法是如果删除k的话，首先在local cache上删除k并且增加一个kR(key redirect) 这个意味着，如果要访问k一定要读取master region db.  当删除操作到达了non-master region db, 之前的mcsquel就会把k和kR一起invalidation. 此时数据完全达到一致。

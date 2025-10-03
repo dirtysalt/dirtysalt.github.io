@@ -1,0 +1,167 @@
+#+title: What Goes Around Comes Around, And Around
+sigmod2024年的回顾性文章，回顾了过去20年数据库的变化，以及对现在数据库行业和技术的分析和预测。从数据库的数据模型，以及技术和应用两个方面做了点评。最后两个作者还希望自己可以活着，或者是out on bail, 在2044年写篇回顾过去20年的文章
+
+#+BEGIN_QUOTE
+[!NOTE]
+
+We caution developers to learn from history. In other words, stand on the shoulders of those who came before and not on their toes. One of us will likely still be alive and out on bail in two decades, and thus fully expects to write a follow-up to this paper in 2044.
+#+END_QUOTE
+
+文章比较杂，似乎没有什么特别的贯穿逻辑，所以我就把一些眼前一亮的点摘录下来。
+
+---------------
+
+
+数据模型上文章对下面几类做了点评
+
+#+BEGIN_QUOTE
+[!NOTE]
+
+In this paper, we analyze the last 20 years of data model and query language activity in databases. We structure our commentary into the following areas:
+- (1) MapReduce Systems,
+- (2) Key-value Stores,
+- (3) Docu- ment Databases,
+- (4) Column Family / Wide-Column,
+- (5) Text Search Engines,
+- (6) Array Databases,
+- (7) Vector Databases, and
+- (8) Graph Databases.
+#+END_QUOTE
+
+Google发明MR的时候里面没有人对DBMS有深入了解。发明了MR之后，其他厂商开始跟进，但是发现MR可以直接使用的场景比较有限，最后还是需要再上面套一层SQL包装成为DBMS才好用。后来google招了不少懂DBMS的人，然后就把MR给废了。但是那些是许多基于MR/hadoop的open-source vendor都被坑惨了，最后也不得不自己实现DBMS. 现在MR已经过时了，但是留下了不少东西：shared-disk arch, 存算分离架构，hdfs, spark/flink.  这段教训是：google发展出的东西不一定就是好的，没有人愿意去只用primitives来搞事情，数据分析和处理可能还是SQL/DBMS比较直观。
+
+#+BEGIN_QUOTE
+[!NOTE]
+
+Google constructed their MapReduce (MR) framework in 2003 as a “point solution” for processing its periodic crawl of the internet [122]. At the time, Google had little expertise in DBMS technology, and they built MR to meet their crawl needs.
+
+The first event was that the Hadoop technology and services market cratered in the 2010s. Many enterprises spent a lot of money on Hadoop clusters, only to find there was little interest in this functionality. Developers found it difficult to shoehorn their application into the restricted MR/Hadoop paradigm. There were consider- able efforts to provide a SQL and RM interface on top of Hadoop, most notable was Meta’s Hive [30, 197].
+
+The next event occurred eight months after the CACM article when Google announced that they were moving their crawl processing from MR to BigTable [164]. The reason was that Google needed to interactively update its crawl database in real time but MR was a batch sys- tem. Google finally announced in 2014 that MR had no place in their technology stack and killed it off [194].
+
+The first event left the three leading Hadoop vendors (Cloudera, Hortonworks, MapR) without a viable prod- uct to sell. Cloudera rebranded Hadoop to mean the whole stack (application, Hadoop, HDFS). In a further sleight-of-hand, Cloudera built a RDBMS, Impala [150], on top of HDFS but not using Hadoop. They realized that Hadoop had no place as an internal interface in a SQL DBMS, and they configured it out of their stack with software built directly on HDFS. In a similar vein, MapR built Drill [22] directly on HDFS, and Meta cre- ated Presto [185] to replace Hive.
+
+MR’s deficiencies were so significant that it could not be saved despite the adoption and enthu- siasm from the developer community. Hadoop died about a decade ago, leaving a legacy of HDFS clusters in enterprises and a collection of companies dedicated to making money from them. At present, HDFS has lost its luster, as enterprises realize that there are better distributed storage alternatives [124]. Meanwhile, dis- tributed RDBMSs are thriving, especially in the cloud.
+
+Some aspects of MR system implementations related to scalability, elasticity, and fault tolerance are carried over into distributed RDBMSs. MR also brought about the revival of shared-disk architectures with disaggre- gated storage, subsequently giving rise to open-source file formats and data lakes (see Sec. 3.3). Hadoop’s lim- itations opened the door for other data processing plat- forms, namely Spark [201] and Flink [109]. Both sys- tems started as better implementations of MR with pro- cedural APIs but have since added support for SQL [105].
+#+END_QUOTE
+
+
+KV DB可以使用场景非常有效，RDBMS可以很容易地改造成为KV DB. 所以长远看KV DB只能使用在特定场景比如cache，而KV DB另外一个很大的用途是用于构建composable RDBMS的storage layer.
+
+#+BEGIN_QUOTE
+[!NOTE]
+
+One new architecture trend from the last 20 years is using embedded KV stores as the underlying storage manager for full-featured DBMSs. Prior to this, build- ing a new DBMS requires engineers to build a custom storage manager that is natively integrated in the DBMS. MySQL was the first DBMS to expose an API that al- lowed developers to replace its default KV storage man- ager. This API enabled Meta to build RocksDB to re- place InnoDB for its massive fleet of MySQL databases. Similarly, MongoDB discarded their ill-fated MMAP- based storage manager in favor of WiredTiger’s KV store in 2014 [120, 138]. Using an existing KV store allows developers to write a new DBMS in less time.
+#+END_QUOTE
+
+
+Document DB最开始是想强调schema-less以及绕开ACID来获得更好的扩展性，但是发现最后还是需要application layer来处理这些事情，而且处理的还不够好。所以Document DB实现也开始向RDBMS靠拢，并且访问方式上也开始支持SQL（虽然是各种各样奇怪的方言）。之后RDBMS也开始支持JSON这样的数据结构，可以预见未来Document DB市场会越来越小。另外作者还怀疑这些DB最开始不支持SQL，可能主要还是因为SQL optimizer比较难写。所以怎么提供composable SQL optimizer对未来数据库发展也是挺关键的。
+
+#+BEGIN_QUOTE
+[!NOTE]
+
+Despite strong protestations that SQL was terrible, by the end of the 2010s, almost every NoSQL DBMS added a SQL interface. Notable examples include DynamoDB PartiQL [56], Cassandra CQL [15], Aerospike AQL [9], and Couchbase SQL++ [72]. The last holdout was Mon- goDB, but they added SQL for their Atlas service in 2021 [42]. Instead of supporting the SQL standard for DDL and DML operations, NoSQL vendors claim that they support their own proprietary query language de- rived or inspired from SQL. For most applications, these distinctions are without merit. Any language differences between SQL and NoSQL derivatives are mostly due to JSON extensions and maintenance operations.
+
+Adding SQL and ACID to a NoSQL DBMS lowers their intellectual distance from RDBMSs. The main differences between them seems to be JSON support and the fact that NoSQL vendors allow “schema later” databases. But the SQL standard added a JSON data type and operations in 2016 [165, 178]. And as RDBMSs continue to improve their “first five minutes” experience for developers, we believe that the two kinds of systems will soon be effectively identical.
+
+Higher level languages are almost universally pre- ferred to record-at-a-time notations as they require less code and provide greater data independence. Although we acknowledge that the first SQL optimizers were slow and ineffective, they have improved immensely in the last 50 years. But the optimizer remains the hardest part of building a DBMS. We suspect that this engineering burden was a contributing factor to why NoSQL systems originally chose to not support SQL.
+#+END_QUOTE
+
+
+text search engine 目前看上去RDBMS支持不太好，虽然也有这个功能，但是相差special system比较大。目前使用是下面3种方法，而且看上去第一种是比较多的。
+
+#+BEGIN_QUOTE
+[!NOTE]
+
+There are three ways to manage text data in application. First, one can run multiple systems, such as Elastic- search for text and a RDBMS for operational workloads. This approach allows one to run “best of breed” systems but requires additional ETL plumbing to push data from the operational DBMS to the text DBMS and to rewrite applications to route queries to the right DBMSs based on their needs. Alternatively, one can run a RDBMS with good text-search integration capabilities but with divergent APIs in SQL. This latter issue is often over- come by application frameworks that hide this complex- ity (e.g., Django Haystack [20]). The third option is a polystore system [187] that masks the system differ- ences via middleware that exposes a unified interface.
+#+END_QUOTE
+
+array database 也是比较niche market. 看上去DBMS还需要提供按照不同的dimension来访问这些array data. 但是目前做的不太好，但是需要使用者还是绕过RDBMS而直接使用原始数据格式(deisgn for array store/fetch).  vector database 单独拿出来是因为这个是给类似RAG场景使用的，以为场景限定住了，所以目前还是有RDBMS支持vector database的比如vldb2024的singlestore-v, 以及pgvector等。
+
+#+BEGIN_QUOTE
+[!NOTE]
+
+Array DBMSs are a niche market that has only seen adoption in specific verticals (we discuss vec- tor DBMSs next). For example, they have considerable traction in the genomics space. HDF5 is popular for satellite imagery and other gridded scientific data. But business applications rarely use dedicated array DBMSs, which is necessary for any product to survive. No ma- jor cloud provider offers a hosted array DBMS service, meaning they do not see a sizable market.
+#+END_QUOTE
+
+graph database 处于比较尴尬的位置。TP场景上通常没有太长的链路分析，短链路分析直接使用RDBMS join就可以搞定。AP场景上复杂的算法尽可能放在单机上实现比较有效，这样分布式的graph database就显得比较没有必要。
+
+#+BEGIN_QUOTE
+[!NOTE]
+
+The first category of systems are for operational / OLTP workloads: an application, for example, adds a friend link in the database by updating a single record, presumably in a transactional manner. Neo4j [44] is the most popular graph DBMS for OLTP applications. It supports edges using pointers (as in CODASYL) but it does not cluster nodes with their “parent” or “offspring”. Such an architecture is advantageous for traversing long edge chains since it will do pointer chasing, whereas a RDBMS has to do this via joins. But their potential mar- ket success comes down to whether there are enough
+
+“long chain” scenarios that merit forgoing a RDBMS. The second use case is analytics, which seeks to de- rive information from the graph. An example of this scenario is finding which user has the most friends un der 30 years old. Notable entries like Tigergraph [74] and JanusGraph [32] focus on query languages and storage on a graph DBMS. Other systems, such as Gi- raph [26] and Turi [78] (formerly Graphlab [27]) pro- vide a computing fabric to support parallel execution of graph-oriented programs, typically written by a user.
+
+Unlike queries in relational analytics that are charac- terized by chains of joins, queries for graph analytics contain operations like shortest path, cut set, or clique determination. Algorithm choice and data representation will determine a DBMS’s performance. This argues for a computing fabric that allows developers to write their own algorithms using an abstraction that hides the underlying system topology. However, previous research shows that distributed algorithms rarely out- perform single-node implementations because of com- munication costs [160]. A better strategy is to compress a graph into a space-efficient data structure that fits in memory on a single node and then run the query against this data structure. All but the largest graph databases are probably best handled this way.
+#+END_QUOTE
+
+
+-----------------
+
+在技术和应用上最下面几类做了点评
+
+#+BEGIN_QUOTE
+[!NOTE]
+
+Although there has not been much change in RM fundamentals, there were dramatic changes in RM sys- tem implementations. The second part of this paper discusses advancements in DBMS architectures that ad- dress modern applications and hardware:
+- (1) Columnar Systems,
+- (2) Cloud Databases,
+- (3) Data Lakes / Lake- houses,
+- (4) NewSQL Systems,
+- (5) Hardware Acceler- ators, and
+- (6) Blockchain Databases.
+
+Some of these are profound changes to DBMS implementations, while others are merely trends based on faulty premises.
+#+END_QUOTE
+
+cloud database是最体现goes around, comes around的，来来回回之间进行选择。move to cloud也是一个可以将refactor codebase并且丢弃历史包袱的好机会。
+
+#+BEGIN_QUOTE
+[!NOTE]
+The advent of cloud databases is another example of “what goes around comes around”. Multi- node shared-disk DBMSs are an old idea that histori- cally tended not to work out well. However, it is back in vogue with technology change (faster networking) and moving to the cloud. In addition, time-sharing services were popular in the 1970s when computers were big and expensive. Cloud platforms are big time-sharing ser- vices, so the concept is back after a few decades. Since enterprises are moving everything possible to the cloud, we expect this shared-disk to dominate DBMS architec- tures. Hence, we do not foresee shared-nothing architec- tures resurfacing in the future.
+
+The cloud has profoundly impacted DBMSs, causing them to be completely re-architected. The movement of computing from on-prem to the cloud generates a once-in-a-lifetime opportunity for enterprises to refac- tor codebases and remove bad historical technology de- cisions. A cloud environment also provides several ben- efits to vendors that are not possible with on-prem de- ployments. Foremost is that vendors can track usage trends for all their customers: they can monitor unex- pected behavior, performance degradations, and usage patterns. Moreover, they can push incremental updates and code patches without disrupting service.
+#+END_QUOTE
+
+hardware accelerators 从当前情况来看似乎还在探索期间，不少这种硬件加速数据库最后还是切换回了软件方案。customized hardware这个东西可行，但是仅仅限于cloud vendor来搞，做成full stack optimized dbms. 否则DBMS通常是软件厂商，不太可能同时做hardware和software. 另外一个思路就是目前使用GPU和FPGA, 直接使用现有硬件，但是这个规模不大。
+
+#+BEGIN_QUOTE
+[!NOTE]
+There are several conclusions that we can draw from the above analysis. First, these systems are all focused on the OLAP market and only for RDBMSs; there are essentially no data model implications to the discussion in this section. Also, OLAP workloads will continue to move aggressively to the cloud, but special- purpose hardware is not likely to find acceptance unless it is built by the cloud vendor.
+
+Creating custom hardware just for a DBMS is not cost-effective for most companies. Commodity hard- ware avoids this problem but there is still the challenge of integrating the hardware into a DBMS. The reason why there are more GPU DBMSs than FPGA systems is because there are existing support libraries available for GPUs (e.g., Nvidia CUDA [169]). But cloud CPU- based compute resources are incredibly cheap due to economies of scale. The success of any accelerator is likely to be limited to on-prem databases, but this mar- ket is not growing at the same rate as cloud databases.
+
+Even if one could get an accelerator to market that showed orders of magnitude improvement over existing technologies, that only solves half the problem needed for adoption and success. A hardware-only company must find somebody to add support for its accelerator in a DBMS. If the accelerator is an optional add-on to the DBMS, then adoption will be low and thus a DBMS vendor will not want to spend engineering time on sup- porting it. If the accelerator is a critical component of the DBMS, then no vendor would outsource the devel- opment of such an important part to an outside vendor.
+
+The only place that custom hardware accelerators will succeed is for the large cloud vendors. They can justify the $50–100m R&D cost of custom hardware at their massive scale. They also control the entire stack (hard- ware and software) and can integrate their hardware at critical locations. Amazon did this already with their Redshift AQUA accelerators [102]. Google BigQuery has custom components for in-memory shuffles [89].
+#+END_QUOTE
+
+-----------------
+
+parting comments 这节都是经验总结，值得好好看看，也不长。
+- Never underestimate the value of good marketing for bad products.
+- Do not ignore the out-of-box experience.
+- Developers need to query their database directly.
+- The impact of AI/ML on DBMSs will be significant.
+- Beware of DBMSs from large non-DBMS vendors.
+
+`Beware of DBMSs from large non-DBMS vendors.` 这点我觉得挺有意思的。不要迷信大公司，如果不是专业做DBMS，他们的路很有可能走错。而且为了绩效开新项目和开源，大公司这种事情很多。
+
+#+BEGIN_QUOTE
+[!NOTE]
+One interesting aspect in the last ten years of databases is the trend of tech companies building DBMSs in-house that they then spin out as open-source projects. All these systems started life as purpose-built applications for a tech company. The company then releases the DBMS as an open-source project (often pushed to the Apache Foundation for stewardship) in hopes to achieve “free” development from external users.
+
+Some times they come from large companies that can afford to allocate resources to developing new systems. Notable examples include Meta (Hive [197], Presto [63], Cassandra [14], RocksDB [68]) and LinkedIn (Kafka [33], Pinot [59], Voldemort [82]). Other systems are from start-ups building a data-intensive product where they felt the need to also build a DBMS. The most successful examples are 10gen (MongoDB) and PowerSet (HBase), but there also many failed endeavors.
+
+This trend to avoid “not invented here” software is partly because many companies’ promotion path favors engineers who make new internal systems, even if ex- isting tools are sufficient. But this perversion led many teams without DBMS engineering experience to under- take building a new system. One should be wary of such systems when a company first open-sources them, as they are almost always immature technologies.
+#+END_QUOTE
+
+另外未来RDBMS也需要多些可复用的组件
+
+#+BEGIN_QUOTE
+[!NOTE]
+
+Another concern is the wasted effort of new projects reimplementing the same components that are not novel but necessary to have a production-ready DBMS (e.g., config handlers, parsers, buffer pools). To accelerate the next generation of DBMSs, the community should foster the development of open-source reusable compo- nents and services [112, 176]. There are some efforts to- wards this goal, including for file formats (see Sec. 3.3), query optimization (e.g., Calcite [104], Orca [186]), and execution engines (e.g., DataFusion [18], Velox [175]). We contend that the database community should strive for a POSIX-like standard of DBMS internals to accel- erate interoperability.
+#+END_QUOTE

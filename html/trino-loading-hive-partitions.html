@@ -1,0 +1,142 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Trino Hive Partitions 加载过程</title>
+<meta name="author" content="dirtysalt" />
+<meta name="generator" content="Org Mode" />
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content" class="content">
+<h1 class="title">Trino Hive Partitions 加载过程</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>Table of Contents</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#orgb25fe71">1. 总体流程</a></li>
+<li><a href="#org8849666">2. GetPartitionNames</a></li>
+<li><a href="#orgd7c741d">3. GetPartitionValues</a></li>
+</ul>
+</div>
+</div>
+<div id="outline-container-orgb25fe71" class="outline-2">
+<h2 id="orgb25fe71"><span class="section-number-2">1.</span> 总体流程</h2>
+<div class="outline-text-2" id="text-1">
+<p>
+Hive parttions加载分为两步：
+</p>
+<ul class="org-ul">
+<li>同步地去获取partition names.</li>
+<li>异步/按需根据batch partition names去获取partition values.</li>
+</ul>
+
+
+<div id="org1006522" class="figure">
+<p><img src="../images/Pasted-Image-20241204105245.png" alt="Pasted-Image-20241204105245.png" />
+</p>
+</div>
+</div>
+</div>
+
+
+<div id="outline-container-org8849666" class="outline-2">
+<h2 id="org8849666"><span class="section-number-2">2.</span> GetPartitionNames</h2>
+<div class="outline-text-2" id="text-2">
+<p>
+在Optimizer阶段同步获取到PartitionNames. 并且也是存储在Cache里面，然后塞到table对象中。这个过程是同步执行的。
+</p>
+
+
+<div id="org063f131" class="figure">
+<p><img src="../images/Pasted-Image-20241204105307.png" alt="Pasted-Image-20241204105307.png" />
+</p>
+</div>
+
+
+<div id="org691ab61" class="figure">
+<p><img src="../images/Pasted-Image-20241204105319.png" alt="Pasted-Image-20241204105319.png" />
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgd7c741d" class="outline-2">
+<h2 id="orgd7c741d"><span class="section-number-2">3.</span> GetPartitionValues</h2>
+<div class="outline-text-2" id="text-3">
+
+<div id="org8a268a6" class="figure">
+<p><img src="../images/Pasted-Image-20241204105341.png" alt="Pasted-Image-20241204105341.png" />
+</p>
+</div>
+
+
+<p>
+在下面这个函数里面把 HivePartition变成了Partition对象（包装在HivePartitionMetadata里面），里面的过程大致是
+</p>
+<ul class="org-ul">
+<li>将parttionNames按照exponent进行拆分获取，最大值是100，并且依然是变为iterator.</li>
+<li>然后按照batch的方式对parttionNames得到partitionValues, 里面也是有cache来减少调用。</li>
+</ul>
+
+<div class="org-src-container">
+<pre class="src src-Java">Iterator&lt;HivePartitionMetadata&gt; hivePartitions = getPartitionMetadata(
+        session,
+        metastore,
+        table,
+        peekingIterator(partitions),
+        bucketHandle.map(HiveBucketHandle::toTableBucketProperty),
+        neededColumnNames);
+
+public class HivePartitionMetadata
+{
+    private final Optional&lt;Partition&gt; partition;
+    private final HivePartition hivePartition;
+    private final Map&lt;Integer, HiveTypeName&gt; hiveColumnCoercions;
+}
+
+
+Iterator&lt;List&lt;HivePartition&gt;&gt; partitionNameBatches = partitionExponentially(hivePartitions, minPartitionBatchSize, maxPartitionBatchSize);
+Iterator&lt;List&lt;HivePartitionMetadata&gt;&gt; partitionBatches = transform(partitionNameBatches, partitionBatch -&gt; {}
+</pre>
+</div>
+
+<p>
+最后这个iterator被传入到background hive split loader里面去，所以执行的时候应该是在其他线程池(executor)执行的。这个线程池有1000个线程
+</p>
+
+<blockquote>
+<p>
+private int queryExecutorPoolSize = 1000;
+</p>
+</blockquote>
+
+<div class="org-src-container">
+<pre class="src src-Java">HiveSplitLoader hiveSplitLoader = new BackgroundHiveSplitLoader(
+        table,
+        hivePartitions,
+        hiveTable.getCompactEffectivePredicate(),
+        dynamicFilter,
+        getDynamicFilteringWaitTimeout(session),
+        typeManager,
+        createBucketSplitInfo(bucketHandle, bucketFilter),
+        session,
+        fileSystemFactory,
+        transactionalMetadata.getDirectoryLister(),
+        executor,
+        splitLoaderConcurrency,
+        recursiveDfsWalkerEnabled,
+        !hiveTable.getPartitionColumns().isEmpty() &amp;&amp; isIgnoreAbsentPartitions(session),
+        metastore.getValidWriteIds(session, hiveTable)
+                .map(value -&gt; value.getTableValidWriteIdList(table.getDatabaseName() + "." + table.getTableName())),
+        hiveTable.getMaxScannedFileSize(),
+        maxPartitionsPerScan);
+</pre>
+</div>
+</div>
+</div>
+</div>
+</body>
+</html>

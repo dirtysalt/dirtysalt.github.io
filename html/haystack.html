@@ -16,22 +16,22 @@
 <h2>Table of Contents</h2>
 <div id="text-table-of-contents" role="doc-toc">
 <ul>
-<li><a href="#org3119d3c">1. Abstract</a></li>
-<li><a href="#orgb539050">2. Introduction</a></li>
-<li><a href="#org1d6217d">3. Background &amp; Previous Design</a></li>
-<li><a href="#org34d70f0">4. Design &amp; Implementation</a>
+<li><a href="#org37622d7">1. Abstract</a></li>
+<li><a href="#org6ce356c">2. Introduction</a></li>
+<li><a href="#orgccb060d">3. Background &amp; Previous Design</a></li>
+<li><a href="#org91bc655">4. Design &amp; Implementation</a>
 <ul>
-<li><a href="#org62ff1dd">4.1. Overview</a></li>
-<li><a href="#orgfe24dc7">4.2. Haystack Directory</a></li>
-<li><a href="#orga357f6b">4.3. Haystack Cache</a></li>
-<li><a href="#orgd8b92ed">4.4. Haystack Store</a></li>
-<li><a href="#org879a8aa">4.5. Recovery from failures</a></li>
-<li><a href="#orge95f114">4.6. Optimizations</a></li>
+<li><a href="#orgdfeaf6f">4.1. Overview</a></li>
+<li><a href="#orgdd664e6">4.2. Haystack Directory</a></li>
+<li><a href="#org9e8ccc2">4.3. Haystack Cache</a></li>
+<li><a href="#org495ac7b">4.4. Haystack Store</a></li>
+<li><a href="#orgf7f022a">4.5. Recovery from failures</a></li>
+<li><a href="#org8b02b20">4.6. Optimizations</a></li>
 </ul>
 </li>
-<li><a href="#org18cb2e3">5. Evaluation</a></li>
-<li><a href="#org4baa0c2">6. Related Work</a></li>
-<li><a href="#org753a9b6">7. Conclusion</a></li>
+<li><a href="#org9d9cb7e">5. Evaluation</a></li>
+<li><a href="#org904069a">6. Related Work</a></li>
+<li><a href="#org6f4c474">7. Conclusion</a></li>
 </ul>
 </div>
 </div>
@@ -43,8 +43,8 @@
 解决存储大量静态小文件问题
 </p>
 
-<div id="outline-container-org3119d3c" class="outline-2">
-<h2 id="org3119d3c"><span class="section-number-2">1.</span> Abstract</h2>
+<div id="outline-container-org37622d7" class="outline-2">
+<h2 id="org37622d7"><span class="section-number-2">1.</span> Abstract</h2>
 <div class="outline-text-2" id="text-1">
 <ul class="org-ul">
 <li>Facebook currently stores over 260 billion images, which translates to over 20 petabytes of data. Users up-load one billion new photos (∼60 terabytes) each week and Facebook serves over one million images per sec-ond at peak. # 260G张图片, 20PB数据(~= 20 * 1024 * 1024 * 1.024 ^ 3 / 260 = 84k bytes). 每周上传1G张图片~60TB(~= 60 * 1024 * 1.024 ^ 3 / 1 = 64k bytes). 高峰1000k QPS.</li>
@@ -55,19 +55,19 @@
 </div>
 </div>
 
-<div id="outline-container-orgb539050" class="outline-2">
-<h2 id="orgb539050"><span class="section-number-2">2.</span> Introduction</h2>
+<div id="outline-container-org6ce356c" class="outline-2">
+<h2 id="org6ce356c"><span class="section-number-2">2.</span> Introduction</h2>
 </div>
-<div id="outline-container-org1d6217d" class="outline-2">
-<h2 id="org1d6217d"><span class="section-number-2">3.</span> Background &amp; Previous Design</h2>
+<div id="outline-container-orgccb060d" class="outline-2">
+<h2 id="orgccb060d"><span class="section-number-2">3.</span> Background &amp; Previous Design</h2>
 <div class="outline-text-2" id="text-3">
 <p>
 下面是图片服务的典型设计图. 这个设计存在个问题就是, 图片访问呈现长尾趋势, 有大量的不那么popular的图片访问量加起来造成的traffic巨大. CDN容量有限只能缓存那些非常popular的那些, 对那些长尾却没有办法缓存. 所以这些图片的访问全部落在了photo-storage部分.
 </p>
 
 
-<div id="org6ea65d5" class="figure">
-<p><img src="../images/haystack-typical-design.png" alt="haystack-typical-design.png" />
+<div id="orgd5a5f5e" class="figure">
+<p><img src="../images/Pasted-Image-20231225103225.png" alt="Pasted-Image-20231225103225.png" />
 </p>
 </div>
 
@@ -76,19 +76,19 @@
 </p>
 
 
-<div id="org8ff306f" class="figure">
-<p><img src="../images/haystack-nfs-based-design.png" alt="haystack-nfs-based-design.png" />
+<div id="orgc44b409" class="figure">
+<p><img src="../images/Pasted-Image-20231225104359.png" alt="Pasted-Image-20231225104359.png" />
 </p>
 </div>
 </div>
 </div>
 
-<div id="outline-container-org34d70f0" class="outline-2">
-<h2 id="org34d70f0"><span class="section-number-2">4.</span> Design &amp; Implementation</h2>
+<div id="outline-container-org91bc655" class="outline-2">
+<h2 id="org91bc655"><span class="section-number-2">4.</span> Design &amp; Implementation</h2>
 <div class="outline-text-2" id="text-4">
 </div>
-<div id="outline-container-org62ff1dd" class="outline-3">
-<h3 id="org62ff1dd"><span class="section-number-3">4.1.</span> Overview</h3>
+<div id="outline-container-orgdfeaf6f" class="outline-3">
+<h3 id="orgdfeaf6f"><span class="section-number-3">4.1.</span> Overview</h3>
 <div class="outline-text-3" id="text-4-1">
 <p>
 Recall that storing a single photo per file resulted in more filesystem metadata than could be reasonably cached. Haystack takes a straight-forward approach: it stores multiple photos in a single file and therefore maintains very large files. # 将许多图片存储在一个文件里面来减少metadata.
@@ -114,7 +114,7 @@ The Haystack architecture consists of 3 core compo-nents:
 </ul>
 
 <p>
-<img src="../images/haystack-serve.png" alt="haystack-serve.png" /> <img src="../images/haystack-upload.png" alt="haystack-upload.png" />
+<img src="../images/Pasted-Image-20231225104044.png" alt="Pasted-Image-20231225104044.png" /> <img src="../images/Pasted-Image-20231225103831.png" alt="Pasted-Image-20231225103831.png" />
 </p>
 
 <p>
@@ -128,8 +128,8 @@ The Haystack architecture consists of 3 core compo-nents:
 </div>
 </div>
 
-<div id="outline-container-orgfe24dc7" class="outline-3">
-<h3 id="orgfe24dc7"><span class="section-number-3">4.2.</span> Haystack Directory</h3>
+<div id="outline-container-orgdd664e6" class="outline-3">
+<h3 id="orgdd664e6"><span class="section-number-3">4.2.</span> Haystack Directory</h3>
 <div class="outline-text-3" id="text-4-2">
 <p>
 #note: 不知道是否支持副本自动迁移
@@ -150,8 +150,8 @@ The Directory is a relatively straight-forward compo-nent that stores its inform
 </div>
 </div>
 
-<div id="outline-container-orga357f6b" class="outline-3">
-<h3 id="orga357f6b"><span class="section-number-3">4.3.</span> Haystack Cache</h3>
+<div id="outline-container-org9e8ccc2" class="outline-3">
+<h3 id="org9e8ccc2"><span class="section-number-3">4.3.</span> Haystack Cache</h3>
 <div class="outline-text-3" id="text-4-3">
 <p>
 We now highlight an important behavioral aspect of the Cache. It caches a photo only if two conditions are met:
@@ -170,8 +170,8 @@ We now highlight an important behavioral aspect of the Cache. It caches a photo 
 </div>
 </div>
 
-<div id="outline-container-orgd8b92ed" class="outline-3">
-<h3 id="orgd8b92ed"><span class="section-number-3">4.4.</span> Haystack Store</h3>
+<div id="outline-container-org495ac7b" class="outline-3">
+<h3 id="org495ac7b"><span class="section-number-3">4.4.</span> Haystack Store</h3>
 <div class="outline-text-3" id="text-4-4">
 <p>
 Each Store machine manages multiple physical vol-umes. Each volume holds millions of photos. For concreteness, the reader can think of a physical vol-ume as simply a very large file (100 GB) saved as '/hay/haystack_&lt;logical volume id&gt;'. # 一个logical volumn在一台机器上只有一个对应的physical volume. 这是redundancy的需要, 同时也简化了文件组织.
@@ -186,7 +186,7 @@ A Store machine keeps open file descriptors for each physical volume that it man
 </p>
 
 <p>
-<img src="../images/haystack-store-file.png" alt="haystack-store-file.png" /> <img src="../images/haystack-needle.png" alt="haystack-needle.png" />
+<img src="../images/Pasted-Image-20231225103733.png" alt="Pasted-Image-20231225103733.png" /> <img src="../images/Pasted-Image-20231225104814.png" alt="Pasted-Image-20231225104814.png" />
 </p>
 
 <ul class="org-ul">
@@ -200,7 +200,7 @@ index文件可以用来加快映射表的生成:
 </p>
 
 <p>
-<img src="../images/haystack-index-file.png" alt="haystack-index-file.png" /> <img src="../images/haystack-index.png" alt="haystack-index.png" />
+<img src="../images/Pasted-Image-20231225103701.png" alt="Pasted-Image-20231225103701.png" /> <img src="../images/Pasted-Image-20231225103505.png" alt="Pasted-Image-20231225103505.png" />
 </p>
 
 <p>
@@ -209,8 +209,8 @@ index文件是在追加store-file时候异步写入的. 那么这里有个问题
 </div>
 </div>
 
-<div id="outline-container-org879a8aa" class="outline-3">
-<h3 id="org879a8aa"><span class="section-number-3">4.5.</span> Recovery from failures</h3>
+<div id="outline-container-orgf7f022a" class="outline-3">
+<h3 id="orgf7f022a"><span class="section-number-3">4.5.</span> Recovery from failures</h3>
 <div class="outline-text-3" id="text-4-5">
 <p>
 #note: 自动检测, 人工修复.
@@ -226,8 +226,8 @@ Once diagnosed, we may be able to fix the prob-lem quickly. Occasionally, the si
 </div>
 </div>
 
-<div id="outline-container-orge95f114" class="outline-3">
-<h3 id="orge95f114"><span class="section-number-3">4.6.</span> Optimizations</h3>
+<div id="outline-container-org8b02b20" class="outline-3">
+<h3 id="org8b02b20"><span class="section-number-3">4.6.</span> Optimizations</h3>
 <div class="outline-text-3" id="text-4-6">
 <ul class="org-ul">
 <li>Compaction</li>
@@ -238,15 +238,15 @@ Once diagnosed, we may be able to fix the prob-lem quickly. Occasionally, the si
 </div>
 </div>
 
-<div id="outline-container-org18cb2e3" class="outline-2">
-<h2 id="org18cb2e3"><span class="section-number-2">5.</span> Evaluation</h2>
+<div id="outline-container-org9d9cb7e" class="outline-2">
+<h2 id="org9d9cb7e"><span class="section-number-2">5.</span> Evaluation</h2>
 </div>
-<div id="outline-container-org4baa0c2" class="outline-2">
-<h2 id="org4baa0c2"><span class="section-number-2">6.</span> Related Work</h2>
+<div id="outline-container-org904069a" class="outline-2">
+<h2 id="org904069a"><span class="section-number-2">6.</span> Related Work</h2>
 </div>
-<div id="outline-container-org753a9b6" class="outline-2">
-<h2 id="org753a9b6"><span class="section-number-2">7.</span> Conclusion</h2>
+<div id="outline-container-org6f4c474" class="outline-2">
+<h2 id="org6f4c474"><span class="section-number-2">7.</span> Conclusion</h2>
 </div>
 </div>
-<div id="content"><!-- DISQUS BEGIN --><div id="disqus_thread"></div><script>/***  RECOMMENDED CONFIGURATION VARIABLES: EDIT AND UNCOMMENT THE SECTION BELOW TO INSERT DYNAMIC VALUES FROM YOUR PLATFORM OR CMS.*  LEARN WHY DEFINING THESE VARIABLES IS IMPORTANT: https://disqus.com/admin/universalcode/#configuration-variables*/var disqus_config = function () {this.page.url = 'https://dirtysalt.github.io/html/haystack.html';this.page.identifier = 'haystack.html';};(function() {var d = document, s = d.createElement('script');s.src = 'https://dirlt.disqus.com/embed.js';s.setAttribute('data-timestamp', +new Date());(d.head || d.body).appendChild(s);})();</script><noscript>Please enable JavaScript to view the <a href="https://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript><!-- DISQUS END --></div></body>
+</body>
 </html>

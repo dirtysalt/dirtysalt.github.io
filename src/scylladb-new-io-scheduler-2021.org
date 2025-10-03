@@ -12,7 +12,7 @@ https://www.scylladb.com/2022/08/03/implementing-a-new-io-scheduler-algorithm-fo
 
 因为这个IO Group是个multi-cores之间的共享对象，所以需要考虑NUMA特性，否则NUMA近节点容易得到更多的quota造成io imbalance.
 
-[[../images/scylladb-new-io-scheduler-2021-0.png]]
+[[../images/Pasted-Image-20231225104530.png]]
 
 #+BEGIN_QUOTE
 IO groups ensure no one CPU is burdened with all IO coordination. The different CPUs intercommunicate to negotiate their use of the same shared disk
@@ -26,7 +26,7 @@ Also note the shared rovers require each shard to alter two variables in memory 
 
 他们发现IO设备上有个特性，就是mixed read/write表现出来是种half-duplex模式：write bandwith上去，那么相同的read iops对应的latency就要上去，要不就是read iops就要下来。这个和直觉其实是相符的，也就是如果有write的时候，read效果肯定是不行的。所以他们建了下面这样的数学模型：大致意思就是比例系数是累加的，并且有个上限。然后假设r/w iops/bandwith之间存在某个系数(Mo, Mb). 最后化简成为单个指标。我们只需要对单个指标的derivative进行限制就好，其实就是rate-limiting.
 
-[[../images/scylladb-new-io-scheduler-2021-1.png]]
+[[../images/Pasted-Image-20231225104425.png]]
 
 
 然后我们不能只从发起端考虑，还需要考虑设备完成速度：设备有FTL会在后台完成任务，这个也会影响到read/write效果。一个方法就是在追踪completed io request, 将它backlink起来，形成负反馈系统。
@@ -38,4 +38,4 @@ In fact, the classical token bucket algo had to be slightly adjusted to play nic
 The modified algorithm makes sure the I/O scheduler serves requests with a rate that doesn’t exceed two values — the one predicted by the model and the one that the disk shows under real load.
 #+END_QUOTE
 
-[[../images/scylladb-new-io-scheduler-2021-2.png]]
+[[../images/Pasted-Image-20231225104321.png]]

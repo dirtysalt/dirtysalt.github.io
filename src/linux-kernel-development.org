@@ -142,7 +142,7 @@ static struct softirq_action softirq_vec[NR_SOFTIRQS]; // NR_SOFTIRQS == 32
 内核使用全局变量jiffies来记录系统启动以来产生的节拍总数. 启动时初始化为0, 每次时钟中断时+1. 除此之外时钟中断处理程序还会: a. 更新xtime以及墙上时钟 b. 更新资源消耗统计值, 将tick记入当前进程 c. 触发定时器软中断(TIMER_SOFTIRQ). 在软中断中会执行动态定时器.
 
 动态定时器的引入是为了延迟执行. 假设我们想sleep 1s, 如果只是忙等的话那么纯粹就是在无谓地消耗CPU, 而这1s如果分配给其他进程则可以做许多事情. 更加合理的方式应该是设置一个定时器, 将自己yield出去, 等1s过去之后再回来. 但是如果我们只想等待很短一段时间(比如100us)的话, 动态定时器是做不到的, 因为时钟精度达不到. 比如重新设置网卡的以太模式需要花费2ms, 所以在设定网卡速度后, 驱动程序必须等待2ms才能运行. 此时我们只能通过消耗CPU来等待这段短时间. 问题来了, 假设我们想等待100us, 那么代码应该怎么实现. 为了精度, 代码应该使用汇编编写并且屏蔽本地CPU中断以及禁止抢占.
-#+BEGIN_SRC ASM
+#+BEGIN_SRC Asm
 movl %rcx, <loop-times>
 loop:
 addl %rdx, 1
@@ -280,7 +280,7 @@ Linux使用三级页表完成虚拟地址到物理地址的转换. 为了加快�
 ** C16 页高速缓存和页回写
 页高速缓存(page cahce)的目标是缓存任何基于页的对象, 包括各种类型的文件和各种类型的内存映射, 但是主要是为了缓存磁盘文件来加快读写速度. Linux使用address_space对象来管理页高速缓存, 内部inode指针表示对应的磁盘文件. 一个文件在整个系统中只对应一个address_space对象.
 
-页高速缓存(page cache)和块缓冲区(block cache, block buffer)之间的关系非常微妙. C14中提到了, 在2.6之前, 所以IO操作都是通过提交块缓冲区来执行的. 也就是说, 用户态写文件, 首先会写page cache, 同时也会写入block cache来发起IO操作. 一个磁盘块数据可以同时存于两个缓存中, 不仅浪费内存, 还需要考虑同步两个缓存中的数据. 2.6之后使用通过bio来管理IO请求, block cache就可以不再参与文件读写. 但是block cache依然有一些作用 a. 读写inode节点 b. 直接操作块底层(O_DIRECT). block cache和page cache大小可以从`free -t`命令中看到. 其中`buffers`对应block cache, `cached`对应page cache.
+页高速缓存(page cache)和块缓冲区(block cache, block buffer)之间的关系非常微妙. C14中提到了, 在2.6之前, 所以IO操作都是通过提交块缓冲区来执行的. 也就是说, 用户态写文件, 首先会写page cache, 同时也会写入block cache来发起IO操作. 一个磁盘块数据可以同时存于两个缓存中, 不仅浪费内存, 还需要考虑同步两个缓存中的数据. 2.6之后使用通过bio来管理IO请求, block cache就可以不再参与文件读写. 但是block cache依然有一些作用 a. 读写inode节点 b. 直接操作块底层(O_DIRECT). block cache和page cache大小可以从 `free -t` 命令中看到. 其中 `buffers` 对应block cache, `cached` 对应page cache.
 #+BEGIN_EXAMPLE
 ➜  notes git:(master) ✗ free -t
              total       used       free     shared    buffers     cached

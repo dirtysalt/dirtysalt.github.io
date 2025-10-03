@@ -1,0 +1,101 @@
+#+title: LC 2968. 执行操作使频率分数最大
+
+
+https://leetcode.cn/problems/apply-operations-to-maximize-frequency-score/description/
+
+这题需要稍微想象一下，首先众数肯定是nums其中某个数，我们对nums做个排序。
+
+假设众数是 `nums[i]` 的话，并且从左边 left 变过来，从最右边 rigth 变过来，那么就有个要求是 $sum_{j=left}^{i-}(nums[i]-nums[j]) + sum_{j=i+1}^{right}(nums[j] - nums[i]) <= k$ . 得到的众数频数是 `right - left + 1`.
+
+然后从i->i+1开始进行移动：
+- i+2 到 right 右边这些值每个都会变小，都会减去 `nums[i+1] - nums[i]`. 所以这个范围在下一轮肯定也会包含。
+- 而 left 到 i 左边这些值可能会变大，都需要加上 `nums[i+1] - nums[i]`.  那么靠近left那边的某些 nums 可能不会被入选进来。
+- 我们在这个起初上重新进行分配，将左边从left开始某些数排除掉，同时考虑右边从right开始将某些数加入进来。
+
+在这个过程中需要保证 k>=0:
+- 如果移动之后 k<0, 那么需要将左右按照和 `nums[i+1]` 的差值大小顺序排除掉，确保k>=0.
+- 如果移动之后 k>=0, 那么意味着可以加入更多的元素，同样在左右按照和 `nums[i+1]` 的差值大小顺序进行加入。
+
+这样就完成了i->i+1的更新，更新之后left, right都会变化，众数频数就是 `right-left+1`.
+
+下面的代码稍微有点乱，分支有点多。
+
+
+#+BEGIN_SRC Python
+class Solution:
+    def maxFrequencyScore(self, nums: List[int], k: int) -> int:
+        nums.sort()
+        from collections import deque
+        left = deque([0])
+        right = 0
+
+        while right < len(nums):
+            diff = nums[right] - nums[0]
+            if k >= diff:
+                right += 1
+                k -= diff
+            else:
+                break
+
+        assert (k >= 0)
+        ans = right - left[0]
+        for i in range(1, len(nums)):
+            move = nums[i] - nums[i - 1]
+            k -= len(left) * move
+            k += move * (right - i)
+
+            # balance left and right
+            while right < len(nums) and left:
+                r = nums[right] - nums[i]
+                l = nums[i] - nums[left[0]]
+                if r <= l:
+                    k += l
+                    k -= r
+                    left.popleft()
+                    right += 1
+                else:
+                    break
+
+            # check k is sastified.
+            while k < 0:
+                l, r = -1, -1
+                if left:
+                    l = nums[i] - nums[left[0]]
+                if right > i:
+                    r = nums[right - 1] - nums[i]
+                if (l, r) == (-1, -1): break
+                if l >= r:
+                    k += l
+                    left.popleft()
+                else:
+                    k += r
+                    right -= 1
+            assert (k >= 0)
+
+            while k >= 0:
+                INF = 1 << 63
+                l, r = INF, INF
+
+                idx = i - 1
+                if left:
+                    idx = left[0] - 1
+                if idx >= 0:
+                    l = nums[i] - nums[idx]
+                if right < len(nums):
+                    r = nums[right] - nums[i]
+                if (l, r) == (INF, INF): break
+                if k < min(l, r): break
+                if l >= r:
+                    k -= r
+                    right += 1
+                else:
+                    k -= l
+                    left.appendleft(idx)
+
+            assert (k >= 0)
+            left.append(i)
+            size = right - left[0]
+            ans = max(ans, size)
+        return ans
+
+#+END_SRC

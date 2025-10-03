@@ -83,7 +83,7 @@ Architecture
 - Clients interact with the master for metadata opera-tions, but all data-bearing communication goes directly to the chunkservers. We do not provide the POSIX API and therefore need not hook into the Linux vnode layer. （和master之间交换控制指令，而cs之间交换数据指令）
 - Neither the client nor the chunkserver caches file data. Client caches offer little benefit because most applications stream through huge files or have working sets too large to be cached. Chunkservers need not cache file data because chunks are stored as local files and so Linux’s buffer cache already keeps frequently accesseddata in memory.
 
-[[../images/gfs-architecture.png]]
+[[../images/Pasted-Image-20231225104736.png]]
 
 ----------
 Single Master
@@ -126,13 +126,13 @@ Chunk Locations
 - Another way to understand this design decision is to real-ize that a chunkserver has the final word over what chunks it does or does not have on its own disks. There is no point in trying to maintain a consistent view of this information on the master because errors on a chunkserver may cause chunks to vanish spontaneously (e.g., a disk may go bad and be disabled) or an operator may rename a chunkserver.(对于chunkserver而言才是最终决定是否包含chunk的。对于master包含这种一致性view的话没有任何用户，因为对于chunkserver而言的很可能会因为故障导致某些chunk就丢失，或者是op就直接修改chunkserver名字)
 
 Operation Log
-- The operation log contains a historical record of critical metadata changes. It is central to GFS. Not only is it the only persistent record of metadata, but it also serves as a logical time line that defines the order of concurrent op-erations. Files and chunks, as well as their versions (see Section 4.5), are all uniquely and eternally identified by the logical times at which they were created.(log记录了对于meta信息关键的修改，一方面可以用来持久化metadata,另外一方面也为并发操作进行排序。file以及chunk分配的version都是按照他们创建的逻辑顺序分配的。）
+- The operation log contains a historical record of critical metadata changes. It is central to GFS. Not only is it the only persistent record of metadata, but it also serves as a logical time line that defines the order of concurrent op-erations. Files and chunks, as well as their versions (see Section 4.5), are all uniquely and eternally identified by the logical times at which they were created.(log记录了对于meta信息关键的修改，一方面可以用来持久化metadata,另外一方面也为并发操作进行排序。file以及chunk分配的version都是按照他们创建的逻辑顺序分配的。)
 
 - Since the operation log is critical, we must store it reli-ably and not make changes visible to clients until metadata changes are made persistent. Otherwise, we effectively lose the whole file system or recent client operations even if the chunks themselves survive. Therefore, we replicate it on multiple remote machines and respond to a client opera-tion only after flushing the corresponding log record to disk both locally and remotely. The master batches several log records together before flushing thereby reducing the impact of flushing and replication on overall system throughput.（master是有active standby的replica的。对master的操作必须两个都写成功了才能返回）
 
-- The master recovers its file system state by replaying the operation log. To minimize startup time, we must keep the log small. The master checkpoints its state whenever the log grows beyond a certain size so that it can recover by loading the latest checkpoint from local disk and replaying only the limited number of log records after that. The checkpoint is in a compact B-tree like form that can be directly mapped into memory and used for namespace lookup without ex-tra parsing. This further speeds up recovery and improves availability. (checkpoint是一个可以快速载入内存的紧凑的B树格式）
+- The master recovers its file system state by replaying the operation log. To minimize startup time, we must keep the log small. The master checkpoints its state whenever the log grows beyond a certain size so that it can recover by loading the latest checkpoint from local disk and replaying only the limited number of log records after that. The checkpoint is in a compact B-tree like form that can be directly mapped into memory and used for namespace lookup without ex-tra parsing. This further speeds up recovery and improves availability. (checkpoint是一个可以快速载入内存的紧凑的B树格式)
 
-- Because building a checkpoint can take a while, the mas-ter's internal state is structured in such a way that a new checkpoint can be created without delaying incoming muta-tions. The master switches to a new log file and creates the new checkpoint in a separate thread. The new checkpoint includes all mutations before the switch. It can be created in a minute or so for a cluster with a few million files. When completed, it is written to diskboth locally and remotely.(checkpoint必须是lock-free的，不然就需要暂停所有的写操作）
+- Because building a checkpoint can take a while, the mas-ter's internal state is structured in such a way that a new checkpoint can be created without delaying incoming muta-tions. The master switches to a new log file and creates the new checkpoint in a separate thread. The new checkpoint includes all mutations before the switch. It can be created in a minute or so for a cluster with a few million files. When completed, it is written to diskboth locally and remotely.(checkpoint必须是lock-free的，不然就需要暂停所有的写操作)
 
 ----------
 Consistency Model
@@ -193,7 +193,7 @@ The lease mechanism is designed to minimize manage-ment overhead at the master. 
 
 If a write by the application is large or straddles a chunk boundary, GFS client code breaks it down into multiple write operations. They all follow the control flow described above but may be interleaved with and overwritten by concurrent operations from other clients. Therefore, the shared file region may end up containing fragments from different clients, although the replicas will be identical because the individual operations are completed successfully in the same order on all replicas.
 
-[[../images/gfs-write-control-and-data-flow.png]]
+[[../images/Pasted-Image-20231225104034.png]]
 
 ----------
 Data Flow
@@ -273,7 +273,7 @@ Garbage Collection
 
 After a file is deleted, GFS does not immediately reclaim the available physical storage. It does so only lazily during regular garbage collection at both the file and chunk levels.
 
-When a file is deleted by the application, the master logs the deletion immediately just like other changes. However instead of reclaiming resources immediately, the file is just renamed to a hidden name that includes the deletion times-tamp. During the master’s regular scan of the file system namespace, it removes any such hidden files if they have ex-isted for more than three days (the interval is configurable) (在内部记录日志但是并不是立即删除而是做rename。这个rename操作仅仅作用在namespace上面。rename之后的文件名信息包含timestamp，这样可以用来定期回收）
+When a file is deleted by the application, the master logs the deletion immediately just like other changes. However instead of reclaiming resources immediately, the file is just renamed to a hidden name that includes the deletion times-tamp. During the master’s regular scan of the file system namespace, it removes any such hidden files if they have ex-isted for more than three days (the interval is configurable) (在内部记录日志但是并不是立即删除而是做rename。这个rename操作仅仅作用在namespace上面。rename之后的文件名信息包含timestamp，这样可以用来定期回收)
 
 Until then, the file can still be read under the new, special name and can be undeleted by renaming it back to normal. When the hidden file is removed from the namespace, its in-memory metadata is erased. This effectively severs its links to all its chunks.（在没有完全删除前的话，还可以直接将起rename回来进行都写。如果一旦从namespace里面删除之后，那就再也没有办法访问了。虽然chunks还在但是和chunks的连接关系就丢失是了，这些chunks成为orphanded chunks，在接下来的时候会被GC回收）
 

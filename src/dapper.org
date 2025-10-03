@@ -25,7 +25,7 @@ Modern Internet services are often implemented as com- plex, large-scale distrib
 ** Distributed Tracing in Dapper
 A tracing infrastructure for distributed services needs to record information about all the work done in a sys-￼tem on behalf of a given initiator. A simple yet useful distributed trace for this request would be a collection of message identifiers and timestamped events for every message sent and received at each server.
 
-[[../images/dapper-illustration.png]]
+[[../images/Pasted-Image-20231225104417.png]]
 
 Two classes of solutions have been proposed to ag- gregate this information so that one can associate all record entries with a given initiator (e.g., RequestX in Figure 1), black-box and annotation-based monitoring schemes.（有两种办法可以将所有的记录和initiator联系起来，这样就知道某个请求是谁发送的）
 - Black-box schemes assume there is no additional information other than the message record described above, and use statistical regression techniques to infer that association.（黑盒方案就是假设所有的record都没有附加信息，通过统计回归技术建立关联）
@@ -35,37 +35,37 @@ Two classes of solutions have been proposed to ag- gregate this information so t
   - In our environment, since all applications use the same threading model, control flow and RPC system, we found that it was possible to restrict instrumentation to a small set of common libraries, and achieve a monitor- ing system that is effectively transparent to application developers.（但是因为将dapper封装成为library, 所以可以限制这种对透明性的影响）
 
 *** Trace trees and spans
-- In a Dapper trace tree, the tree nodes are basic units of work which we refer to as spans.（每个活动都称为一个span)
+- In a Dapper trace tree, the tree nodes are basic units of work which we refer to as spans.(每个活动都称为一个span)
   - The edges indicate a casual relationship between a span and its parent span.
-  - Independent of its place in a larger trace tree, though, a span is also a simple log of timestamped records which encode the span’s start and end time, any RPC timing data, and zero or more application-specific annotations(span里面记录了起始和终止时间，并且附带了其他一些来自应用程序的注解信息）
+  - Independent of its place in a larger trace tree, though, a span is also a simple log of timestamped records which encode the span’s start and end time, any RPC timing data, and zero or more application-specific annotations(span里面记录了起始和终止时间，并且附带了其他一些来自应用程序的注解信息)
   - Dapper records a human-readable span name for each span, as well as a span id and parent id in order to reconstruct the causal relationships between the individual spans in a single distributed trace. （每个span上面还能够附带一个span name方便阅读，并且带上span id以及parent id这样可以方便建立起关系）Spans created without a parent id are known as root spans.
-  - All spans associated with a specific trace also share a com- mon trace id (not shown in the figure). All of these ids are probabilistically unique 64-bit integers.(每次trace都会带上一个概率上唯一的trace id）
+  - All spans associated with a specific trace also share a com- mon trace id (not shown in the figure). All of these ids are probabilistically unique 64-bit integers.(每次trace都会带上一个概率上唯一的trace id)
 
-[[../images/dapper-trace-tree.png]]
+[[../images/Pasted-Image-20231225104108.png]]
 
 *** Instrumentation points
 - Dapper is able to follow distributed control paths with near-zero intervention from application developers by re- lying almost entirely on instrumentation of a few com- mon libraries:
-  - When a thread handles a traced control path, Dap- per attaches a trace context to thread-local storage. A trace context is a small and easily copyable con- tainer of span attributes such as trace and span ids.（trace context绑定到了thread-local storage)
+  - When a thread handles a traced control path, Dap- per attaches a trace context to thread-local storage. A trace context is a small and easily copyable con- tainer of span attributes such as trace and span ids.(trace context绑定到了thread-local storage)
   - When computation is deferred or made asyn- chronous, most Google developers use a com- mon control flow library to construct callbacks and schedule them in a thread pool or other executor. Dapper ensures that all such callbacks store the trace context of their creator, and this trace con- text is associated with the appropriate thread when the callback is invoked. In this way, the Dapper ids used for trace reconstruction are able to follow asynchronous control paths transparently.(采用异步调用的话那么callback会绑定其creator的context)
-  - Nearly all of Google’s inter-processcommunication is built around a single RPC framework with bind- ings in both C++ and Java. We have instrumented that framework to define spans around all RPCs. The span and trace ids are transmitted from client to server for traced RPCs. For RPC-based systems like those in wide use at Google, this is an essential instrumentation point. We plan to instrument non- RPC communication frameworks as they evolve and find a user base.(几乎所有的google进程间通信都是使用了RPC框架，我们可以直接在RPC框架里面就带上trace功能）
+  - Nearly all of Google’s inter-processcommunication is built around a single RPC framework with bind- ings in both C++ and Java. We have instrumented that framework to define spans around all RPCs. The span and trace ids are transmitted from client to server for traced RPCs. For RPC-based systems like those in wide use at Google, this is an essential instrumentation point. We plan to instrument non- RPC communication frameworks as they evolve and find a user base.(几乎所有的google进程间通信都是使用了RPC框架，我们可以直接在RPC框架里面就带上trace功能)
 
 *** Annotations
 - The instrumentation points described above are sufﬁcient to derive detailed traces of complex distributed systems, making the core Dapper functionality available to otherwise unmodiﬁed Google applications. However, Dapper also allows application developers to enrich Dapper traces with additional information that may be useful to monitor higher level system behavior or to help in debugging problems.（annotation能够更方面了解系统行为和定位问题，但是不是核心功能）
-- In order to protect Dapper users from accidental overzealous logging, individual trace spans have a con-ﬁgurable upper-bound on their total annotation volume. Application-level annotations are not able to displace the structural span or RPC information regardless of application behavior（为了防止用户滥用dapper随意进行logging, 在单个trace下面的spans是有annotation数量上限的，并且应用程序的annotation不能够代替框架annotation)
-- In addition to simple textual annotations, Dapper also supports a map of key-value annotations that give developers more tracing power, such as maintaining counters, logging binary messages, and transporting arbitrary userdeﬁned data along with a traced request within a process. These key-value annotations are used to deﬁne application-speciﬁc equivalence classes within the context of distributed traces.(annotation以keyvalue形式进行存储和访问）
+- In order to protect Dapper users from accidental overzealous logging, individual trace spans have a con-ﬁgurable upper-bound on their total annotation volume. Application-level annotations are not able to displace the structural span or RPC information regardless of application behavior(为了防止用户滥用dapper随意进行logging, 在单个trace下面的spans是有annotation数量上限的，并且应用程序的annotation不能够代替框架annotation)
+- In addition to simple textual annotations, Dapper also supports a map of key-value annotations that give developers more tracing power, such as maintaining counters, logging binary messages, and transporting arbitrary userdeﬁned data along with a traced request within a process. These key-value annotations are used to deﬁne application-speciﬁc equivalence classes within the context of distributed traces.(annotation以keyvalue形式进行存储和访问)
 
 *** Sampling
 - Low overhead was a key design goal for Dapper, since service operators would be understandably reluctant to deploy a new tool of yet unproven value if it had any signiﬁcant impact on performance.
 - Therefore, besides making the basic instrumentation overhead of Dapper collection as small as possible, we further control overhead by recording only a fraction of all traces.
 
 *** Trace collection
-[[../images/dapper-collection-pipeline.png]]
+[[../images/Pasted-Image-20231225104811.png]]
 
 - The Dapper trace logging and collection pipeline is a three-stage process
   - First, span data is written (1) to local log files.
   - It is then pulled (2) from all production hosts by Dapper daemons and collection infrastructure
   - and ﬁnally written (3) to a cell in one of several regional Dapper Bigtable repositories.
-    - A trace is laid out as a single Bigtable row, with each column corresponding to a span.（每个trace对应一个row, 然后span对应里面的column)
+    - A trace is laid out as a single Bigtable row, with each column corresponding to a span.(每个trace对应一个row, 然后span对应里面的column)
 - The median latency for trace data collection – that is, the time it takes data to propagate from instrumented application binaries to the central repository – is less than 15 seconds. （平均每个trace时间都是在15s内可以到达central reposiroty的）
   - The 98th percentile latency is itself bimodal over time; （percentile 98%延迟是有双峰性的）
   - approximately 75% of the time, 98th percentile collection latency is less than two minutes, （75%时间里面，98%延迟是在2min一下）
@@ -94,21 +94,21 @@ Two classes of solutions have been proposed to ag- gregate this information so t
 *** Trace generation overhead
 - Trace generation overhead is the most critical segment of Dapper’s performance footprint, since collection and analysis can more easily be turned off in an emergency.（对于collection以及analysis都能够在紧急情况下面关闭）
 - The most important sources of trace generation overhead in the Dapper runtime libraries are creating and destroying spans and annotations, and logging them to local disk for subsequent collection.（包括产生和销毁span对象和annotation, 以及logging到磁盘上）
-  - Root span creation and destruction takes 204 nanoseconds on average. while the same operation for non-root spans takes 176 nanoseconds. The difference is the added cost of allocating a globally unique trace id for root spans.（root span开辟需要204ns, non-root span开辟需要176ns，差别在于root span需要allocate trace id)
+  - Root span creation and destruction takes 204 nanoseconds on average. while the same operation for non-root spans takes 176 nanoseconds. The difference is the added cost of allocating a globally unique trace id for root spans.(root span开辟需要204ns, non-root span开辟需要176ns，差别在于root span需要allocate trace id)
   - The cost of additional span annotations is almost negligible if the span is not sampled for tracing, consisting of a thread-local lookup in the Dapper runtime, averaging about 9 nanoseconds. If it is sampled, annotating the trace with a string literal – much like what’s shown in Figure 4 – costs 40 nanoseconds on average. These measurements were made on a 2.2GHz x86 server.（thread-local lookup占用9ns，log annotation占用40ns）
   - Writes to local disk are the most expensive operation in Dapper’s runtime library, but their visible overhead is much reduced since each disk write coalesces multiple log file write operations and executes asynchronously with respect to the traced application. Nevertheless, log write activity can have a perceptible impact on highthroughput application performance, especially if all requests are being traced.（磁盘可以通过聚合以及异步写来减少影响）
 
 *** Trace collection overhead
-[[../images/dapper-cpu-usage.png]]
+[[../images/Pasted-Image-20231225103521.png]]
 
 
 - The daemon never uses more than 0:3% of one core of a production machine during collection, and has a very small memory footprint (within the noise of heap fragmentation). We also restrict the Dapper daemon to the lowest possible priority in the kernel scheduler in case CPU contention arises within a heavily-loaded host machine.
 - Dapper is also a light consumer of network resources, with each span in our repository corresponding to only 426 bytes on average. Taken as a fraction of the network activity in the applications we’re monitoring, Dapper trace data collection is responsible for less than 0:01% of the network trafﬁc in Google’s production environment.
 
 *** Effect on production workloads
-[[../images/dapper-production-workload.png]]
+[[../images/Pasted-Image-20231225103815.png]]
 
-- We see that although the impact on throughput is not very signiﬁcant, in order to avoid noticeable latency degradation, trace sampling is indeed necessary.(做采样还是必须的）
+- We see that although the impact on throughput is not very signiﬁcant, in order to avoid noticeable latency degradation, trace sampling is indeed necessary.(做采样还是必须的)
 - However, the latency and throughput penalties associated with sampling frequencies less than 1/16 are all within the experimental error. In practice, we have found that there is still an adequate amount of trace data for high-volume services when using a sampling rate as low as 1/1024.（即使使用1/1024采样概率的话依然存在许多分析数据）
 - Using a lower sampling frequency has the added beneﬁt of allowing data to persist longer on the local disks of host machines before being garbage-collected, which gives more ﬂexibility to the collection infrastructure.（同样低采样允许在磁盘上面存放更多的数据）
 
@@ -120,9 +120,9 @@ Two classes of solutions have been proposed to ag- gregate this information so t
 
 *** Coping with aggressive sampling
 *** Additional sampling during collection
-- The sampling mechanisms described above were designed to minimize perceptible overhead in applications which incorporate the Dapper runtime library. The Dapper team also needs to control the total size of data written to its central repositories, though, and thus we incorporate a second round of sampling for that purpose. （之前sampling的机制主要是用来减少instruct的overhead. 但是Dapper为了控制数据总量，在collection阶段还会进行一次sampling)
-  - Our production clusters presently generate more than 1 terabyte of sampled trace data per day. Dapper users would like trace data to remain available for at least two weeks after it was initially logged from a production pro- cess.(每天产生1TB数据，而用户通常需要观察最近两周的数据）
-  - The benefits of increased trace data density must then be weighed against the cost of machines and disk storage for the Dapper repositories. Sampling a high fraction of requests also brings the Dapper collectors un- comfortably close to the write throughput limit for the Dapper Bigtable repository.(如果后期采样密度高的话会接近bigtable的极限）
+- The sampling mechanisms described above were designed to minimize perceptible overhead in applications which incorporate the Dapper runtime library. The Dapper team also needs to control the total size of data written to its central repositories, though, and thus we incorporate a second round of sampling for that purpose. (之前sampling的机制主要是用来减少instruct的overhead. 但是Dapper为了控制数据总量，在collection阶段还会进行一次sampling)
+  - Our production clusters presently generate more than 1 terabyte of sampled trace data per day. Dapper users would like trace data to remain available for at least two weeks after it was initially logged from a production pro- cess.(每天产生1TB数据，而用户通常需要观察最近两周的数据)
+  - The benefits of increased trace data density must then be weighed against the cost of machines and disk storage for the Dapper repositories. Sampling a high fraction of requests also brings the Dapper collectors un- comfortably close to the write throughput limit for the Dapper Bigtable repository.(如果后期采样密度高的话会接近bigtable的极限)
 - In order to maintain flexibility around both the mate- rial resource requirements and the cumulative Bigtable write throughput, we added support for additional sam- pling in the collection system itself.
   - We leverage the fact that all spans for a given trace – though they may be spread across thousands of distinct host machines – share a common trace id. （根据trace id进行聚合）
   - For each span seen in the col- lection system, we hash the associated trace id as a scalar z, where 0 ≤ z ≤ 1. If z is less than our collection sam- pling coefficient, we keep the span and write it to the Bigtable. Otherwise, we discard it.（然后将trace id转换成为标量z，然后根据z判断是否小于某个系数。如果小于某个系数的话，那么就保留否则就丢弃）

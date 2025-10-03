@@ -1,0 +1,97 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>A Deep Dive into Common Open Formats for Analytical DBMSs</title>
+<meta name="author" content="dirtysalt" />
+<meta name="generator" content="Org Mode" />
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content" class="content">
+<h1 class="title">A Deep Dive into Common Open Formats for Analytical DBMSs</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>Table of Contents</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#org676ced4">1. encoding</a></li>
+<li><a href="#orgdfc9c38">2. format</a></li>
+<li><a href="#org0564557">3. experiment</a></li>
+</ul>
+</div>
+</div>
+<p>
+<a href="https://www.vldb.org/pvldb/vol16/p3044-liu.pdf">https://www.vldb.org/pvldb/vol16/p3044-liu.pdf</a>
+</p>
+
+<p>
+对比了arrow/parquet/orc在分析数据库场景上面的优劣。论文里面使用的是每个格式开源版本提供的API，可以预见其实许多优化可能是没有进入到开源版本的，所以数据上稍微看看就好。看完后感觉这类横向对比不同组件的文章没太大的意思。
+</p>
+
+<div id="outline-container-org676ced4" class="outline-2">
+<h2 id="org676ced4"><span class="section-number-2">1.</span> encoding</h2>
+<div class="outline-text-2" id="text-1">
+<p>
+常见的encoding方式有：
+</p>
+<ul class="org-ul">
+<li>BP(bit-packed) 压缩相同宽度的数值比较适合。</li>
+<li>DICT(dictionary encoding) 字典编码，字典编码后的数值可以用其他编码方式。</li>
+<li>RLE(run-length encoding) 压缩许多连续重复出现的数字。</li>
+<li>DELTA(delta encoding) 论文最后面提到这种差值编码方式，虽然parquet/orc都有但是实际很少使用到。</li>
+</ul>
+
+<p>
+感觉在现实场景中，几乎很少使用到随机访问这种访问模式，比如BP/DELTA这种编码方式随机访问起来开销也比较大，RLE会稍微好点。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgdfc9c38" class="outline-2">
+<h2 id="orgdfc9c38"><span class="section-number-2">2.</span> format</h2>
+<div class="outline-text-2" id="text-2">
+
+<div id="orgf090d28" class="figure">
+<p><img src="../images/Pasted-Image-20231120170208.png" alt="Pasted-Image-20231120170208.png" />
+</p>
+</div>
+
+<p>
+arrow/orc需要将一批数据完全载入上来，但是parquet可以使用streaming read方式来解析数据，但是parquet API没有提供具体的内存表示格式。
+</p>
+
+<blockquote>
+<p>
+In terms of data access, both Arrow and ORC require data to be fully loaded into dedicated in-memory data structures (an Arrow Table or ORC ColumnVectorBatch, respectively) before further query execution can begin. On the other hand, Parquet exposes a streaming API that allows pipelining data parsing and query execu- tion, leading to more optimization opportunities. However, Parquet does not itself provide any dedicated in-memory data structures
+</p>
+</blockquote>
+</div>
+</div>
+
+<div id="outline-container-org0564557" class="outline-2">
+<h2 id="org0564557"><span class="section-number-2">3.</span> experiment</h2>
+<div class="outline-text-2" id="text-3">
+<p>
+测试参数和数据如下
+</p>
+
+<blockquote>
+<p>
+Setup. All experiments are performed on an Azure Standard D8s v3 (8 vCPUs, 32 GiB memory), premium SSD LRS, and Ubuntu 18.04. We test Apache Arrow 5.0.0, ORC 1.7.2, and the Apache Parquet Java API version 1.9.0. Where needed, we use the Apache Arrow C++ library to write in-memory Arrow tables to disk. We perform exper- iments using (i) the TPC-DS dataset at scale 10, (ii) the Join Order Benchmark (JOB) [1], (iii) the Public BI Benchmark (BI) [2], and (iv) real-world datasets drawn from public data sources including GIS, machine learning, and financial datasets (CodecDB) [33]. For all the experiments, we report numbers when the system caches are cold by default. For selected experiments we also report numbers when caches have been warmed up, i.e., to simulate frequently accessed datasets. Unless stated otherwise, we use each format’s default settings. Different results could certainly be obtained if dataset- specific parameter tuning were applied to each format. However, such fine-grained configuration tuning is beyond the scope of the paper and left as future work.
+</p>
+</blockquote>
+
+<p>
+实验细节挺多
+</p>
+<ul class="org-ul">
+<li>zstd level1 压缩率就不错，继续到5~9并不好多少，相反CPU开销更大了。</li>
+<li>lz4 在orc上效果不太好，但是我觉得论文里面的解释有点牵强。</li>
+</ul>
+</div>
+</div>
+</div>
+</body>
+</html>

@@ -32,7 +32,7 @@ UPDATE: 我自己感觉好像是kernel pipe buffer不够的原因：我使用 vm
 
 每次进行+10的操作
 
-#+BEGIN_SRC cpp
+#+BEGIN_SRC C++
 inline int add10(char* end) {
     char* p = end - 1;
     for (;;) {
@@ -58,7 +58,7 @@ inline int add10(char* end) {
 
 这里还有个优化，是假设已经copy了end2次的话，那么可以使用这个duplicated进行拷贝。
 
-#+BEGIN_SRC cpp
+#+BEGIN_SRC C++
 
 #define MC(x, c) buf = op<c, c>(buf, x)
 // 使用dup模式
@@ -103,7 +103,7 @@ char* output0(char* RE buf, const char* RE end) {
 
 对mempcy进行优化，我们在所有的原始串上增加padding到8bytes上，虽然会多拷贝几个字节，但是指令数却可以减少(省去类似 `movzbwl/mov ah` 这样的指令)
 
-#+BEGIN_SRC cpp
+#+BEGIN_SRC C++
 template <int c, int c2>
 char* op(char* RE buf, const char* RE p) {
     // 8 bytes as a unit.
@@ -133,7 +133,7 @@ char* op(char* RE buf, const char* RE p) {
 
 使用buffer来减少系统调用：因为我们最多处理到20位，然后每轮只处理30个字符，所以一轮最多产生600个字符(RESERVE). 可选地使用vmsplice或者是write来进行写入。
 
-#+BEGIN_SRC cpp
+#+BEGIN_SRC C++
         if ((buf - head) > (BUFFER_SIZE - RESERVE)) {
             size_t size = buf - head;
             if (use_vmsplice) {
@@ -152,7 +152,7 @@ char* op(char* RE buf, const char* RE p) {
 
 使用vmsplice的话需要使用0/1 buffer, 并且设置pipe size，确保pipe size和单个buffer size相同。
 
-#+BEGIN_SRC cpp
+#+BEGIN_SRC C++
 
 bool fix_pipe_size() {
     int fd = 1;
@@ -198,7 +198,7 @@ memcpy不是按照8字节对齐而是按照4字节对齐
 - 对于12字节以内的话可以使用rax/eax进行digit保存，
 - 对于16字节以内的话则可以使用xmm对digit保存
 
-#+BEGIN_SRC cpp
+#+BEGIN_SRC C++
 template <int c>
 char* op(char* RE buf, const char* RE p) {
     constexpr int x = (c + 3) / 4 * 4;
@@ -210,7 +210,7 @@ char* op(char* RE buf, const char* RE p) {
 
 在memcpy模式上访问顺序最好能保持一致，可能这样对于prefetch会比较友好
 
-#+BEGIN_SRC cpp
+#+BEGIN_SRC C++
 template <int digit>
 char* output0(char* RE buf, const char* RE pp) {
     // 11   12   13    14    15        16   17   18   19  20    21
@@ -237,7 +237,7 @@ char* output0(char* RE buf, const char* RE pp) {
 对digit管理数据结构包装在一个64字节对象以内，这样可以确保每次拿到digit buffer的话相关对象都可以拿到，减少L1 cache miss.
 另外add10上可以略微做得更加紧凑一些，返回最新更新的指针，然后判断begin是否发生变化。
 
-#+BEGIN_SRC cpp
+#+BEGIN_SRC C++
 inline char* add10(char* end) {
     char* p = end;
     while (*p == '9') {
@@ -266,7 +266,7 @@ alignas(64) DigitContext digitctx[1];
 - 这个代码因为没有实现vmsplice, 所以如果系统上pipebuff不够的话，那么效率很差
 - 但是如果系统上pipebuff足够的话，和我这个程序差不多甚至可能还更好。
 
-#+BEGIN_SRC cpp
+#+BEGIN_SRC C++
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
@@ -323,7 +323,7 @@ UPDATE(20220825): 又做了一些改进，现在在同事的机器上可以稳�
 - 常数字符串长度不会超过16(实际最大长度是13),  然后通过整数编码过来
 - 整个过程其实可以认为是个bit状态机，X塞满了就刷新出去，但是还会记录之前没有刷出去的bits.
 
-#+BEGIN_SRC cpp
+#+BEGIN_SRC C++
 
 char* gen_output_2_8(char* RE buf, const char* RE pp) {
 uint64_t e0=0,e1=0,e2=0,e3=0;
@@ -354,7 +354,7 @@ _mm_storeu_si128((__m128i*)buf, X); /* X = _mm_setzero_si128(); */ buf += 16;
 - 移动之之后 x = x | y
 - 这里需要计算y有多少位在另外一个128bit lane上，然后整体挪过去之后是要左移还是右移
 
-#+BEGIN_SRC py
+#+BEGIN_SRC Py
     def mm256_merge(x, y, off, size):
         assert size <= 16
         if off == 0:
@@ -386,7 +386,7 @@ __m256i t2 = _mm256_permute2f128_si256({source}, {source}, 0x08);
 
 指令还可以继续简化一下，但是其实差别不是太多了，最后输出的代码比如是这样的，整个过程中是不需要中间变量P和C的。
 
-#+BEGIN_SRC cpp
+#+BEGIN_SRC C++
 char* gen_output_2_9(char* RE buf, const char* RE pp) {
 uint64_t e0=0,e1=0;
 memcpy(&e0, pp + 0, 8);

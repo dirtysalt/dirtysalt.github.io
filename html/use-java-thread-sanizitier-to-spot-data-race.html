@@ -1,0 +1,157 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>使用Java ThreadSanitizer发现data race</title>
+<meta name="author" content="dirtysalt" />
+<meta name="generator" content="Org Mode" />
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content" class="content">
+<h1 class="title">使用Java ThreadSanitizer发现data race</h1>
+<p>
+这个功能我没有明白为什么没有加入默认的Java版本中，这个东西应该是很有用的东西。可能是效果不是特别好，也可能是存在某些明显的性能开销，以至于在代码中维护这些东西成本非常好而收益很低。
+</p>
+
+<p>
+UPDATE: 效率是真的低，我感觉可能是10x-20x差不多左右。
+</p>
+
+<p>
+<a href="https://runtimeverification.com/blog/detecting-popular-data-races-in-java-using-rv-predict/">https://runtimeverification.com/blog/detecting-popular-data-races-in-java-using-rv-predict/</a>
+</p>
+
+<hr />
+
+<p>
+openjdk/tsan: <a href="https://openjdk.org/projects/tsan">https://openjdk.org/projects/tsan</a>
+</p>
+
+<p>
+编译命令是
+</p>
+
+<blockquote>
+<p>
+use-java13; unset CLASSPATH;  bash configure &#x2013;prefix=`pwd`/installed ; make CONF=linux-x86_64-server-release clean install
+</p>
+</blockquote>
+
+<p>
+简单的Java程序，多个线程共同修改某个变量
+</p>
+
+<div class="org-src-container">
+<pre class="src src-Java">package com.starrocks.lab;
+
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+
+public class ThreadDataRaceCase {
+    int value;
+
+    public class Adder implements Runnable {
+        int index;
+        int duration;
+        int tick;
+
+        public Adder(int index, int duration) {
+            this.index = index;
+            this.duration = duration;
+            this.tick = 0;
+        }
+
+        @Override
+        public void run() {
+            System.out.println("Thread " + index + " started...");
+            long begin = System.currentTimeMillis();
+            while (true) {
+                value += 1;
+                tick += 1;
+                if (tick % 100 == 0) {
+                    long now = System.currentTimeMillis();
+                    if ((now - begin) &gt; duration * 1000) {
+                        break;
+                    }
+                }
+            }
+            System.out.println("Thread " + index + " stopped...");
+        }
+    }
+
+    public static void main(String[] args) throws InterruptedException {
+        ThreadDataRaceCase t = new ThreadDataRaceCase();
+        t.value = 0;
+
+        int number = 16;
+        int duration = 10;
+        Adder adder[] = new Adder[number];
+        ExecutorService executor = Executors.newFixedThreadPool(number);
+        for (int i = 0; i &lt; number; i++) {
+            adder[i] = t.new Adder(i, duration);
+            executor.submit(adder[i]);
+        }
+
+        executor.shutdown();
+        executor.awaitTermination(2 * duration, TimeUnit.SECONDS);
+    }
+}
+</pre>
+</div>
+
+<p>
+运行起来可以发现错误是：需要使用 `java -XX:+ThreadSanitizer` 来运行
+</p>
+
+<pre class="example" id="orge1aec8c">
+sandbox-cloud :: src/main/java ‹master*› » javac com/starrocks/lab/ThreadDataRaceCase.java
+sandbox-cloud :: src/main/java ‹master*› » java -XX:+ThreadSanitizer com/starrocks/lab/ThreadDataRaceCase
+Thread 1 started...
+Thread 3 started...
+==================
+WARNING: ThreadSanitizer: data race (pid=227159)
+  Read of size 4 at 0x000101c92a64 by thread T18:
+    #0 com.starrocks.lab.ThreadDataRaceCase$Adder.run()V ThreadDataRaceCase.java:26
+    #1 java.util.concurrent.Executors$RunnableAdapter.call()Ljava/lang/Object; Executors.java:515
+    #2 java.util.concurrent.FutureTask.run()V FutureTask.java:264
+    #3 java.util.concurrent.ThreadPoolExecutor.runWorker(Ljava/util/concurrent/ThreadPoolExecutor$Worker;)V ThreadPoolExecutor.java:1130
+    #4 java.util.concurrent.ThreadPoolExecutor$Worker.run()V ThreadPoolExecutor.java:630
+    #5 java.lang.Thread.run()V Thread.java:832
+    #6 (Generated Stub) &lt;null&gt;
+
+  Previous write of size 4 at 0x000101c92a64 by thread T16:
+    #0 com.starrocks.lab.ThreadDataRaceCase$Adder.run()V ThreadDataRaceCase.java:26
+    #1 java.util.concurrent.Executors$RunnableAdapter.call()Ljava/lang/Object; Executors.java:515
+    #2 java.util.concurrent.FutureTask.run()V FutureTask.java:264
+    #3 java.util.concurrent.ThreadPoolExecutor.runWorker(Ljava/util/concurrent/ThreadPoolExecutor$Worker;)V ThreadPoolExecutor.java:1130
+    #4 java.util.concurrent.ThreadPoolExecutor$Worker.run()V ThreadPoolExecutor.java:630
+    #5 java.lang.Thread.run()V Thread.java:832
+    #6 (Generated Stub) &lt;null&gt;
+
+  Thread T18 (tid=227178, running) created by thread T1 at:
+    #0 pthread_create &lt;null&gt; (libtsan.so.0+0x615d8)
+    #1 os::create_thread(Thread*, os::ThreadType, unsigned long) /home/disk4/zhangyan/repo/tsan/src/hotspot/os/linux/os_linux.cpp:927 (libjvm.so+0xb4e649)
+    #2 java.lang.Thread.start()V Thread.java:801
+    #3 java.util.concurrent.ThreadPoolExecutor.addWorker(Ljava/lang/Runnable;Z)Z ThreadPoolExecutor.java:939
+    #4 java.util.concurrent.ThreadPoolExecutor.execute(Ljava/lang/Runnable;)V ThreadPoolExecutor.java:1345
+    #5 java.util.concurrent.AbstractExecutorService.submit(Ljava/lang/Runnable;)Ljava/util/concurrent/Future; AbstractExecutorService.java:118
+    #6 com.starrocks.lab.ThreadDataRaceCase.main([Ljava/lang/String;)V ThreadDataRaceCase.java:49
+    #7 (Generated Stub) &lt;null&gt;
+
+  Thread T16 (tid=227176, running) created by thread T1 at:
+    #0 pthread_create &lt;null&gt; (libtsan.so.0+0x615d8)
+    #1 os::create_thread(Thread*, os::ThreadType, unsigned long) /home/disk4/zhangyan/repo/tsan/src/hotspot/os/linux/os_linux.cpp:927 (libjvm.so+0xb4e649)
+    #2 java.lang.Thread.start()V Thread.java:801
+    #3 java.util.concurrent.ThreadPoolExecutor.addWorker(Ljava/lang/Runnable;Z)Z ThreadPoolExecutor.java:939
+    #4 java.util.concurrent.ThreadPoolExecutor.execute(Ljava/lang/Runnable;)V ThreadPoolExecutor.java:1345
+    #5 java.util.concurrent.AbstractExecutorService.submit(Ljava/lang/Runnable;)Ljava/util/concurrent/Future; AbstractExecutorService.java:118
+    #6 com.starrocks.lab.ThreadDataRaceCase.main([Ljava/lang/String;)V ThreadDataRaceCase.java:49
+    #7 (Generated Stub) &lt;null&gt;
+</pre>
+</div>
+</body>
+</html>

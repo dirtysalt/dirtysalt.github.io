@@ -1,0 +1,139 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>LC 100293. 找出所有稳定的二进制数组 II</title>
+<meta name="author" content="dirtysalt" />
+<meta name="generator" content="Org Mode" />
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content" class="content">
+<h1 class="title">LC 100293. 找出所有稳定的二进制数组 II</h1>
+<p>
+<a href="https://leetcode.cn/problems/find-all-possible-stable-binary-arrays-ii/description/">https://leetcode.cn/problems/find-all-possible-stable-binary-arrays-ii/description/</a>
+</p>
+
+<p>
+这里看了一下提示，提示给出的思路比较明显：
+</p>
+
+<blockquote>
+<p>
+Let `dp[x][y][z = 0/1]` be the number of stable arrays with exactly `x` zeros, `y` ones, and the last element is `z`. (0 or 1). `dp[x][y][0] + dp[x][y][1]` is the answer for given `(x, y)`.
+</p>
+
+<p>
+If we have already placed `x` 1 and `y` 0, if we place a group of `k` 0, the number of ways is `dp[x-k][y][1]`. We can place a group with size `i`, where `i` varies from 1 to `min(limit, zero - x)`. Similarly, we can solve by placing a group of ones.
+</p>
+
+<p>
+Speed up the calculation using prefix arrays to store the sum of `dp` states.
+</p>
+</blockquote>
+
+<p>
+但是在写代码的时候发现了许多问题，主要体现在想维护一个二维的前缀。但是好像这个东西不太work. 因为不太好维护这个二维前缀的更新顺序。实际上这个代码只需要维护一个一维的前缀就好。
+</p>
+
+<p>
+另外一个问题就是没有参考实现，因为之前一直纠结在前缀怎么更新上，也不太好调试。后面有个思路就是先用brute force方式来编写代码，然后再这个brute force上观察代码结构，然后来优化代码，这个做法其实是挺不错的。
+</p>
+
+<p>
+用brute force的代码如下，可以看到下面在求解cost的时候去遍历了，因为这个时候不知道怎么维护前缀
+</p>
+
+<div class="org-src-container">
+<pre class="src src-Python">class Solution:
+    def numberOfStableArrays(self, zero: int, one: int, limit: int) -&gt; int:
+        import numpy as np
+        dp = np.zeros((zero + 1, one + 1, 2), np.int64).tolist()
+        MOD = 10 ** 9 + 7
+
+        # dp[x][y][z] -&gt; x 0, y 1, endswith z[0/1]
+
+        # place k zeros in a group.
+        # dp[x][y][0] = sum (dp[x-k][y][1]) k = [1 .. min(x, limit)]
+        #    dp[x-k][y][1] + dp[x-(k+1)[y][1] + .. dp[x-1][y][1]
+        #    acc[x][y][1] - acc[x-k][y][1]
+
+        for k in range(1, min(zero, limit) + 1):
+            dp[k][0][0] = 1
+        for k in range(1, min(one, limit) + 1):
+            dp[0][k][1] = 1
+
+        for x in range(zero + 1):
+            for y in range(one + 1):
+                # try z = 0
+                if True:
+                    k = min(x, limit)
+                    cost = 0
+                    for z in range(1, k + 1):
+                        cost += dp[x - z][y][1]
+                    dp[x][y][0] = (dp[x][y][0] + cost)
+
+                # try z = 1
+                if True:
+                    k = min(y, limit)
+                    cost = 0
+                    for z in range(1, k + 1):
+                        cost += dp[x][y - z][0]
+                    dp[x][y][1] = (dp[x][y][1] + cost)
+        ans = dp[zero][one][0] + dp[zero][one][1]
+        ans = ans % MOD
+        return ans
+</pre>
+</div>
+
+
+<p>
+然后再这个代码基础上，可以观察 z=0 的时候其实y没有变动，我们需要维护一个x的前缀和。而z=1的时候，x没有变动，这里可以直接使用滑动窗口来实现。有了正确的代码+TestCases做保证，这个重构起来就比较容易了。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-Python">class Solution:
+    def numberOfStableArrays(self, zero: int, one: int, limit: int) -&gt; int:
+        import numpy as np
+        dp = np.zeros((zero + 1, one + 1, 2), np.int64).tolist()
+        MOD = 10 ** 9 + 7
+
+        # dp[x][y][z] -&gt; x 0, y 1, endswith z[0/1]
+        # place k zeros in a group.
+        # dp[x][y][0] = sum (dp[x-k][y][1]) k = [1 .. min(x, limit)]
+
+        for k in range(1, min(zero, limit) + 1):
+            dp[k][0][0] = 1
+        for k in range(1, min(one, limit) + 1):
+            dp[0][k][1] = 1
+
+        acc = [0] * (one + 1)
+        for x in range(zero + 1):
+            # try z = 0
+            k = min(x, limit)
+            for y in range(one + 1):
+                acc[y] += dp[x - 1][y][1] if x &gt;= 1 else 0
+                if x &gt; k:
+                    acc[y] -= dp[x - k - 1][y][1]
+                cost = acc[y]
+                dp[x][y][0] = (dp[x][y][0] + cost)
+
+            # try z = 1
+            cost = 0
+            for y in range(one + 1):
+                cost += dp[x][y - 1][0] if (y &gt;= 1) else 0
+                k = min(y, limit)
+                if y &gt; k:
+                    cost -= dp[x][y - k - 1][0]
+                dp[x][y][1] = (dp[x][y][1] + cost)
+        ans = dp[zero][one][0] + dp[zero][one][1]
+        ans = ans % MOD
+
+        return ans
+</pre>
+</div>
+</div>
+</body>
+</html>

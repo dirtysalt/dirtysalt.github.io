@@ -4,22 +4,22 @@
 
 最近在测试block cache的时候(ssb100g), 发现使用jemalloc和tcmalloc在执行速度上存在一定的差距。以ssb/q07为例，jemalloc版本大约在1200ms, 而tcmalloc版本在1000ms左右。如果对BE进行oncpu分析的话，发现有比较大的部分在 `do_async_page_fault` 这个函数上。
 
-[[../images/simple-benchmark-on-jemalloc-and-tcmalloc-0.jpg]]
+[[../images/Pasted-Image-20231225104957.png]]
 
-这个函数是KVM在处理page fault. [KVM async page fault](https://terenceli.github.io/%E6%8A%80%E6%9C%AF/2019/03/24/kvm-async-page-fault) 因为整个dataset其实都是放在内存里面的，所以这些page fault都是minor page fault, 物理内存分配速度跟不上导致的。
+这个函数是KVM在处理page fault. [[https://terenceli.github.io/%E6%8A%80%E6%9C%AF/2019/03/24/kvm-async-page-fault][KVM async page fault]] 因为整个dataset其实都是放在内存里面的，所以这些page fault都是minor page fault, 物理内存分配速度跟不上导致的。
 
 #+BEGIN_EXAMPLE
 sr@dla-cache01 ~]$ systemd-detect-virt
 kvm
 #+END_EXAMPLE
 
-目前我们jemalloc的配置如下 [JEMALLOC](https://jemalloc.net/jemalloc.3.html)
+目前我们jemalloc的配置如下 [[https://jemalloc.net/jemalloc.3.html][JEMALLOC]]
 
 export JEMALLOC_CONF="percpu_arena:percpu,oversize_threshold:0,muzzy_decay_ms:5000,dirty_decay_ms:5000,metadata_thp:auto,background_thread:true"
 
 ** 测试构造
 
-测试思路是，在不同尺寸内存块上反复分配以及释放，观察执行时间以及minor page fault. 实现思路是如下，具体代码可以看 `测试代码`一节：
+测试思路是，在不同尺寸内存块上反复分配以及释放，观察执行时间以及minor page fault. 实现思路是如下，具体代码可以看 `测试代码` 一节：
 - 每个线程上有N个大小为 `BLOCK_SIZE` 的内存块
 - 每次随机挑选一个内存块进行释放或者是分配
 - 如果是分配的话，那么进行memcpy
@@ -57,11 +57,11 @@ export JEMALLOC_CONF="percpu_arena:percpu,oversize_threshold:0,muzzy_decay_ms:50
 
 线程数16执行情况如下图：
 
-[[../images/simple-benchmark-on-jemalloc-and-tcmalloc-1.jpg]]
+[[../images/Pasted-Image-20231225104950.png]]
 
 线程数64执行情况如下图：
 
-[[../images/simple-benchmark-on-jemalloc-and-tcmalloc-2.jpg]]
+[[../images/Pasted-Image-20231225104924.png]]
 
 
 *** 64cores
@@ -93,16 +93,16 @@ JEMALLOC_CONF="percpu_arena:disabled,narenas:64,oversize_threshold:0,muzzy_decay
 
 16线程情况如下图
 
-[[../images/simple-benchmark-on-jemalloc-and-tcmalloc-3.jpg]]
+[[../images/Pasted-Image-20231225104932.png]]
 
 64线程情况如下图
 
-[[../images/simple-benchmark-on-jemalloc-and-tcmalloc-4.jpg]]
+[[../images/Pasted-Image-20231225105006.png]]
 
 
 UDPATE: 64线程下面增加mimalloc
 
-[[../images/simple-benchmark-on-jemalloc-and-tcmalloc-5.jpg]]
+[[../images/Pasted-Image-20231225105014.png]]
 
 ** 测试代码
 

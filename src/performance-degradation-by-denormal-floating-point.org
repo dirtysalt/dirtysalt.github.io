@@ -12,7 +12,7 @@ The IEEE 754 standard specifies a binary32 as having:
 - Exponent width: 8 bits
 - Significand precision: 24 bits (23 explicitly stored)（默认是1.xxxx）
 
-[[../images/single-precision-floating-point-repr.png]]
+[[../images/Pasted-Image-20231225103558.png]]
 
 Exponent encoding（指数部分的编码格式）
 The single-precision binary floating-point exponent is encoded using an offset-binary representation, with the zero offset being 127; also known as exponent bias in the IEEE 754 standard.
@@ -35,7 +35,7 @@ The minimum positive normal value is 2−126 ≈ 1.18 × 10−38 and the minimum
 
 想要写程序看浮点数二进制表示也很容易，不需要自己写代码，因为这个操作CPU就内置了。只需要简单地存入浮点数，然后转换成为bytes就好了。
 
-#+BEGIN_SRC python
+#+BEGIN_SRC Python
 #!/usr/bin/env python
 # coding:utf-8
 # Copyright (C) dirlt
@@ -61,7 +61,7 @@ assert (i == 1066192077)
 
 可以有下面几种方式设置
 
-#+BEGIN_SRC cpp
+#+BEGIN_SRC C++
 // ====================
 // both DAZ and FTZ.
 #include <fenv.h>
@@ -95,7 +95,7 @@ Compiler switches. -ffast-math, -msse or -mfpmath=sse will disable denormals and
 
 我们文章 [[https://www.toutiao.com/a6763437360362291723][一个有趣的实验，用0.1f替换0，性能提升7倍]] 里面的C程序摘抄修改如下。通过 DISABLE_DENORMS 宏来决定是否禁止非规格浮点数处，通过 STEP 来设置 "0.1f" 或者是 0.
 
-#+BEGIN_SRC c
+#+BEGIN_SRC C
 /* coding:utf-8
  * Copyright (C) dirlt
  */
@@ -136,7 +136,7 @@ int main() {
 3. STEP = 0, -ffast-math 打开（数学运算优化版本）
 4. STEP = 0.1f（浮点版本）
 
-#+BEGIN_SRC
+#+BEGIN_EXAMPLE
 
 rm -rf a.out
 gcc -O2 -Wall -DSTEP=0 temp.c -S -o int.s
@@ -162,7 +162,7 @@ echo "float version: "; time ./a.out
 # echo "diff int.s float.s"
 # diff int.s float.s
 
-#+END_SRC
+#+END_EXAMPLE
 
 运行结果如下，可以看到运行效率从高到低是：
 1. 数学库优化版本
@@ -206,7 +206,7 @@ y变成了 normal number, 并且就是 0.1f（更准确的说是0.1f的规格浮
 这个y就变成了0。注意这个0是浮点数的0(exp = 0, fraction = 0). 那么之后所有的操作，就都是规格浮点数的操作了。
 也即是说，整个过程中，只发生过一次非规格浮点数的计算。
 
-而如果执行 `y += 0; y-=0; `的话，y原来是非规格浮点数，之后还是非规格浮点数。也就是说，在执行一段时间之后，
+而如果执行 `y += 0; y-=0; ` 的话，y原来是非规格浮点数，之后还是非规格浮点数。也就是说，在执行一段时间之后，
 整数版本之后执行的都是非规格浮点数运算，可想这个性能的下降。
 
 *** 禁止非规格浮点的整数版本和浮点版本对比
@@ -214,7 +214,7 @@ y变成了 normal number, 并且就是 0.1f（更准确的说是0.1f的规格浮
 可以看到虽然两个版本差距不大，但是禁止非规格浮点的整数版本还是要略快。这个快，仅仅是因为指令少的缘故。
 
 禁止非规格浮点的整数版本循环部分如下：
-#+BEGIN_SRC asm
+#+BEGIN_SRC Asm
 LBB0_1:                                 ## =>This Inner Loop Header: Depth=1
 	mulss	%xmm0, %xmm3 ;; xmm0 = x, xmm3 = y
 	divss	%xmm1, %xmm3 ;; xmm1 = z, xmm3 = y
@@ -231,7 +231,7 @@ LBB0_1:                                 ## =>This Inner Loop Header: Depth=1
 因为这里做了循环展开，每个循环其实就3条指令（mulss, divss, addss）。
 
 而浮点版本循环部分如下：
-#+BEGIN_SRC asm
+#+BEGIN_SRC Asm
 LBB0_1:                                 ## =>This Inner Loop Header: Depth=1
 	mulss	%xmm0, %xmm4 ;; xmm0 = x, xmm4 = y
 	divss	%xmm1, %xmm4 ;; xmm1 = z, xmm4 = y
@@ -244,17 +244,17 @@ LBB0_1:                                 ## =>This Inner Loop Header: Depth=1
 	mulss	%xmm0, %xmm4
 	divss	%xmm1, %xmm4
 	addss	%xmm2, %xmm4
-	addss	%xmm3, %xmm4
+x	addss	%xmm3, %xmm4
 	addl	$-3, %eax
 	jne	LBB0_1
 #+END_SRC
-同样有循环展开，但是是4条指令（mulss, divss, addss, addss)
+同样有循环展开，但是是4条指令(mulss, divss, addss, addss)
 
 *** 为什么数学运算优化版本最快？
 
 因为它指令最少，每64个循环执行两条指令。很明显它用了SIMD技术。
 
-#+BEGIN_SRC asm
+#+BEGIN_SRC Asm
 LBB0_1:                                 ## =>This Inner Loop Header: Depth=1
 	mulps	%xmm2, %xmm1
 	mulps	%xmm2, %xmm0
@@ -267,7 +267,7 @@ LBB0_1:                                 ## =>This Inner Loop Header: Depth=1
 数学运算优化版本是怎么使用SIMD的呢？下面是完整的汇编代码。第一眼看过去会比较头大，而且里面有很多奇怪的常数。
 这个突破口还是在最后面汇总结果的地方，从这个地方入手会容易看懂。
 
-#+BEGIN_SRC asm
+#+BEGIN_SRC Asm
 	.section	__TEXT,__text,regular,pure_instructions
 	.macosx_version_min 10, 13
 	.section	__TEXT,__literal16,16byte_literals
@@ -338,7 +338,7 @@ L_.str:                                 ## @.str
 
 *** 汇总结果代码
 
-#+BEGIN_SRC asm
+#+BEGIN_SRC Asm
 	mulps	%xmm1, %xmm0
 	movaps	%xmm0, %xmm1
 	movhlps	%xmm1, %xmm1            ## xmm1 = xmm1[1,1]
@@ -377,7 +377,7 @@ xmm寄存器是128bits，可以存放4个32bits浮点数。我这做了一下计
 2. 将xmm2乘到xmm0上
 3. 循环计数减去64
 
-#+BEGIN_SRC asm
+#+BEGIN_SRC Asm
 LBB0_1:                                 ## =>This Inner Loop Header: Depth=1
 	mulps	%xmm2, %xmm1
 	mulps	%xmm2, %xmm0
@@ -386,18 +386,18 @@ LBB0_1:                                 ## =>This Inner Loop Header: Depth=1
 #+END_SRC
 
 如果对照C代码，我们可以假设，C代码最终被优化成为一条指令 `y *= delta`.
-#+BEGIN_SRC c
+#+BEGIN_SRC C
         y *= x; // 两条指令其实就是 y *= (x / z)
         y /= z;
         y += 0; // 因为是0，所以删除
         y -= 0; // 因为是0，所以删除
 #+END_SRC
 
-所以现在问题就是，如何初始化xmm0, xmm1和xmm2(存放delta的值）
+所以现在问题就是，如何初始化xmm0, xmm1和xmm2(存放delta的值)
 
 *** 初始化部分代码
 
-#+BEGIN_SRC asm
+#+BEGIN_SRC Asm
 ## BB#0:
 	movaps	LCPI0_0(%rip), %xmm0    ## xmm0 = [1.000000e+00,1.000000e+00,1.000000e+00,1.000000e+00]
 	movaps	LCPI0_1(%rip), %xmm1    ## xmm1 = [1.100000e+00,1.000000e+00,1.000000e+00,1.000000e+00]
@@ -413,7 +413,7 @@ LBB0_1:                                 ## =>This Inner Loop Header: Depth=1
 - 现将y拆分 y = y0 * y1 * ... y7（divide）
 - 将[y0..y3]存放在xmm1, [y4..y7]存放在xmm0
 - 每次迭代 yi = yi * delta
-- 最终再将 yi 相乘，就可以得到最终的y.（conquer)
+- 最终再将 yi 相乘，就可以得到最终的y.(conquer)
 
 然后就要搞清楚为什么xmm2设置成为那个值。
 - 假设我们总共需要迭代N次，所以期望值是 y = y * ((x / z) ** N)

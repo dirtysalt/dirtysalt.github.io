@@ -26,7 +26,7 @@
 - This approach has also been extended to various databases. Konstantinou et al. and Barbuzzi et al. suggest building HFiles offline in Hadoop, then shipping them to HBase, an open source database modeled af-ter BigTable . These works do not explore the data pipeline, particularly data refreshes and rollback.（HBase bulkload缺少rollback机制）
 
 ** Project Voldemort
-[[../images/voldemort-pluggabe-architecture.png]]
+[[../images/Pasted-Image-20231225103211.png]]
 
 ** Alternative Approaches
 Before we started building our own custom storage engine, we decided to evaluate the existing read-write storage engines supported in Voldemort, namely, MySQL and Berkeley DB. Our criteria for success was the ability to bulk load massive data sets with minimal disk space overhead, while still serving live traffic.（MySQL和BDB在作为存储引擎上的问题）
@@ -56,7 +56,7 @@ The lack of off-the-shelf solutions, along with the in-efficiencies of the previ
 - *Ability to handle large data sets*: The easy access to scalable computing through Hadoop, along with the growing use of complex algorithms has resulted in large data sets being used as part of many core products. Classic examples of this, in the context of social networks, include storing relationships be-tween a pair of users, or between users and an entity. When dealing with millions of users, these pairs can easily reach billions of tuples, motivating our storage engine to support terabytes of data and perform well under a large data to memory ratio.（存储格式假设数据大小远大于可用内存大小）
 
 ** Read-only Extensions
-[[../images/voldemort-read-only-extensions-architecture.png]]
+[[../images/Pasted-Image-20231225104059.png]]
 
 *** Storage Format
 - Many storage formats try to build data structures that keep the data memory resident in the process’s address space, ignoring the effects of the operating system’s page cache. The several orders of magnitude latency gap be-tween page cache and disk means that most of the real performance benefit by maintaining our own structure is for elements already in the page cache. In fact, this cus-tom structure may even start taking memory away from the page cache. This potential interference motivated the need for our storage engine to exploit the page cache in-stead of maintaining our own complex heap-based data structure. Because our data is immutable, Voldemort memory maps the entire index into the address space. Ad-ditionally, because Voldemort is written in Java and runs on the JVM, delegating the memory management to the operating system eases garbage collection tuning.（充分利用os page cache一方面可以简化代码而不用自己去维护比较复杂的cache结构，另外一方面因为page cache不是通过JVM来管理的所以可以缓解JVM GC的压力来提高效率） #note: 用JVM编写的存储系统最好不要来自己管理cache，或者由上层来管理cache，或者由JNI来间接管理cache，因为cache对JVM GC的影响会非常大
@@ -68,7 +68,7 @@ The lack of off-the-shelf solutions, along with the in-efficiencies of the previ
   - We had initially started by using the full 16 bytes of the MD5 signature, but saw performance problems as the number of stores grew. In particular, the indexes for all stores were not page cache resident, and thrashing behavior was seen for certain stores due to other high-throughput stores. To alleviate this problem, we needed to cut down on the amount of data being memory mapped, which could be achieved by reducing the available key-space and accepting collisions in the data file.（之所以选用前8个字节来做index key是考虑到index文件大小和冲突概率的折衷）
   - The data file is also a very highly-packed structure where we store the number of collided tuples followed by a list of collided tuples (key size, value size, key, value). The order of these multiple lists is the same as the corre-sponding 8 bytes of MD5 of key in the index file. Here, we need to store the key bytes instead of the MD5 in the tuples to distinguish collided tuples during reads.
 
-[[../images/voldemort-storage-format.png]]
+[[../images/Pasted-Image-20231225104119.png]]
 
 
 *** Chunk Set Generation
@@ -103,7 +103,7 @@ The lack of off-the-shelf solutions, along with the in-efficiencies of the previ
   - Rebalancing works only on the active version of the data, ignoring the previous versions. （只是操作当前版本的数据）
   - During this copy-ing, the nodes go into a “rebalancing state” and are not allowed to swap any new data.（节点在rebalance期间会标记正在进行状态，在此期间不允许load数据。这个设计可以简化不少问题）
 - Here it is important to note that the granularity of the bucket selected makes this process as simple as copying files. If buckets were defined on a per-node basis (that is, have multiple chunk sets on a per-node basis), the system would have had to iterate over all the keys on the node and find the keys belonging to the moving partition, finally running an extra merge step to coalesce with the live index on the stealer node’s end.
-- Once the fetches are complete, the rebalancing tool updates the intermediate cluster topology on all the nodes while also running the swap operation, for all the stores on the stealer and donor nodes. *The entire process repeats for every batch of primary partitions.*  #todo: 为什么不等待所有节点rebalance/fetch完成所有数据之后，直接通知所有节点更新到最终的membership并且做swap操作(as an atomic operation）？ 分批执行fetch可以理解是因为这样可以让这个系统平滑，可以分批更新membership就不太理解了。(也许等待所有节点都完成fetch然后切换等待时间太长，因为是只读数据库所有分批更新membership会非常安全并且可以看到效果）
+- Once the fetches are complete, the rebalancing tool updates the intermediate cluster topology on all the nodes while also running the swap operation, for all the stores on the stealer and donor nodes. *The entire process repeats for every batch of primary partitions.*  #todo: 为什么不等待所有节点rebalance/fetch完成所有数据之后，直接通知所有节点更新到最终的membership并且做swap操作(as an atomic operation)？ 分批执行fetch可以理解是因为这样可以让这个系统平滑，可以分批更新membership就不太理解了。(也许等待所有节点都完成fetch然后切换等待时间太长，因为是只读数据库所有分批更新membership会非常安全并且可以看到效果)
 - The intermediate topology change also needs to be propagated to all the clients. Voldemort propagates this information as a lazy process where the clients still use the old metadata. If they contact a node with a request fora key in a partition that the node is no longer responsible for, a special exception is propagated, which results in a rebootstrap step along with a retry of the previous request. （上面的问题同样出现在如何通知client上。如果只是每次几个primary partition增量更新的话，那么client对于membership的更新也只能够是增量的，只能更新本次所取的key对应的partition在哪个node上这个信息。可是如果所有节点的membership是最后全量更新的话，那么client则可以选择是增量更新还是全量更新，可以知道所有的partition在哪些node上面这个信息。增量的更新可以降低延迟，但是会增大吞吐）
 - The rebalancing tool has also been designed to handle failure scenarios elegantly. Failure during a fetch is not a problem as no new data has been swapped. However, failure during the topology change and swap phase on some nodes requires (a) changing the cluster topology to the previous good cluster topology on all nodes and (b) rolling back the data on nodes that had successfully swapped.
 

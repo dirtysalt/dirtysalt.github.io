@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>一种基于探测的自适应IO并发实现</title>
+<meta name="author" content="dirtysalt" />
+<meta name="generator" content="Org Mode" />
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content" class="content">
+<h1 class="title">一种基于探测的自适应IO并发实现</h1>
+<p>
+设计总结：
+</p>
+<ol class="org-ol">
+<li>出入速度必须基于同一个观察主体，否则两者不能对比</li>
+<li>如果出入速度始终不匹配，那么没有办法基于队列深度做反馈。</li>
+<li>系统会存在某个临界点，可以通过探测/反馈的方式找到它。</li>
+</ol>
+
+<hr />
+
+<p>
+PR: <a href="https://github.com/StarRocks/starrocks/pull/21037/files">https://github.com/StarRocks/starrocks/pull/21037/files</a>
+</p>
+
+<p>
+SR pipeline框架下面，每个scan operator会提交和调度不同数量的chunk source. chunk source会不断地读取文件来产生chunk, 然后放到一个共享队列中，然后scan operator会不断地从这个共享队列内部拿到chunk去消费。这是一个典型的生产/消费模型，scan operator可以控制提交chunk source的数量来控制chunk的产生速度。理想情况下，我们可以提交足够多的chunk soure, 不过问题在于每个chunk source其实会占用一定内存空间的，所以我们需要在 a) 足够快地产生chunk 和 b) 避免消耗过多内存。所以这里必须通过设计某一类反馈机制来自动调节scan operator并行提交chunk source的数量。
+</p>
+
+<hr />
+
+<p>
+我最开始的思路大致是这样：
+</p>
+<ol class="org-ol">
+<li>假设scan operator运行了t0时间，而下面的chunk source平均运行了时间t1，期间产生了R个rows</li>
+<li>那么scan operator消费速度是 R/t0,  单个chunk source产生速度则是 R/t1  (update: 这个地方其实是错误的，这样两者不能放在一起进行比较。速度界面观察的主体必须是同一个，这里必须都是scan operator)</li>
+<li>那么理论上我们应该产生R/t0 / (R/t1) = t1/t0 个chunk source.</li>
+</ol>
+
+<p>
+但是这种模型其实有个问题，就是scan operator消费数量完全是由chunk source产生数量来决定的。也就是说，如果chunk source特别慢，那么scan operator被迫也运行的慢，两者时间其实几乎是一致的。这里我其实t0里面包含了scan operator的off cpu + on cpu时间（on cpu时间其实不太好统计）， 而chunk source统计的只有on cpu时间。我觉得这个模型如果都只统计on cpu时间的话可能可以work.
+</p>
+
+<p>
+UPDATE: 这里还有个问题就是，到达了某个点上，其实继续增加chunk source不一定会给带来更高的产生速度，比如IO打满或者是CPU跑满。所以想直接计算出具体的值是不可行的)
+</p>
+
+<hr />
+
+<p>
+另外一个思路就是通过观察队列深度来做反馈，思路可以是这样：
+</p>
+<ol class="org-ol">
+<li>我们维护一个当前最大提交IO数量值 io_max_tasks</li>
+<li>如果队列满的话，那么 io_max_tasks -= delta</li>
+<li>如果队列空（或者是比较空）的话，那么 io_max_tasks += delta</li>
+<li>否则说明队列深度还行，那么就不进行修改</li>
+<li>最后按照 io_max_tasks 数量进行提交</li>
+</ol>
+
+<p>
+这里面存在一个问题就是慢启动，尤其是对于短查询来说：在最开始的阶段，如果delta很低的话，那么可能需要等几个pipeline driver cycle才能达到比较好的值。如果按照每个cycle 10ms计算的话，那么延迟就会增加20~30ms左右。不过这里有个观察就是，如果是短查询的话，通常意味着IO时间不多，更多的是CPU时间。如果我们的delta值可以让CPU都利用起来的话，那么冷启动就不会是个太大的问题。
+</p>
+
+
+<p>
+UPDATE：其实上面方法也存在问题，就是不管chunk source运行多少，队列深度可能都是不够的。chunk source并行会到达某个极限，如果此时scan operator消费速度依然很快的话，那么队列深度是没有办法来做反馈的。
+</p>
+
+<hr />
+
+<p>
+似乎目前这种方式是靠谱的： <a href="https://github.com/dirtysalt/starrocks/pull/2/files">https://github.com/dirtysalt/starrocks/pull/2/files</a>
+</p>
+
+<p>
+大致思路是：
+</p>
+<ol class="org-ol">
+<li>如果产生速度跟不上消费速度，那么需要增加chunk source, 否则就要减少</li>
+<li>但是增加chunk source是需要逐步增加的，如果增加不能带来边际优势的话，那么其实是需要回调的。</li>
+<li>目前的实现还没有考虑到，什么情况下需要主动减少chunk source???</li>
+<li>如果是慢速IO的话，我们需要尽早识别出来，然后快速增加chunk source.</li>
+</ol>
+</div>
+</body>
+</html>

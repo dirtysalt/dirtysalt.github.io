@@ -1,15 +1,15 @@
 #+title: filter range实现优化
 
-基本代码都来自于 [StarRocks](https://github.com/StarRocks/starrocks/blob/main/be/src/column/column_helper.h#L315)
+基本代码都来自于 [[https://github.com/StarRocks/starrocks/blob/main/be/src/column/column_helper.h#L315][StarRocks]]
 
-benchmark代码放在 [Github](https://github.com/dirtysalt/codes/blob/master/cc/sr-test/filter_range_perf.cpp)
+benchmark代码放在 [[https://github.com/dirtysalt/codes/blob/master/cc/sr-test/filter_range_perf.cpp][Github]]
 
 所谓filter range就是类似下面这样的代码：
 - 基于0/1数组来选择目标数组里面的元素
 - 如果对应位置是1那么就选择，否则就丢弃
 
 普通实现版本如下：
-#+BEGIN_SRC cpp
+#+BEGIN_SRC C++
     for (auto i = start_offset; i < to; ++i) {
         if (f_data[i]) {
             *(data + result_offset) = *(data + i);
@@ -29,7 +29,7 @@ benchmark代码放在 [Github](https://github.com/dirtysalt/codes/blob/master/cc
 
 完整代码如下，这个 `phmap::priv::BitMask` 其实就是上面那个实现：
 
-#+BEGIN_SRC cpp
+#+BEGIN_SRC C++
         if (mask == 0) {
             // all no hit, pass
         } else if (mask == 0xffffffff) {
@@ -54,7 +54,7 @@ benchmark代码放在 [Github](https://github.com/dirtysalt/codes/blob/master/cc
 
 一个实现是branchless. 可以想得到这种实现，如果mask里面bits比较多的话，还是比较合算的。如果bits比较少的话，那么就有许多重复次的拷贝和运算。
 
-#+BEGIN_SRC cpp
+#+BEGIN_SRC C++
 #define BRANCHLESS_COPY()                  \
     {                                      \
         int j = start_offset;              \
@@ -66,9 +66,9 @@ benchmark代码放在 [Github](https://github.com/dirtysalt/codes/blob/master/cc
     }
 #+END_SRC
 
-另外一个实现则需要CPU支持AVX512F特性，具体来说就是用到这个指令：`_mm512_mask_compress_epi32` 和 `_mm512_mask_compress_epi64`.  这两个指令可以支持32bit/64bit的压缩。如果需要支持epi8/epi16压缩的话，那么就需要AVX512_VBMI(icelake)特性，我看了下我们开发机器还不支持。
+另外一个实现则需要CPU支持AVX512F特性，具体来说就是用到这个指令： `_mm512_mask_compress_epi32` 和 `_mm512_mask_compress_epi64`.  这两个指令可以支持32bit/64bit的压缩。如果需要支持epi8/epi16压缩的话，那么就需要AVX512_VBMI(icelake)特性，我看了下我们开发机器还不支持。
 
-#+BEGIN_SRC cpp
+#+BEGIN_SRC C++
 #define AVX512_COPY(SHIFT, MASK, WIDTH)                                         \
     {                                                                           \
         auto m = (mask >> SHIFT) & MASK;                                        \
@@ -84,7 +84,7 @@ benchmark代码放在 [Github](https://github.com/dirtysalt/codes/blob/master/cc
 
 如果要使用 intrinsic 的话，那么需要在编译参数里面增加 `-mavx512f`. 但是如果使用这个编译参数，如果代码里面使用了 `__AVX512F__` 的话那么就会生成avx512f代码。但是这里我们想根据运行时动态判断，这样的话可以使用内联汇编来搞，并且外部增加运行时CPU的特性判断。
 
-#+BEGIN_SRC cpp
+#+BEGIN_SRC C++
 #define AVX512_ASM_COPY(SHIFT, MASK, WIDTH, WIDTHX)               \
     {                                                             \
         auto m = (mask >> SHIFT) & MASK;                          \
@@ -105,7 +105,7 @@ benchmark代码放在 [Github](https://github.com/dirtysalt/codes/blob/master/cc
     }
 #+END_SRC
 
-运行时CPU特性判断可以参考 [这里](https://gcc.gnu.org/onlinedocs/gcc/x86-Built-in-Functions.html) 的 `__builtin_cpu_supports` 函数（注意需要初始化调用 `__builtin_cpu_init`，不过我测试了如果不调用好像也没有问题）
+运行时CPU特性判断可以参考 [[https://gcc.gnu.org/onlinedocs/gcc/x86-Built-in-Functions.html][这里]] 的 `__builtin_cpu_supports` 函数（注意需要初始化调用 `__builtin_cpu_init` ，不过我测试了如果不调用好像也没有问题）
 
 ----------
 
@@ -113,16 +113,16 @@ benchmark里面，我根据期望生成了不同的filter. 比如 `branchless/16
 
 在8bit/16bit这个级别上，我对比了bitmask和branchless两个版本，有这个几个发现：
 - 拷贝8bit和16bit上其实性能差别不大，16bit在bitmask版本略微高些，但是branchless差别不大。
-- branchless只有在 `bits = 8` 的情况下面比bitmask好一点，在 `bits = 16`的情况下面比bitmask好很多。
+- branchless只有在 `bits = 8` 的情况下面比bitmask好一点，在 `bits = 16` 的情况下面比bitmask好很多。
 - 但是如果在这里增加一次判断的话，造成的额外开销会比较大。
 
-[[../images/filter-range-optimization-0.jpg]]
+[[../images/Pasted-Image-20231225105112.png]]
 
 在32bit/64bit级别上，则对比了3个版本，有这么几个发现：
 1. branchless和bitmask差别和上麦差不多，branchless只有在 `bits=16` 的时候才更好。
 2. 32bit上，似乎只有 `bits=1` 的情况会稍差写，其他情况都比bitmask好。
 3. 64bit上，似乎要满足 `bits>=8` 才会比bitmask好。
 
-[[../images/filter-range-optimization-1.jpg]]
+[[../images/Pasted-Image-20231225105108.png]]
 
-[[../images/filter-range-optimization-2.jpg]]
+[[../images/Pasted-Image-20231225105124.png]]

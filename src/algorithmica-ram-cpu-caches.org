@@ -22,9 +22,9 @@ You can compare it with your own hardware by running dmidecode -t cache or lshw 
 
 使用non-temporal write的情况，可以看到在data超过L3 cache的时候，non-temporal比only-read效率还要高两倍。这个可以解释为non-temporal几乎相当于异步操作，所以可以做到比较高的带宽，而read需要等待数据返回所以延迟比较高。
 
-[[../images/algorithmica-ram-cpu-caches-0.jpg]]
+[[../images/Pasted-Image-20231225105245.png]]
 
-#+BEGIN_SRC cpp
+#+BEGIN_SRC C++
 const __m256i zeros = _mm256_set1_epi32(0);
 
 for (int i = 0; i + 7 < N; i += 8)
@@ -46,7 +46,7 @@ Theoretically, both requests should use the same bandwidth: a read request sends
 
 memory latency相对比较好测量，使用的技术可以是pointer-chasing技术让CPU没有办法预测到内存读取位置。下面创建cycle的方法非常有意思值得学习。
 
-#+BEGIN_SRC cpp
+#+BEGIN_SRC C++
 int p[N], q[N];
 
 // generating a random permutation
@@ -69,9 +69,9 @@ for (int t = 0; t < K; t++)
 2. 4.1Ghz相比2Ghz延迟还是要更低，在L3 cache之前大约是2倍，超过了之后大约在1.5倍
 3. 这个1.5倍可以解释为访问memory的时候要需要一些CPU操作去检查是否在Cache中，而这个检查操作4.1Ghz是比较有优势的。
 
-[[../images/algorithmica-ram-cpu-caches-1.jpg]]
+[[../images/Pasted-Image-20231225105249.png]]
 
-[[../images/algorithmica-ram-cpu-caches-2.jpg]]
+[[../images/Pasted-Image-20231225105231.png]]
 
 分析内存密集型算法的时候，应该关注访问了多少次cache line, 而不是内存读写次数。
 
@@ -83,7 +83,7 @@ The important practical lesson when designing and analyzing memory-bound algorit
 
 通常一个core是没有办法跑满内存带宽的，但是即便是多个cores同时跑的话，也需要考虑内存的拓扑结构：如果cores全部被分配在共享L3 cache上的话，那么提升可能不会那么明显，因为L3 cache可能是冲突点。所以有时候为了可以充分利用好带宽，需要了解多核结构，分配好线程。
 
-[[../images/algorithmica-ram-cpu-caches-3.jpg]]
+[[../images/Pasted-Image-20231225105227.png]]
 
 #+BEGIN_QUOTE
 parallel taskset -c 0,1 ./run ::: {0..1}  # L3 cache sharing
@@ -102,7 +102,7 @@ In general, to achieve maximum bandwidth, you should always split the threads of
 
 hardware prefetch几乎是没有性能回退的，因为它只有在memory/cache总线不忙的时候才进行工作，而software prefetch则有可能产生回退，因为它有可能与其他程序产生竞争，所以在软件代码中最好进行测量。另外就是software prefetch的长度非常讲究，不能太短也不能太长，文章中给了个例子来测试不同prefetch distance的影响，这个case里面（估计只有一个程序运行？）distance越大似乎越好。
 
-[[../images/algorithmica-ram-cpu-caches-4.jpg]]
+[[../images/Pasted-Image-20231225105149.png]]
 
 #+BEGIN_QUOTE
 Note that this is an artificial example, and you actually fail more often than not when trying to insert software prefetching into practical programs. This is largely because you need to issue a separate memory instruction that may compete for resources with the others. At the same time, hardware prefetching is 100% harmless as it only activates when the memory and cache buses are not busy.
@@ -112,9 +112,9 @@ You can also specify a specific level of cache the data needs to be brought to w
 
 ----------
 
-memory paging的page size对于TLB影响很大，通常有2级TLB分别是64, 2048 entries， 如果page size = 4K的话大约可以覆盖512K, 8M大小。也就是说，8MB内存内部访问，内存地址转换非常快，但是超过之后涉及到VM部分那么影响下降就比较严重。这个测试中避免了L2 cache, D >= 16. (L3 cache使用的是物理地址而不是虚拟地址）
+memory paging的page size对于TLB影响很大，通常有2级TLB分别是64, 2048 entries， 如果page size = 4K的话大约可以覆盖512K, 8M大小。也就是说，8MB内存内部访问，内存地址转换非常快，但是超过之后涉及到VM部分那么影响下降就比较严重。这个测试中避免了L2 cache, D >= 16. (L3 cache使用的是物理地址而不是虚拟地址)
 
-#+BEGIN_SRC cpp
+#+BEGIN_SRC C++
 const int N = (1 << 13);
 int a[D * N];
 
@@ -122,7 +122,7 @@ for (int i = 0; i < D * N; i += D)
     a[i] += 1;
 #+END_SRC
 
-[[../images/algorithmica-ram-cpu-caches-5.jpg]]
+[[../images/Pasted-Image-20231225105139.png]]
 
 #+BEGIN_QUOTE
 This anomaly is also due to the cache system, although the standard L1-L3 data caches have nothing to do with it. Virtual memory is at fault, in particular the translation lookaside buffer (TLB), which is a cache responsible for retrieving the physical addresses of the virtual memory pages.
@@ -143,7 +143,7 @@ Modern operating systems allow us to set the page size both globally and for ind
 That said, you shouldn’t rely on huge pages if possible, as they aren’t always available due to either hardware or computing environment restrictions. There are many other reasons why grouping data accesses spatially may be beneficial, which automatically solves the paging problem.
 #+END_QUOTE
 
-#+BEGIN_SRC cpp
+#+BEGIN_SRC C++
 // $ cat /sys/kernel/mm/transparent_hugepage/enabled
 // always [madvise] never
 
@@ -157,7 +157,7 @@ madvise(ptr, array_size, MADV_HUGEPAGE);
 
 最后面一节关于SoA和AoS的讨论看的有点云里雾里 https://en.algorithmica.org/hpc/cpu-cache/aos-soa/. 里面提到了两个问题，一个是L3 cache这个东西使用的是物理地址进行判断的。这个实验里面设计上使用huge page 2MB, 然后按照2MB stride size连续访问，这样在L3 cache上物理地址就会产生严重冲突。而使用page size = 4KB的话，这个只是在虚拟地址上地址连续，而在物理地址上可能是分隔的。（我也不知道自己有没有理解，就当做理解了吧。。。）
 
-[[../images/algorithmica-ram-cpu-caches-6.jpg]]
+[[../images/Pasted-Image-20231225105205.png]]
 
 #+BEGIN_QUOTE
 I doubt that even the engineers who design memory controllers can explain what’s happening right off the bat.

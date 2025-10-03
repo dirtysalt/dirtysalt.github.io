@@ -1,0 +1,206 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ChatGPT Prompt Engineering for Developers</title>
+<meta name="author" content="dirtysalt" />
+<meta name="generator" content="Org Mode" />
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content" class="content">
+<h1 class="title">ChatGPT Prompt Engineering for Developers</h1>
+<p>
+花了点时间看了一下这门课程 <a href="https://learn.deeplearning.ai/chatgpt-prompt-eng/lesson/1/introduction">DLAI - Learning Platform Prototype</a> 难度不是很大，感觉非常值得，总之就是教你怎么写prompt.
+</p>
+
+<p>
+归纳下来大概是这么几个场景：
+</p>
+<ol class="org-ol">
+<li>summarizing. 比如总结文字的内容，或者从中抽取信息</li>
+<li>inferring. 比如推理出文字中的情绪，或者是推理出其中的主题</li>
+<li>transforming. 比如翻译一段话，并且能加入情绪和场景信息</li>
+<li>expanding. 比如根据一段话如何生成回复</li>
+<li>chatbot. 多轮交互，并且可以设置背景</li>
+</ol>
+
+<p>
+另外看了一下openai doc网站，里面写到了如何计算token一些基本问题。<a href="https://platform.openai.com/docs/introduction/overview">Introduction - OpenAI API</a>
+</p>
+
+<blockquote>
+<p>
+The number of tokens processed in a given API request depends on the length of both your inputs and outputs. As a rough rule of thumb, 1 token is approximately 4 characters or 0.75 words for English text. One limitation to keep in mind is that your text prompt and generated completion combined must be no more than the model's maximum context length (for most models this is 2048 tokens, or about 1500 words). Check out our tokenizer tool to learn more about how text translates to tokens.
+</p>
+</blockquote>
+
+<p>
+关于各种模型区别和解释 <a href="https://platform.openai.com/docs/models">Models - OpenAI API</a>
+</p>
+
+<hr />
+
+<p>
+通用代码
+</p>
+
+<div class="org-src-container">
+<pre class="src src-Python">import openai
+import os
+
+from dotenv import load_dotenv, find_dotenv
+_ = load_dotenv(find_dotenv())
+
+openai.api_key  = os.getenv('OPENAI_API_KEY')
+
+def get_completion(prompt, model="gpt-3.5-turbo"):
+    messages = [{"role": "user", "content": prompt}]
+    response = openai.ChatCompletion.create(
+        model=model,
+        messages=messages,
+        temperature=0, # this is the degree of randomness of the model's output
+    )
+    return response.choices[0].message["content"]
+
+def get_completion_from_messages(messages, model="gpt-3.5-turbo", temperature=0):
+    response = openai.ChatCompletion.create(
+        model=model,
+        messages=messages,
+        temperature=temperature, # this is the degree of randomness of the model's output
+    )
+#     print(str(response.choices[0].message))
+    return response.choices[0].message["content"]
+</pre>
+</div>
+
+<hr />
+
+<p>
+常见技巧有下面这些：
+</p>
+
+<p>
+<b><b>将文字圈定起来</b></b>
+</p>
+
+<p>
+比如下面这样使用
+</p>
+
+<pre class="example" id="org8a05cb3">
+the TEXT is delimited by ```
+
+TEXT: ```{text}```
+</pre>
+
+<p>
+<b><b>生成格式</b></b>
+</p>
+
+<pre class="example" id="org1023d2f">
+Provide them in JSON format with the following keys:
+book_id, title, author, genre.
+
+Use the following format:
+Text: &lt;text to summarize&gt;
+Summary: &lt;summary&gt;
+Translation: &lt;summary translation&gt;
+Names: &lt;list of names in Italian summary&gt;
+Output JSON: &lt;json with summary and num_names&gt;
+</pre>
+
+<p>
+<b><b>条件判断</b></b>
+</p>
+
+<pre class="example" id="org33cab50">
+If it contains a sequence of instructions, then
+</pre>
+
+<p>
+<b><b>场景模拟</b></b>
+</p>
+
+<pre class="example" id="org1b0b23f">
+Your task is to answer in a consistent style.
+
+&lt;child&gt;: Teach me about patience.
+
+&lt;grandparent&gt;: The river that carves the deepest \
+valley flows from a modest spring; the \
+grandest symphony originates from a single note; \
+the most intricate tapestry begins with a solitary thread.
+
+&lt;child&gt;: Teach me about resilience.
+</pre>
+
+<p>
+<b><b>chatbot</b></b>
+</p>
+
+<p>
+这个可以设置
+</p>
+<ul class="org-ul">
+<li>system: 告诉chatgpt背景</li>
+<li>assitant: assitant之前的话</li>
+<li>user: 用户的回答</li>
+</ul>
+
+<p>
+然后告诉chatgpt之前完整的对话是什么样子的
+</p>
+
+<pre class="example" id="orga056a3a">
+messages =  [
+{'role':'system', 'content':'You are an assistant that speaks like Shakespeare.'},
+{'role':'user', 'content':'tell me a joke'},
+{'role':'assistant', 'content':'Why did the chicken cross the road'},
+{'role':'user', 'content':'I don\'t know'}  ]
+
+response = get_completion_from_messages(messages, temperature=0.2)
+print(response)
+
+&gt; To get to the other side, good sir!
+</pre>
+
+<p>
+<b><b>长篇内容</b></b>
+</p>
+
+<p>
+将长篇内容拆分成为多段，并且告诉gpt有这么多段。
+</p>
+
+<pre class="example" id="orgcfe65b4">
+You are LongTextAnalyzerGPT. I will submit you a long text divided in 35 parts.
+
+Each part will start by Part X. After each part I submit, ask me for the next part. Don't do any analysis before all the parts are submitted.
+
+Part 1. XXX
+</pre>
+
+<p>
+<b><b>few-shot learning</b></b>
+</p>
+
+<p>
+在内容里面提供几个参考实例，这样可以现场学习。
+</p>
+
+<pre class="example" id="orgab211db">
+Suggest three names for an animal that is a superhero.
+
+Animal: Cat
+Names: Captain Sharpclaw, Agent Fluffball, The Incredible Feline
+Animal: Dog
+Names: Ruff the Protector, Wonder Canine, Sir Barks-a-Lot
+Animal: Horse
+Names:
+</pre>
+</div>
+</body>
+</html>

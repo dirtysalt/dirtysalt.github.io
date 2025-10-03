@@ -1,0 +1,125 @@
+#+title: 使用Java ThreadSanitizer发现data race
+
+这个功能我没有明白为什么没有加入默认的Java版本中，这个东西应该是很有用的东西。可能是效果不是特别好，也可能是存在某些明显的性能开销，以至于在代码中维护这些东西成本非常好而收益很低。
+
+UPDATE: 效率是真的低，我感觉可能是10x-20x差不多左右。
+
+https://runtimeverification.com/blog/detecting-popular-data-races-in-java-using-rv-predict/
+
+----------
+
+openjdk/tsan: https://openjdk.org/projects/tsan
+
+编译命令是
+
+#+BEGIN_QUOTE
+use-java13; unset CLASSPATH;  bash configure --prefix=`pwd`/installed ; make CONF=linux-x86_64-server-release clean install
+#+END_QUOTE
+
+简单的Java程序，多个线程共同修改某个变量
+
+#+BEGIN_SRC Java
+package com.starrocks.lab;
+
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+
+public class ThreadDataRaceCase {
+    int value;
+
+    public class Adder implements Runnable {
+        int index;
+        int duration;
+        int tick;
+
+        public Adder(int index, int duration) {
+            this.index = index;
+            this.duration = duration;
+            this.tick = 0;
+        }
+
+        @Override
+        public void run() {
+            System.out.println("Thread " + index + " started...");
+            long begin = System.currentTimeMillis();
+            while (true) {
+                value += 1;
+                tick += 1;
+                if (tick % 100 == 0) {
+                    long now = System.currentTimeMillis();
+                    if ((now - begin) > duration * 1000) {
+                        break;
+                    }
+                }
+            }
+            System.out.println("Thread " + index + " stopped...");
+        }
+    }
+
+    public static void main(String[] args) throws InterruptedException {
+        ThreadDataRaceCase t = new ThreadDataRaceCase();
+        t.value = 0;
+
+        int number = 16;
+        int duration = 10;
+        Adder adder[] = new Adder[number];
+        ExecutorService executor = Executors.newFixedThreadPool(number);
+        for (int i = 0; i < number; i++) {
+            adder[i] = t.new Adder(i, duration);
+            executor.submit(adder[i]);
+        }
+
+        executor.shutdown();
+        executor.awaitTermination(2 * duration, TimeUnit.SECONDS);
+    }
+}
+#+END_SRC
+
+运行起来可以发现错误是：需要使用 `java -XX:+ThreadSanitizer` 来运行
+
+#+BEGIN_EXAMPLE
+sandbox-cloud :: src/main/java ‹master*› » javac com/starrocks/lab/ThreadDataRaceCase.java
+sandbox-cloud :: src/main/java ‹master*› » java -XX:+ThreadSanitizer com/starrocks/lab/ThreadDataRaceCase
+Thread 1 started...
+Thread 3 started...
+==================
+WARNING: ThreadSanitizer: data race (pid=227159)
+  Read of size 4 at 0x000101c92a64 by thread T18:
+    #0 com.starrocks.lab.ThreadDataRaceCase$Adder.run()V ThreadDataRaceCase.java:26
+    #1 java.util.concurrent.Executors$RunnableAdapter.call()Ljava/lang/Object; Executors.java:515
+    #2 java.util.concurrent.FutureTask.run()V FutureTask.java:264
+    #3 java.util.concurrent.ThreadPoolExecutor.runWorker(Ljava/util/concurrent/ThreadPoolExecutor$Worker;)V ThreadPoolExecutor.java:1130
+    #4 java.util.concurrent.ThreadPoolExecutor$Worker.run()V ThreadPoolExecutor.java:630
+    #5 java.lang.Thread.run()V Thread.java:832
+    #6 (Generated Stub) <null>
+
+  Previous write of size 4 at 0x000101c92a64 by thread T16:
+    #0 com.starrocks.lab.ThreadDataRaceCase$Adder.run()V ThreadDataRaceCase.java:26
+    #1 java.util.concurrent.Executors$RunnableAdapter.call()Ljava/lang/Object; Executors.java:515
+    #2 java.util.concurrent.FutureTask.run()V FutureTask.java:264
+    #3 java.util.concurrent.ThreadPoolExecutor.runWorker(Ljava/util/concurrent/ThreadPoolExecutor$Worker;)V ThreadPoolExecutor.java:1130
+    #4 java.util.concurrent.ThreadPoolExecutor$Worker.run()V ThreadPoolExecutor.java:630
+    #5 java.lang.Thread.run()V Thread.java:832
+    #6 (Generated Stub) <null>
+
+  Thread T18 (tid=227178, running) created by thread T1 at:
+    #0 pthread_create <null> (libtsan.so.0+0x615d8)
+    #1 os::create_thread(Thread*, os::ThreadType, unsigned long) /home/disk4/zhangyan/repo/tsan/src/hotspot/os/linux/os_linux.cpp:927 (libjvm.so+0xb4e649)
+    #2 java.lang.Thread.start()V Thread.java:801
+    #3 java.util.concurrent.ThreadPoolExecutor.addWorker(Ljava/lang/Runnable;Z)Z ThreadPoolExecutor.java:939
+    #4 java.util.concurrent.ThreadPoolExecutor.execute(Ljava/lang/Runnable;)V ThreadPoolExecutor.java:1345
+    #5 java.util.concurrent.AbstractExecutorService.submit(Ljava/lang/Runnable;)Ljava/util/concurrent/Future; AbstractExecutorService.java:118
+    #6 com.starrocks.lab.ThreadDataRaceCase.main([Ljava/lang/String;)V ThreadDataRaceCase.java:49
+    #7 (Generated Stub) <null>
+
+  Thread T16 (tid=227176, running) created by thread T1 at:
+    #0 pthread_create <null> (libtsan.so.0+0x615d8)
+    #1 os::create_thread(Thread*, os::ThreadType, unsigned long) /home/disk4/zhangyan/repo/tsan/src/hotspot/os/linux/os_linux.cpp:927 (libjvm.so+0xb4e649)
+    #2 java.lang.Thread.start()V Thread.java:801
+    #3 java.util.concurrent.ThreadPoolExecutor.addWorker(Ljava/lang/Runnable;Z)Z ThreadPoolExecutor.java:939
+    #4 java.util.concurrent.ThreadPoolExecutor.execute(Ljava/lang/Runnable;)V ThreadPoolExecutor.java:1345
+    #5 java.util.concurrent.AbstractExecutorService.submit(Ljava/lang/Runnable;)Ljava/util/concurrent/Future; AbstractExecutorService.java:118
+    #6 com.starrocks.lab.ThreadDataRaceCase.main([Ljava/lang/String;)V ThreadDataRaceCase.java:49
+    #7 (Generated Stub) <null>
+#+END_EXAMPLE

@@ -1,0 +1,126 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>时区偏移不是固定的</title>
+<meta name="author" content="dirtysalt" />
+<meta name="generator" content="Org Mode" />
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content" class="content">
+<h1 class="title">时区偏移不是固定的</h1>
+<p>
+问题来源是修复这个bug，Shanghai时区的日期问题
+</p>
+
+<p>
+<a href="https://github.com/StarRocks/starrocks/pull/18521">[BugFix] fix timestamp underflow for parquet format by dirtysalt · Pull Request #18521 · StarRocks/starrocks</a>
+</p>
+
+<p>
+如果我们预先计算好8个小时的话，那么对于1900年之前的日期，seconds会少计算了343s. 我当时不是特别理解这个问题，所以就直接+343s进行了修正。这个情况对于shanghai时区没有问题，但是对于其他时区就不行了。
+</p>
+
+<p>
+我的同事在review里面推荐我看两个帖子：
+</p>
+<ul class="org-ul">
+<li><a href="https://blog.csdn.net/weixin_39747049/article/details/114077173">java 1900年_JDK与1900年01月01日_weixin_39747049的博客-CSDN博客</a></li>
+<li><a href="https://stackoverflow.com/questions/67568883/why-does-the-time-package-have-different-behaviors-when-date-is-before-1900/67569074#67569074">go - Why does the time package have different behaviors when date is before 1900? - Stack Overflow</a></li>
+</ul>
+
+<p>
+大致意思就是说，Shanghai在1901-01-01 12:00:00 这个时间点上往回调整了343s. 所以在这个时间点之前的second其实就是减少343s的，但是我们在处理日期转换的时候需要考虑回来，不能直接+8处理完事。
+</p>
+
+<p>
+<a href="https://www.timeanddate.com/time/change/china/shanghai?year=1900">Daylight Saving Time Changes 1900 in Shanghai, Shanghai Municipality, China</a>
+</p>
+
+<p>
+所以处理offset的时候，其实还需要传入second绝对值，才能知道具体如何调整。
+</p>
+
+<p>
+C++程序可以参考下面的，需要google cctz实现 <a href="https://github.com/google/cctz">google/cctz: CCTZ is a C++ library for translating between absolute and civil times using the rules of a time zone.</a>
+</p>
+
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-type">void</span> <span class="org-constant">TimestampValue</span>::<span class="org-function-name">from_unixtime</span>(<span class="org-type">int64_t</span> <span class="org-variable-name">second</span>, <span class="org-keyword">const</span> <span class="org-constant">cctz</span>::<span class="org-type">time_zone</span>&amp; <span class="org-variable-name">ctz</span>) {
+    <span class="org-keyword">static</span> <span class="org-keyword">const</span> <span class="org-constant">cctz</span>::<span class="org-type">time_point</span>&lt;<span class="org-constant">cctz</span>::sys_seconds&gt; <span class="org-variable-name">epoch</span> =
+            <span class="org-constant">std</span>::<span class="org-constant">chrono</span>::time_point_cast&lt;<span class="org-constant">cctz</span>::sys_seconds&gt;(<span class="org-constant">std</span>::<span class="org-constant">chrono</span>::<span class="org-constant">system_clock</span>::from_time_t(0));
+    <span class="org-constant">cctz</span>::<span class="org-type">time_point</span>&lt;<span class="org-constant">cctz</span>::sys_seconds&gt; <span class="org-variable-name">t</span> = epoch + <span class="org-constant">cctz</span>::seconds(second);
+    <span class="org-keyword">const</span> <span class="org-keyword">auto</span> <span class="org-variable-name">tp</span> = <span class="org-constant">cctz</span>::convert(t, ctz);
+    from_timestamp(tp.year(), tp.month(), tp.day(), tp.hour(), tp.minute(), tp.second(), 0);
+}
+</pre>
+</div>
+
+
+<p>
+Java程序可以参考下面额：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-Java">
+package com.starrocks.lab;
+
+
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeFormatterBuilder;
+import java.util.ArrayList;
+import java.util.List;
+
+
+/*
+1900-01-01 00:00:00 ---&gt; -2209017943000000
+1910-01-01 00:00:00 ---&gt; -1893484800000000
+1920-01-01 00:00:00 ---&gt; -1577952000000000
+1930-01-01 00:00:00 ---&gt; -1262332800000000
+1940-01-01 00:00:00 ---&gt; -946800000000000
+1950-01-01 00:00:00 ---&gt; -631180800000000
+1960-01-01 00:00:00 ---&gt; -315648000000000
+1970-01-01 00:00:00 ---&gt; -28800000000
+1980-01-01 00:00:00 ---&gt; 315504000000000
+1990-01-01 00:00:00 ---&gt; 631123200000000
+ */
+public class TimezoneOffsetTest {
+    public static void main(String[] args) {
+        List&lt;Long&gt; list = new ArrayList&lt;&gt;();
+        list.add(-2209017943L);
+        list.add(-1893484800L);
+        list.add(-1577952000L);
+        list.add(-1262332800L);
+        list.add(-946800000L);
+        list.add(-631180800L);
+        list.add(-315648000L);
+        list.add(-28800L);
+        list.add(315504000L);
+        list.add(631123200L);
+
+
+        DateTimeFormatterBuilder builder = new DateTimeFormatterBuilder();
+        builder.append(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
+        DateTimeFormatter formatter = builder.toFormatter();
+
+
+        ZoneId zone = ZoneId.of("Asia/Shanghai");
+        for (Long sec : list) {
+            LocalDateTime dt = LocalDateTime.ofInstant(Instant.ofEpochSecond(sec, 0), zone);
+            System.out.printf("sec = %d, date = %s\n", sec, dt.format(formatter));
+        }
+
+
+    }
+}
+</pre>
+</div>
+</div>
+</body>
+</html>

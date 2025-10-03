@@ -16,16 +16,16 @@
 <h2>Table of Contents</h2>
 <div id="text-table-of-contents" role="doc-toc">
 <ul>
-<li><a href="#orgb7f8c58">1. 问题描述</a></li>
-<li><a href="#org7554bdc">2. Java HPROF</a></li>
-<li><a href="#orgec5e100">3. Java In Flames</a></li>
-<li><a href="#org567cb24">4. Wire::wire函数实现</a></li>
+<li><a href="#org3148e10">1. 问题描述</a></li>
+<li><a href="#org9e4be2f">2. Java HPROF</a></li>
+<li><a href="#orgcdb7e10">3. Java In Flames</a></li>
+<li><a href="#org7297c67">4. Wire::wire函数实现</a></li>
 </ul>
 </div>
 </div>
 
-<div id="outline-container-orgb7f8c58" class="outline-2">
-<h2 id="orgb7f8c58"><span class="section-number-2">1.</span> 问题描述</h2>
+<div id="outline-container-org3148e10" class="outline-2">
+<h2 id="org3148e10"><span class="section-number-2">1.</span> 问题描述</h2>
 <div class="outline-text-2" id="text-1">
 <p>
 最近在搞个benchmark工具，目的是为了测试OSS/S3/HDFS的随机读取性能。最开始只测试了OSS/S3，某种workload下面CPU使用率大约是在40%左右，后来引入了HDFS(hadoop-client)重新测试OSS/S3的workload，CPU使用率就上升到了90%左右。我可以确定测试OSS/S3中没有使用任何HDFS相关的代码，只是引入了jar而导致高CPU使用率。
@@ -36,30 +36,30 @@
 </p>
 
 <div class="org-src-container">
-<pre class="src src-xml"><span class="org-nxml-tag-delimiter">&lt;</span><span class="org-nxml-element-local-name">properties</span><span class="org-nxml-tag-delimiter">&gt;</span>
-    <span class="org-nxml-tag-delimiter">&lt;</span><span class="org-nxml-element-local-name">project.build.sourceEncoding</span><span class="org-nxml-tag-delimiter">&gt;</span><span class="org-nxml-text">UTF-8</span><span class="org-nxml-tag-delimiter">&lt;</span><span class="org-nxml-tag-slash">/</span><span class="org-nxml-element-local-name">project.build.sourceEncoding</span><span class="org-nxml-tag-delimiter">&gt;</span>
-    <span class="org-nxml-tag-delimiter">&lt;</span><span class="org-nxml-element-local-name">java.version</span><span class="org-nxml-tag-delimiter">&gt;</span><span class="org-nxml-text">1.8</span><span class="org-nxml-tag-delimiter">&lt;</span><span class="org-nxml-tag-slash">/</span><span class="org-nxml-element-local-name">java.version</span><span class="org-nxml-tag-delimiter">&gt;</span>
-    <span class="org-nxml-tag-delimiter">&lt;</span><span class="org-nxml-element-local-name">hadoop.version</span><span class="org-nxml-tag-delimiter">&gt;</span><span class="org-nxml-text">2.8.5</span><span class="org-nxml-tag-delimiter">&lt;</span><span class="org-nxml-tag-slash">/</span><span class="org-nxml-element-local-name">hadoop.version</span><span class="org-nxml-tag-delimiter">&gt;</span>
-<span class="org-nxml-tag-delimiter">&lt;</span><span class="org-nxml-tag-slash">/</span><span class="org-nxml-element-local-name">properties</span><span class="org-nxml-tag-delimiter">&gt;</span>
+<pre class="src src-Xml">&lt;properties&gt;
+    &lt;project.build.sourceEncoding&gt;UTF-8&lt;/project.build.sourceEncoding&gt;
+    &lt;java.version&gt;1.8&lt;/java.version&gt;
+    &lt;hadoop.version&gt;2.8.5&lt;/hadoop.version&gt;
+&lt;/properties&gt;
 
-<span class="org-nxml-tag-delimiter">&lt;</span><span class="org-nxml-element-local-name">dependency</span><span class="org-nxml-tag-delimiter">&gt;</span>
-    <span class="org-nxml-tag-delimiter">&lt;</span><span class="org-nxml-element-local-name">groupId</span><span class="org-nxml-tag-delimiter">&gt;</span><span class="org-nxml-text">org.apache.hadoop</span><span class="org-nxml-tag-delimiter">&lt;</span><span class="org-nxml-tag-slash">/</span><span class="org-nxml-element-local-name">groupId</span><span class="org-nxml-tag-delimiter">&gt;</span>
-    <span class="org-nxml-tag-delimiter">&lt;</span><span class="org-nxml-element-local-name">artifactId</span><span class="org-nxml-tag-delimiter">&gt;</span><span class="org-nxml-text">hadoop-hdfs-client</span><span class="org-nxml-tag-delimiter">&lt;</span><span class="org-nxml-tag-slash">/</span><span class="org-nxml-element-local-name">artifactId</span><span class="org-nxml-tag-delimiter">&gt;</span>
-    <span class="org-nxml-tag-delimiter">&lt;</span><span class="org-nxml-element-local-name">version</span><span class="org-nxml-tag-delimiter">&gt;</span><span class="org-nxml-text">${hadoop.version}</span><span class="org-nxml-tag-delimiter">&lt;</span><span class="org-nxml-tag-slash">/</span><span class="org-nxml-element-local-name">version</span><span class="org-nxml-tag-delimiter">&gt;</span>
-<span class="org-nxml-tag-delimiter">&lt;</span><span class="org-nxml-tag-slash">/</span><span class="org-nxml-element-local-name">dependency</span><span class="org-nxml-tag-delimiter">&gt;</span>
+&lt;dependency&gt;
+    &lt;groupId&gt;org.apache.hadoop&lt;/groupId&gt;
+    &lt;artifactId&gt;hadoop-hdfs-client&lt;/artifactId&gt;
+    &lt;version&gt;${hadoop.version}&lt;/version&gt;
+&lt;/dependency&gt;
 
-<span class="org-nxml-tag-delimiter">&lt;</span><span class="org-nxml-element-local-name">dependency</span><span class="org-nxml-tag-delimiter">&gt;</span>
-    <span class="org-nxml-tag-delimiter">&lt;</span><span class="org-nxml-element-local-name">groupId</span><span class="org-nxml-tag-delimiter">&gt;</span><span class="org-nxml-text">org.apache.hadoop</span><span class="org-nxml-tag-delimiter">&lt;</span><span class="org-nxml-tag-slash">/</span><span class="org-nxml-element-local-name">groupId</span><span class="org-nxml-tag-delimiter">&gt;</span>
-    <span class="org-nxml-tag-delimiter">&lt;</span><span class="org-nxml-element-local-name">artifactId</span><span class="org-nxml-tag-delimiter">&gt;</span><span class="org-nxml-text">hadoop-common</span><span class="org-nxml-tag-delimiter">&lt;</span><span class="org-nxml-tag-slash">/</span><span class="org-nxml-element-local-name">artifactId</span><span class="org-nxml-tag-delimiter">&gt;</span>
-    <span class="org-nxml-tag-delimiter">&lt;</span><span class="org-nxml-element-local-name">version</span><span class="org-nxml-tag-delimiter">&gt;</span><span class="org-nxml-text">${hadoop.version}</span><span class="org-nxml-tag-delimiter">&lt;</span><span class="org-nxml-tag-slash">/</span><span class="org-nxml-element-local-name">version</span><span class="org-nxml-tag-delimiter">&gt;</span>
-<span class="org-nxml-tag-delimiter">&lt;</span><span class="org-nxml-tag-slash">/</span><span class="org-nxml-element-local-name">dependency</span><span class="org-nxml-tag-delimiter">&gt;</span>
+&lt;dependency&gt;
+    &lt;groupId&gt;org.apache.hadoop&lt;/groupId&gt;
+    &lt;artifactId&gt;hadoop-common&lt;/artifactId&gt;
+    &lt;version&gt;${hadoop.version}&lt;/version&gt;
+&lt;/dependency&gt;
 </pre>
 </div>
 </div>
 </div>
 
-<div id="outline-container-org7554bdc" class="outline-2">
-<h2 id="org7554bdc"><span class="section-number-2">2.</span> Java HPROF</h2>
+<div id="outline-container-org9e4be2f" class="outline-2">
+<h2 id="org9e4be2f"><span class="section-number-2">2.</span> Java HPROF</h2>
 <div class="outline-text-2" id="text-2">
 <p>
 <a href="https://docs.oracle.com/javase/8/docs/technotes/samples/hprof.html">https://docs.oracle.com/javase/8/docs/technotes/samples/hprof.html</a>
@@ -69,7 +69,7 @@
 这个东西好处就是系统自带，而且可以直接在本机上运行，不用像jvisualvm那样需要打洞和远程连接上来。这个工具可以分析CPU和heap使用情况，使用起来也非常方便  `java -agentlib:hprof=cpu=samples,depth=5` . 其中samples表示是采样方式，而depth=5表示只是对5层stack进行聚合。期间JVM会对所有活跃进程进行采样，每个stack trace形成一个TRACE，然后按照TRACE进行group by. 输出入下图所示。
 </p>
 
-<pre class="example" id="orgfc6336c">
+<pre class="example" id="org7c466d6">
 TRACE 300648:
     java.net.SocketInputStream.socketRead0(SocketInputStream.java:Unknown line)
     java.net.SocketInputStream.socketRead(SocketInputStream.java:116)
@@ -123,13 +123,13 @@ rank   self  accum   count trace method
 </pre>
 
 <p>
-因为这个工具是测试网络的，所以socketRead0很多这个也很正常，那么怀疑点就是log4j了。其实这个时候应该就可以分析出问题的原因了，但是我还有点不太相信这个结果：`org.apache.http.impl.conn.Wire.wire(Wire.java:72)` 这个地方调用了debug log，很可能就是造成CPU使用率很高的原因。但是我忽略这个过程，觉得这个工具不是特别靠谱，非常可惜，接着使用了更加复杂的profiling工具。
+因为这个工具是测试网络的，所以socketRead0很多这个也很正常，那么怀疑点就是log4j了。其实这个时候应该就可以分析出问题的原因了，但是我还有点不太相信这个结果： `org.apache.http.impl.conn.Wire.wire(Wire.java:72)` 这个地方调用了debug log，很可能就是造成CPU使用率很高的原因。但是我忽略这个过程，觉得这个工具不是特别靠谱，非常可惜，接着使用了更加复杂的profiling工具。
 </p>
 </div>
 </div>
 
-<div id="outline-container-orgec5e100" class="outline-2">
-<h2 id="orgec5e100"><span class="section-number-2">3.</span> Java In Flames</h2>
+<div id="outline-container-orgcdb7e10" class="outline-2">
+<h2 id="orgcdb7e10"><span class="section-number-2">3.</span> Java In Flames</h2>
 <div class="outline-text-2" id="text-3">
 <p>
 <a href="https://netflixtechblog.com/java-in-flames-e763b3d32166">https://netflixtechblog.com/java-in-flames-e763b3d32166</a>
@@ -154,47 +154,47 @@ perf-map-agent地址在这 <a href="https://github.com/jvm-profiling-tools/perf-
 </p>
 
 
-<div id="org29eb775" class="figure">
-<p><img src="../images/high-cpu-utilization-by-log4j-0.png" alt="high-cpu-utilization-by-log4j-0.png" />
+<div id="orgb38ca71" class="figure">
+<p><img src="../images/Pasted-Image-20231225103209.png" alt="Pasted-Image-20231225103209.png" />
 </p>
 </div>
 </div>
 </div>
 
-<div id="outline-container-org567cb24" class="outline-2">
-<h2 id="org567cb24"><span class="section-number-2">4.</span> Wire::wire函数实现</h2>
+<div id="outline-container-org7297c67" class="outline-2">
+<h2 id="org7297c67"><span class="section-number-2">4.</span> Wire::wire函数实现</h2>
 <div class="outline-text-2" id="text-4">
 <p>
 其实拿出代码来看，里面也没有什么复杂的。读取数据，然后拼接字符串，性能肯定不会是在jvm lib里面，唯一的原因就是在debug日志这块，这个和最开始Java HPROF的测试结果是可以对上的。
 </p>
 
 <div class="org-src-container">
-<pre class="src src-java"><span class="org-keyword">private</span> <span class="org-type">void</span> <span class="org-function-name">wire</span>(<span class="org-keyword">final</span> <span class="org-type">String</span> <span class="org-variable-name">header</span>, <span class="org-keyword">final</span> <span class="org-type">InputStream</span> <span class="org-variable-name">inStream</span>)
-  <span class="org-keyword">throws</span> <span class="org-type">IOException</span> {
-    <span class="org-keyword">final</span> <span class="org-type">StringBuilder</span> <span class="org-variable-name">buffer</span> = <span class="org-keyword">new</span> <span class="org-type">StringBuilder</span>();
-    <span class="org-type">int</span> <span class="org-variable-name">ch</span>;
-    <span class="org-keyword">while</span> ((ch = inStream.read()) != -1) {
-        <span class="org-keyword">if</span> (ch == 13) {
-            buffer.append(<span class="org-string">"[\\r]"</span>);
-        } <span class="org-keyword">else</span> <span class="org-keyword">if</span> (ch == 10) {
-                buffer.append(<span class="org-string">"[\\n]\""</span>);
-                buffer.insert(0, <span class="org-string">"\""</span>);
+<pre class="src src-Java">private void wire(final String header, final InputStream inStream)
+  throws IOException {
+    final StringBuilder buffer = new StringBuilder();
+    int ch;
+    while ((ch = inStream.read()) != -1) {
+        if (ch == 13) {
+            buffer.append("[\\r]");
+        } else if (ch == 10) {
+                buffer.append("[\\n]\"");
+                buffer.insert(0, "\"");
                 buffer.insert(0, header);
-                log.debug(id + <span class="org-string">" "</span> + buffer.toString());
+                log.debug(id + " " + buffer.toString());
                 buffer.setLength(0);
-        } <span class="org-keyword">else</span> <span class="org-keyword">if</span> ((ch &lt; 32) || (ch &gt; 127)) {
-            buffer.append(<span class="org-string">"[0x"</span>);
+        } else if ((ch &lt; 32) || (ch &gt; 127)) {
+            buffer.append("[0x");
             buffer.append(Integer.toHexString(ch));
-            buffer.append(<span class="org-string">"]"</span>);
-        } <span class="org-keyword">else</span> {
-            buffer.append((<span class="org-type">char</span>) ch);
+            buffer.append("]");
+        } else {
+            buffer.append((char) ch);
         }
     }
-    <span class="org-keyword">if</span> (buffer.length() &gt; 0) {
-        buffer.append(<span class="org-string">'\"'</span>);
-        buffer.insert(0, <span class="org-string">'\"'</span>);
+    if (buffer.length() &gt; 0) {
+        buffer.append('\"');
+        buffer.insert(0, '\"');
         buffer.insert(0, header);
-        log.debug(id + <span class="org-string">" "</span> + buffer.toString());
+        log.debug(id + " " + buffer.toString());
     }
 }
 </pre>
@@ -206,5 +206,5 @@ perf-map-agent地址在这 <a href="https://github.com/jvm-profiling-tools/perf-
 </div>
 </div>
 </div>
-<div id="content"><!-- DISQUS BEGIN --><div id="disqus_thread"></div><script>/***  RECOMMENDED CONFIGURATION VARIABLES: EDIT AND UNCOMMENT THE SECTION BELOW TO INSERT DYNAMIC VALUES FROM YOUR PLATFORM OR CMS.*  LEARN WHY DEFINING THESE VARIABLES IS IMPORTANT: https://disqus.com/admin/universalcode/#configuration-variables*/var disqus_config = function () {this.page.url = 'https://dirtysalt.github.io/html/high-cpu-utilization-by-log4j.html';this.page.identifier = 'high-cpu-utilization-by-log4j.html';};(function() {var d = document, s = d.createElement('script');s.src = 'https://dirlt.disqus.com/embed.js';s.setAttribute('data-timestamp', +new Date());(d.head || d.body).appendChild(s);})();</script><noscript>Please enable JavaScript to view the <a href="https://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript><!-- DISQUS END --></div></body>
+</body>
 </html>

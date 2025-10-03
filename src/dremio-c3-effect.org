@@ -8,7 +8,7 @@
 - https://docs.dremio.com/cloud/workloads/engines/
 - https://aws.amazon.com/cn/ec2/pricing/on-demand/
 
-[[../images/dremio-c3-effect-0.jpg]]
+[[../images/Pasted-Image-20231225105240.png]]
 
 从官网上看上去分三种使用方式：
 1. Cloud Standard. Dremio帮助提供Coord节点，用户自己提供aws账号，然后dremio去aws上创建ec2节点作为engine。但是data source相对有限：aws glue, s3这两种(我估计是iceberg)
@@ -19,7 +19,7 @@
 
 因为Dremio不支持View，所以将Q15进行改写成为下面SQL, 然后观察运行情况
 
-#+BEGIN_SRC SQL
+#+BEGIN_SRC Sql
 with revenue0 as(
     select
         l_suppkey as supplier_no,
@@ -70,15 +70,15 @@ Dremio运行时间在1756ms左右
 
 Dremio资源使用情况如下，CPU使用在60%上下，并且网卡持续有输入和输出。
 
-[[../images/dremio-c3-effect-1.jpg]]
+[[../images/Pasted-Image-20231225105253.png]]
 
-从界面上来看没有使用Reflections（这个我在后台已经创建过，但是没有使用）然后从Input Size来看差不多使用就是在1GB/s上下。但是最耗时的Table Function(也就是读取+过滤）差不多就占用 482ms上下，这个时间有点夸张。看来Cache加速效果是非常明显的。
+从界面上来看没有使用Reflections（这个我在后台已经创建过，但是没有使用）然后从Input Size来看差不多使用就是在1GB/s上下。但是最耗时的Table Function(也就是读取+过滤)差不多就占用 482ms上下，这个时间有点夸张。看来Cache加速效果是非常明显的。
 
-[[../images/dremio-c3-effect-2.jpg]]
+[[../images/Pasted-Image-20231225105234.png]]
 
-[[../images/dremio-c3-effect-3.jpg]]
+[[../images/Pasted-Image-20231225105225.png]]
 
-[[../images/dremio-c3-effect-4.jpg]]
+[[../images/Pasted-Image-20231225105155.png]]
 
 ** C3效果分析
 
@@ -98,11 +98,11 @@ running Q15-WITH-AS on dremio
 --> 12100. avg = 11545
 #+END_EXAMPLE
 
-[[../images/dremio-c3-effect-5.jpg]]
+[[../images/Pasted-Image-20231225105135.png]]
 
 如果看AWS CloudWatch的话，那么看上去带宽使用和SR是差不多的，而且出口带宽也下降了不少。
 
-[[../images/dremio-c3-effect-6.jpg]]
+[[../images/Pasted-Image-20231225105202.png]]
 
 所以我的怀疑大致是这样的：
 1. dremio-worker在内存中做了缓存，所以命中了也没有Disk Read
@@ -110,9 +110,9 @@ running Q15-WITH-AS on dremio
     2. zero-copy + sendfile？可能，或许也可能是缓存在了buffer cache的原因。
     3. 重启机器之后，可以看有大量磁盘读取。
 2. dremio-worker读没有完全做到Local Read, 所以导致worker之间读取需要去另外一个worker里面要部分数据，所以存在网络输出
-3. dremio-worker的cache disk并不是使用EBS，而是使用[instance storage](https://aws.amazon.com/cn/premiumsupport/knowledge-center/ec2-linux-instance-store-volumes/)，相当于本地盘这个东西吧。
+3. dremio-worker的cache disk并不是使用EBS，而是使用[[https://aws.amazon.com/cn/premiumsupport/knowledge-center/ec2-linux-instance-store-volumes/][instance storage]]，相当于本地盘这个东西吧。
 
-下面是一个dremio worker上的磁盘情况, 根目录是EBS, 而/mnt/c1和/mnt/c2则是本地盘。如果看[dremio.conf](https://docs.dremio.com/software/deployment/cloud-cache-config/), 的确是使用了这两个盘来做cache的。
+下面是一个dremio worker上的磁盘情况, 根目录是EBS, 而/mnt/c1和/mnt/c2则是本地盘。如果看[[https://docs.dremio.com/software/deployment/cloud-cache-config/][dremio.conf]], 的确是使用了这两个盘来做cache的。
 
 #+BEGIN_EXAMPLE
 [ec2-user@ip-172-31-13-89 ~]$ df -h
@@ -204,7 +204,7 @@ nvme0n1           0.00     0.00    1.00    0.00     4.00     0.00     8.00     0
 
 为了方便还是使用tpch/Q15进行测试，使用下面SQL创建物化 Raw Reflections
 
-#+BEGIN_SRC SQL
+#+BEGIN_SRC Sql
 with revenue00 as(
     select
         l_suppkey as supplier_no,
@@ -219,11 +219,11 @@ with revenue00 as(
 )
 #+END_SRC
 
-[[../images/dremio-c3-effect-7.jpg]]
+[[../images/Pasted-Image-20231225105219.png]]
 
 使用Raw Relections之后，原本SQL可以改写为
 
-#+BEGIN_SRC SQL
+#+BEGIN_SRC Sql
 select
   s_suppkey,
   s_name,
@@ -263,9 +263,9 @@ running Q01 on dremio
 
 使用Reflection的SQL在Profile的地方会出现闪电标记
 
-[[../images/dremio-c3-effect-8.jpg]]
+[[../images/Pasted-Image-20231225105131.png]]
 
-[[../images/dremio-c3-effect-9.jpg]]
+[[../images/Pasted-Image-20231225105121.png]]
 
 ** 部分结论
 

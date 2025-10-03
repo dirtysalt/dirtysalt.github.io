@@ -1,0 +1,142 @@
+#+title: GCC-10.3.0优化器在处理类型强转时的bug
+
+下面代码使用-O2和-O3编译会得到不同的结果
+
+#+BEGIN_EXAMPLE
+doris-sandbox04 :: ~/public » /home/disk1/doris-deps/toolchain/installed/gcc-10.3.0/bin/g++  -std=gnu++17  -O3  -msse4.2 -mavx2  -fopt-info-vec-optimized test.cpp -o opt3.s
+test.cpp:63:23: optimized: loop vectorized using 32 byte vectors
+/home/disk1/doris-deps/toolchain/installed/gcc-10.3.0/include/c++/10.3.0/ext/new_allocator.h:115:41: optimized: basic block part vectorized using 32 byte vectors
+/home/disk1/doris-deps/toolchain/installed/gcc-10.3.0/include/c++/10.3.0/ext/new_allocator.h:115:41: optimized: basic block part vectorized using 32 byte vectors
+test.cpp:82:18: optimized: basic block part vectorized using 32 byte vectors
+doris-sandbox04 :: ~/public » ./opt3.s
+4138674677912027985
+4138674677912027985
+4138674677912027985
+4138674677912027985
+doris-sandbox04 :: ~/public » /home/disk1/doris-deps/toolchain/installed/gcc-10.3.0/bin/g++  -std=gnu++17  -O2  -msse4.2 -mavx2  -fopt-info-vec-optimized test.cpp -o opt2.s
+doris-sandbox04 :: ~/public » ./opt2.s
+4138674677912027985
+17614482930881034518
+9674455539515676295
+16429943614018478328
+#+END_EXAMPLE
+
+复现代码如下：
+
+#+BEGIN_SRC C++
+
+#include <cstdint>
+#include <vector>
+#include <iostream>
+
+static const uint64_t MURMUR_PRIME = 0xc6a4a7935bd1e995ULL;
+static const uint32_t MURMUR_SEED = 0xadc83b19ULL;
+
+// Our hash function is MurmurHash2, 64 bit version.
+// It was modified in order to provide the same result in
+// big and little endian archs (endian neutral).
+uint64_t murmur_hash64A (const void* key, int32_t len, unsigned int seed) {
+    const uint64_t m = MURMUR_PRIME;
+    const int r = 47;
+    uint64_t h = seed ^ (len * m);
+    const uint8_t *data = (const uint8_t *)key;
+    const uint8_t *end = data + (len-(len&7));
+
+    while(data != end) {
+        uint64_t k;
+#if (BYTE_ORDER == BIG_ENDIAN)
+        k = (uint64_t) data[0];
+        k |= (uint64_t) data[1] << 8;
+        k |= (uint64_t) data[2] << 16;
+        k |= (uint64_t) data[3] << 24;
+        k |= (uint64_t) data[4] << 32;
+        k |= (uint64_t) data[5] << 40;
+        k |= (uint64_t) data[6] << 48;
+        k |= (uint64_t) data[7] << 56;
+#else
+        k = *((uint64_t*)data);
+#endif
+
+        k *= m;
+        k ^= k >> r;
+        k *= m;
+        h ^= k;
+        h *= m;
+        data += 8;
+    }
+
+    switch(len & 7) {
+    case 7: h ^= (uint64_t)data[6] << 48;
+    case 6: h ^= (uint64_t)data[5] << 40;
+    case 5: h ^= (uint64_t)data[4] << 32;
+    case 4: h ^= (uint64_t)data[3] << 24;
+    case 3: h ^= (uint64_t)data[2] << 16;
+    case 2: h ^= (uint64_t)data[1] << 8;
+    case 1: h ^= (uint64_t)data[0];
+            h *= m;
+    };
+
+    h ^= h >> r;
+    h *= m;
+    h ^= h >> r;
+    return h;
+}
+
+// static const uint32_t MURMUR_SEED = 0xadc83b19ULL;
+// uint64_t murmur_hash64A (const void* key, int32_t len, unsigned int seed);
+
+void update_double(const std::vector<double>& values, std::vector<uint64_t>& hashes) {
+    auto size = values.size();
+    for (int i = 0; i < size; ++i) {
+        auto v = values[i];
+        uint64_t value = murmur_hash64A(&v, sizeof(v), MURMUR_SEED);
+        hashes[i] = value;
+    }
+}
+
+const int N = 3;
+int main() {
+    uint64_t x = 0;
+    uint64_t xv = murmur_hash64A(&x, sizeof(x), MURMUR_SEED);
+    printf("%llu\n", xv);
+
+    std::vector<double> values(N);
+    std::vector<uint64_t> hashes(N);
+
+    for (int i = 0; i < N; ++i) {
+        values[i] = i + 1;
+    }
+    update_double(values, hashes);
+    for (auto hash : hashes) {
+        std::cout << hash << std::endl;
+    }
+    return 0;
+}
+#+END_SRC
+
+
+GCC官方回复如下： https://gcc.gnu.org/bugzilla/show_bug.cgi?id=100224
+
+#+BEGIN_QUOTE
+You are accessing 'double' via a pointer to uint64_t * here:
+
+        k = *((uint64_t*)data);
+
+that violates type based aliasing rules.  You can use -fno-strict-aliasing to work around your bug or use
+
+    typedef uint64_t aliasing_uint64_t __attribute__((may_alias));
+    k = *((aliasing_uint64_t*)data);
+#+END_QUOTE
+
+我有个比较有趣的观察是，如果使用这个murmurhash + seed去计算 uint64_t x= 0的话，得到的hash value也是 4138674677912027985 查看汇编代码的话，可以看到有类似下面的语句
+
+#+BEGIN_QUOTE
+movabsq $4138674677912027985, %rdi
+#+END_QUOTE
+然后在 update_counter 函数里面也有类似的数值，相当于把这个预先计算的值copy到了所有的结果上，而且还是向量化的copy.
+
+我的理解是，就像gcc bug里面那个人说的，编译器估计认为double地址和int64地址不会成为alias, 那么激进的优化策略就是假设int64地址上的内容为0，那么hash值就可以预先计算出来，然后只要copy出去就行。
+
+另外就是如果把mumurhash单独编译成为函数，是没有这个问题的，优化没有办法跨编译单元进行。
+
+gcc 编译参数 -fno-strict-aliasing - 云+社区 - 腾讯云 https://cloud.tencent.com/developer/article/1159055. 这篇文章里面说-O2就会把 -fstrict-aliasing 打开，但是我们开了-O2也没有遇到过着问题，也是比较奇怪。

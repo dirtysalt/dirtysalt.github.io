@@ -36,11 +36,11 @@ shingles是将文档进行字符切分：k-shingle(k-gram)指将文档内连续k
 
 然后我们引入minhashing. minhashing主要作用是特别稀疏vector通过hash函数转换成为稠密vector. 假设rows是随机排列的话，minhash function h(C)是这个column上有多少个1出现在row的第一个排列中(the number of the first(in the permuted order) row in which column C has 1). 我们可以使用h(C1)和h(C2)相似度来作为Sim(C1,C2). 可是rows的所有排列组合可能是(# of rows)!, 所以实际中通常我们选择k(k~=100)左右个随机排列组合，这样得到的minhash function h(C)实际上是100*1向量。下图给了一个求解minhash的例子. 我们看signature matrix第二行第三列为什么是4，这是因为第二个permutation中只有4th对应的row在第三列才出现第一个1.
 
-[[../images/mmds-minhashing-example.png]]
+[[../images/Pasted-Image-20231225104252.png]]
 
 剩下的问题就是我们如何使用hash-function来模拟随机排列组合，下面是具体实现办法。其实我们更加关心的是两个r在同一个hash-function上的顺序。
 
-[[../images/mmds-minhashing-impl.png]]
+[[../images/Pasted-Image-20231225103729.png]]
 
 -----
 第三部分：为这个文档（稠密向量）建立索引。局部敏感意思是，我们会关心两个稠密向量中的局部相似性。
@@ -83,28 +83,28 @@ AGM模型可以稍作简化成为BIGCLAM. 我们不要为每个community定义p,
 
 如果把文档/短语表示做成矩阵A(m*n)的话，通过SVD(singular value decomposition)我们可以发现一些有意思的事情：A(m*n) = U(m*r) * R(r*r) * V(r*n). 其中r是一个隐式属性比如topics. U(left sigular vectors)表示文章和topics之间的关系，V(right sigular vectors)表示topics和短语之间的关系，R(sigular values)是一个对角矩阵表示这些topics之间相对强弱关系，并且r就是rank(A). 下面这图给出了一些新的东西，整个矩阵实际上是被分为两个部分，取决于我们在R上选择多少个column. 然后这里还给出了SVD的一些特性，得到分解矩阵非常漂亮。
 
-[[../images/mmds-svd-intuition.png]] [[../images/mmds-svd-properties.png]]
+[[../images/Pasted-Image-20231225104912.png]] [[../images/Pasted-Image-20231225104639.png]]
 
 注意到上面R矩阵中越在右下角的值越小，又因为R表示某个隐式变量的强度，所以维度降解就是要忽略右下角的值（设置为0）：忽略的值越多，那么维度下降的越多。同时我们可以证明用这种方法近似是最优的近似(optimal low-rank approximation)。完成忽略操作之后我们就得到了R'矩阵，然后可以使用这个R'矩阵计算A'=(U*R'*V)，然后使用Frobenius norm来计算A和A'之间的差异（对每个元素差值做平方然后求和）。
 
 SVD的几何意义就是要将原来数据通过线性模型方式映射到topics所描述的平面上去并且满足距离上的最小二乘，从这点上看和线性回归有点类似，只不过差别是线性回归问题中我们直接使用input属性来描述超平面而SVD中我们要自己找出这个照平面。这个R实际上是这些数据在这些超平面的各个维度上分布的方差：方差越小所蕴含信息也就越少，我们就可以越可以忽略它来完成维度降解。我们可以使用R和R'差异来衡量因为维度降解造成信息损失的程度，使用sum(R'^2) / sum(R^2) 来衡量信息保持的程度，通常要保证在80-90%左右。下图给出了SVD和eigen-decomposition之间的联系
 
-[[../images/mmds-svd-and-eigen-decomp.png]]
+[[../images/Pasted-Image-20231225104758.png]]
 
 SVD计算复杂度在O(n^2 * m) / O(m^2 * n). 如果输入矩阵是稀疏的话，SVD分解之后得到的三个矩阵却可能是非常稠密的。同时SVD得到的topics维度是非常难以解释的。CUR算法可以解决这些问题，大致思想是分解称为CUR三个矩阵，C是从A矩阵中选择k'个代表列构成的(n*k')，R则是从A矩阵中选择k'个代表行构成的(k'*m)，时间复杂度控制在O(n*m)上。它是一个概率型算法通过控制k'来控制和最优解之间的误差。
 
-[[../images/mmds-cur-approx-to-svd.png]]
+[[../images/Pasted-Image-20231225104146.png]]
 
 ** Latent-Factor Models
 通常我们使用RMSE(root-mean-square-error, = 1.0/N * sqrt((r'-r)^2). 其中N表示测试集合大小，r'表示预测评分，r表示实际评分)来衡量推荐系统好坏。实际的推荐系统还需要考虑 1. 多样性(diversity) 2. 用户环境(context) 3. 物品推荐顺序等。RMSE只能说这个模型可以很好地拟合当前rating情况，但是并不意味着是我们真正想要的。
 
 推荐系统通常在下面几个层面上建模：1. global 2. factorization 3. collaborative filtering(CF). 其中global从全局上考虑这个用户和平均用户的偏差，CF则使用NN(nearest neighbor)方法来预测评分：假设我们想知道u对i的评价，我们可以先找到k个和item i比较接近(kNN, 使用相似度做度量, sij)并且是u已经评价过的items, 然后使用这些ratings使用相似度做加权。如果综合考虑的话就可以给出一个工作得还不错的模型。
 
-[[../images/mmds-rec-sys-cf.png]] [[../images/mmds-rec-sys-rmse-comp.png]]
+[[../images/Pasted-Image-20231225103309.png]] [[../images/Pasted-Image-20231225103900.png]]
 
 Latent-Factor Model也就是factorization则是尝试做矩阵分解：将user和movie信息映射到一个超平面上，然后通过计算内积来计算user和movie之间的相似度也就是rating. 如果我们再把latent-factor model加入的话，那么整个模型应该就是这样的。使用这个模型相比没有增加latent-factor model效果要好很多。
 
-[[../images/mmds-rec-sys-all-0.png]] [[../images/mmds-rec-sys-all-1.png]]
+[[../images/Pasted-Image-20231225104032.png]] [[../images/Pasted-Image-20231225104106.png]]
 
 ** Clustering
 clustering方法分为两类：1. Hierarchical（层次关系，细分为agglomerative/bottom-up和divisive/top-down两种） 2. Point assignment(k-means). 在做clustering的时候需要使用一个点来表示代表一个cluster，有两种办法: 1. centroid(取平均值) 2. clustroid(选择其中一个代表点，这个点离其他点的距离最近).

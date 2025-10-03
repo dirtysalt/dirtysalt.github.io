@@ -14,17 +14,17 @@ Fact Table里面每个记录可以认为有两个属性：dimensional【维度�
 
 每次Update会对应一个version,  如果有大量small updates的话很快就会出现爆炸的情况，解决办法就是做pre-aggregation. 做了pre-aggregation之后，一方面可以节省存储空间，另外一方面也可以节省query的时间。不过我理解这个pre-aggregation具体的policy是可以定制的，比如对某个value做add, 而对其他value做min/max这样。我也想象不到具体的场景是什么，所以只能理解到这里了。这个pre-aggregation在文章里面也叫做compaction, 其实和LSM-Tree compaction原理非常类似。分几个level: singleton(单次更新), cumulatives(中间聚合结果), base.
 
-[[../images/google-mesa-compaction.png]]
+[[../images/Pasted-Image-20231225104110.png]]
 
 "Physical Data & Index Formats" 这节我看的不是很懂，感觉上和leveldb file format非常类似：列式存储，按照row blocks进行压缩，在data file的header/footer加index信息等等。这些Data Files存储在Colossus上面，而metadata信息则存储在BigTable上。我理解Metadata里面会包含所有的data files, 以及每个data files的key ranges以及bloom filter这样的东西，可以帮助query快速地过滤掉某些data files.
 
 Mesa 中Updater架构图如下，master/worker这样的结构，从文中看是双向的：master可以要求worker去执行某个任务，而worker也可以问master要某个任务。值得一提的是，master是没有状态的，所有的状态都可以记录在bigtable上，所以master的扩展性很好比如可以按照table做shard. 可以看到worker也分了好几类，可能他们之间的workload差异比较大吧。
 
-[[../images/google-mesa-updater.png]]
+[[../images/Pasted-Image-20231225104821.png]]
 
 Mesa 中Query System架构图如下，因为应用场景相对比较单一，所以没有提供类似SQL这样的接口，只是提供某些操作比如filtering和aggregation ops. 因为数据都存储在Colossus上面，所以fetch数据的延迟相比从本地读会高很多，所以Query Servers利用cache应该是比较多的（这种计算和存储分离架构，不用cache是不行的）。理论上任何一个QS可以去访问any table, 实际上将QS划分到了多个sets下面. 每个set里面的QS只能访问一些tables, 这样这些table cache hit rate就可以做到很高。
 
-[[../images/google-mesa-query-server.png]]
+[[../images/Pasted-Image-20231225104540.png]]
 
 在Query上除了剪枝之外，还有两个改进：一个是scan-to-seek. 假设我们要找到(A, B=2)这些keys, 但是我们是按照(A, B)做的索引。假设我们知道A的keys有[1,4,..]的话，那么我们可以先找到(A=1, B=2) 然后从这里开始scan. 下次找到(A=4, B=2) 然后从这里scan. 另外一个改进就是failover handoff，类似断点续传，但是我也没有搞清楚现实中怎么搞。Mesa底层计算引擎是MapReduce,  如果确定每个mapper的输入是个问题，这点在updater写data files会对row key进行sampling, 将采样结果单独存放。当MapReduce需要处理某些data files的时候，可以大致知道row keys的分布是什么，以此来确定每个mapper的输入。
 

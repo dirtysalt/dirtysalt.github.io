@@ -27,8 +27,8 @@ TL;DR 因为checkpoint出现了瞬时的大量磁盘写入导致响应时间出�
 </p>
 
 
-<div id="org5f6756e" class="figure">
-<p><img src="../images/mongodb34-perf-issue-checkpoint-0.jpg" alt="mongodb34-perf-issue-checkpoint-0.jpg" />
+<div id="org13b1e17" class="figure">
+<p><img src="../images/Pasted-Image-20231225105201.png" alt="Pasted-Image-20231225105201.png" />
 </p>
 </div>
 
@@ -43,16 +43,16 @@ TL;DR 因为checkpoint出现了瞬时的大量磁盘写入导致响应时间出�
 </p>
 
 <p>
-因为这个延迟是在10minute统计出来的数值（我们使用stasd/graphite来收集延迟数据，rotate schema是10s:1h, 60s:1d, 10m:7d, 60m:60d)，所以延迟的增加可能有两个原因：1. 每个请求的延迟都增加 2. 部分请求延迟出现尖峰。当然也可能是两个原因都存在。所以需要在更短的时间(30min)范围内延迟波动情况。我在写这篇文章的时候，之前并没有截图，然后现在数据也滚动过去了，所以没有办法提供当时的数据。不过结果是情况2，也就是部分请求延迟出现了尖峰。并且这个尖峰出现时机非常奇怪，大约是1min出现一个。
+因为这个延迟是在10minute统计出来的数值(我们使用stasd/graphite来收集延迟数据，rotate schema是10s:1h, 60s:1d, 10m:7d, 60m:60d)，所以延迟的增加可能有两个原因：1. 每个请求的延迟都增加 2. 部分请求延迟出现尖峰。当然也可能是两个原因都存在。所以需要在更短的时间(30min)范围内延迟波动情况。我在写这篇文章的时候，之前并没有截图，然后现在数据也滚动过去了，所以没有办法提供当时的数据。不过结果是情况2，也就是部分请求延迟出现了尖峰。并且这个尖峰出现时机非常奇怪，大约是1min出现一个。
 </p>
 
 <p>
-除此之外IO bytes以及CPU Idle也表现了同样的规律，并且primary和secondary都表现除了这样的情况，而不仅仅是primary. 因此当时猜测这种磁盘操作的尖峰，应该不是应用层的写入（不然secondary不会出现同样的pattern).
+除此之外IO bytes以及CPU Idle也表现了同样的规律，并且primary和secondary都表现除了这样的情况，而不仅仅是primary. 因此当时猜测这种磁盘操作的尖峰，应该不是应用层的写入(不然secondary不会出现同样的pattern).
 </p>
 
 
-<div id="orgf3bb58b" class="figure">
-<p><img src="../images/mongodb34-perf-issue-checkpoint-1.jpg" alt="mongodb34-perf-issue-checkpoint-1.jpg" />
+<div id="orga0c7492" class="figure">
+<p><img src="../images/Pasted-Image-20231225105220.png" alt="Pasted-Image-20231225105220.png" />
 </p>
 </div>
 
@@ -63,16 +63,16 @@ TL;DR 因为checkpoint出现了瞬时的大量磁盘写入导致响应时间出�
 </p>
 
 <p>
-接着我们希望上机器去观察进一步的情况，结合 `dstat` 和 `mongostat` 看看primary/secondary到底发生了什么事情
+接着我们希望上机器去观察进一步的情况，结合dsta和mongostat看看primary/secondary到底发生了什么事情
 </p>
 
 <p>
-观察primary节点，每隔接近1min的时候，active writer会突然增长持续大约3s左右掉下去。然后观察 `dstat` 的这个时候情况，可以看到disk write大约写入了36M + 35M + 32M ~= 103M 数据，并且这个写入占据了很多sys cpu(也占用了部分usr cpu), 导致cpu idle掉了0. 这也可以解释为什么从监控面板上看cpu idle出现尖峰的情况。
+观察primary节点，每隔接近1min的时候，active writer会突然增长持续大约3s左右掉下去。然后观察dstat的这个时候情况，可以看到disk write大约写入了36M + 35M + 32M ~= 103M 数据，并且这个写入占据了很多sys cpu(也占用了部分usr cpu), 导致cpu idle掉了0. 这也可以解释为什么从监控面板上看cpu idle出现尖峰的情况。
 </p>
 
 
-<div id="org5cd6e73" class="figure">
-<p><img src="../images/mongodb34-perf-issue-checkpoint-2.jpg" alt="mongodb34-perf-issue-checkpoint-2.jpg" />
+<div id="org951c4c4" class="figure">
+<p><img src="../images/Pasted-Image-20231225105154.png" alt="Pasted-Image-20231225105154.png" />
 </p>
 </div>
 
@@ -81,8 +81,8 @@ TL;DR 因为checkpoint出现了瞬时的大量磁盘写入导致响应时间出�
 </p>
 
 
-<div id="orgf3699b0" class="figure">
-<p><img src="../images/mongodb34-perf-issue-checkpoint-3.jpg" alt="mongodb34-perf-issue-checkpoint-3.jpg" />
+<div id="orgc325aa4" class="figure">
+<p><img src="../images/Pasted-Image-20231225105136.png" alt="Pasted-Image-20231225105136.png" />
 </p>
 </div>
 
@@ -91,7 +91,7 @@ TL;DR 因为checkpoint出现了瞬时的大量磁盘写入导致响应时间出�
 为了确认这些数据是mongodb写入的，我们还运行了一个 `iotop` 来观察记录当时的情况
 </p>
 
-<pre class="example" id="orgaa73ecb">
+<pre class="example" id="org92a2d01">
 09:35:46  2979 be/3 root        0.00 B/s   64.93 K/s  0.00 %  1.58 % [jbd2/xvdb-8]
 09:35:46  2505 be/3 root        0.00 B/s    0.00 B/s  0.00 %  0.12 % [jbd2/xvda1-8]
 09:35:46  6964 be/4 ec2-user    2.63 M/s  104.81 M/s  0.00 %  0.01 % mongod --storageEngine wiredTiger --port 27017 --dbpath /srv/mongodb --wiredTigerCacheSizeGB 30 --logpath /srv/mongodb/log --pidfilepath /home/ec2-user/nova/deploy/mongod-27017.pid --fork --journal --replSet rs0 --setParameter replWriterThreadCount=1
@@ -181,8 +181,8 @@ while True:
 </p>
 
 
-<div id="org5045f3c" class="figure">
-<p><img src="../images/mongodb34-perf-issue-checkpoint-4.jpg" alt="mongodb34-perf-issue-checkpoint-4.jpg" />
+<div id="orgde25b68" class="figure">
+<p><img src="../images/Pasted-Image-20231225105235.png" alt="Pasted-Image-20231225105235.png" />
 </p>
 </div>
 
@@ -204,7 +204,7 @@ while True:
 如果对比mongodb 3.0 和 3.4 的wiredtiger默认参数的话，其实差别非常小，checkpoint wait 值完全一样。所以猜测 wiredtiger 3.4 生成的checkpoint 体积相比3.0要大很多，才造成升级之后会感知到磁盘的瞬间写入。
 </p>
 
-<pre class="example" id="orgac42f8a">
+<pre class="example" id="org3f4b3ab">
 mongodb 3.0
 
 2017-08-20T13:51:13.516+0000 I STORAGE  [initandlisten] wiredtiger_open config: create,cache_size=2G,session_max=20000,eviction=(threads_max=4),statistics=(fast),log=(enabled=true,archive=true,path=journal,compressor=snappy),file_manager=(close_idle_time=100000),checkpoint=(wait=60,log_size=2GB),statistics_log=(wait=0),
@@ -214,5 +214,5 @@ mongodb 3.4
 2017-10-20T09:26:55.931+0000 I STORAGE  [initandlisten] wiredtiger_open config: create,cache_size=30720M,session_max=20000,eviction=(threads_min=4,threads_max=4),config_base=false,statistics=(fast),log=(enabled=true,archive=true,path=journal,compressor=snappy),file_manager=(close_idle_time=100000),checkpoint=(wait=60,log_size=2GB),statistics_log=(wait=0),
 </pre>
 </div>
-<div id="content"><!-- DISQUS BEGIN --><div id="disqus_thread"></div><script>/***  RECOMMENDED CONFIGURATION VARIABLES: EDIT AND UNCOMMENT THE SECTION BELOW TO INSERT DYNAMIC VALUES FROM YOUR PLATFORM OR CMS.*  LEARN WHY DEFINING THESE VARIABLES IS IMPORTANT: https://disqus.com/admin/universalcode/#configuration-variables*/var disqus_config = function () {this.page.url = 'https://dirtysalt.github.io/html/mongodb34-perf-issue-checkpoint.html';this.page.identifier = 'mongodb34-perf-issue-checkpoint.html';};(function() {var d = document, s = d.createElement('script');s.src = 'https://dirlt.disqus.com/embed.js';s.setAttribute('data-timestamp', +new Date());(d.head || d.body).appendChild(s);})();</script><noscript>Please enable JavaScript to view the <a href="https://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript><!-- DISQUS END --></div></body>
+</body>
 </html>

@@ -10,11 +10,11 @@ https://db.in.tum.de/~leis/papers/morsels.pdf
 
 整个调度框架内有个Dispatcher（机制）用来进行调度，后面会讲到这个dispatcher并不是个执行单元，更像是某个共享的lock-free数据结构。每个working thread都会使用对这个数据结构进行操作，从里面拿到某个task执行。每个task几乎只处理自己所在cpu slot上的一小块数据(morsel)，除非要做work stealing可能涉及到跨cpu slot. 下图是文中给的一个示例，其中T和S都做了build, 是global hashtable. 表R进行scan + probe, 注意表R按照morsel进行了划分，并且result也是按照morsel进行划分的。probe这个过程不涉及到任何synchronization.
 
-[[../images/morsel-idea.png]]
+[[../images/Pasted-Image-20231225104357.png]]
 
 但是有时候synchronization是不可避免的，比如build hashtable.  在scan t的时候不需要sync, 但是每个morsel会生成一个storage aread of per core, 这可以认识是个小的hash table. 现在需要将这些hash table聚合起来，整个过程是两个阶段。当然其实有可以切分为一个阶段，直接构建hash table. 但是分解成为两个阶段的好处是，在这里做个sync可以根据每个小的hash table确定global hash table的best size. 然后构建这个global hash table是lock-free operation(CAS). 这个后面会提到。
 
-[[../images/morsel-build-hash-table.png]]
+[[../images/Pasted-Image-20231225104212.png]]
 
 调度器架构图如下：Pipeline Jobs被挂在成为一个链表，每个Job下面有许多tasks(morsels). 整个系统先开一些work threads, 然后每个work thread去dispatcher上去要morsel来执行。通常只能要自己slot上的morsel, 但是有时候为了load balance也允许去steal其他slot上的Morsel. 我们在这里还可以修改dispatcher, 支持preemption（因为task input data足够小）以及选择high priority job执行。
 
@@ -25,7 +25,7 @@ There are three main goals for assigning tasks to threads that run on particular
 2. Full elasticity concerning the level of parallelism of a particular query
 3. Load balancing requires that all cores participating in a query pipeline finish their work at the same time in order to prevent (fast) cores from waiting for other (slow) cores .
 
-[[../images/morsel-dispatcher-arch.png]]
+[[../images/Pasted-Image-20231225103607.png]]
 
 在执行上尽可能确保job下面的tasks在同一个时间完成，在论文里面叫做"photo finish". 这个事情没有办法在静态规划阶段就完成，所以就需要work stealking，虽然这个东西会影响到numa locality,  但是benefit比cost要大很多。按照morsel划分的话，除了好做load-balancing之外，canel也比较好做。只要cacenl这个job的话，那么剩余的tasks就不需要执行了。
 
@@ -40,13 +40,13 @@ Besides the ability to assign a core to a different query at any time – called
 
 HashTable实现是个外链的hashtable, 因为size是精心选择过的，所以冲突会比较少，外链也会比较短。Hashtable里面存储的是64bit指针，但是实际在x86-64里面只使用了low 48bits. https://en.wikipedia.org/wiki/X86-64 high 16bits可以用来做个early filtering. 我的理解就是把这个16bits当做bloom filter来用，进来一个hash value, 做个 (tag & (1 << (value % 16)) 判断. 内存分配的时候用2MB hugepage, 尽可能地将pagetable放在L1 cache里面，减少TLB时间
 
-[[../images/morsel-tagged-hash-table.png]]
+[[../images/Pasted-Image-20231225104154.png]]
 
 
 grouping + agg 过程如下，两个阶段：local agg + global agg. 第一阶段的ht是个小的hash table, 一旦溢出了就写入local storage的partition. 第二个阶段就涉及到shuffle. 理论上这两个阶段可以pipeline, 但是中间也做了breaker. 我的理解是，一方面可以确定每个partition最终的HT perferce size, 另外一方面是既然每个阶段都是photo stop的，分开意义也不是很大。
 
-[[../images/morsel-par-agg.png]]
+[[../images/Pasted-Image-20231225103524.png]]
 
 Sorting也类似经典的分布式sort. 首先做local sort, 然后对每个partition的local array做个sketch判断全局的separators, 最后每个worker选择一个global separator去每个partition要数据做merge. 这个算法概念很清晰，但是怎么选择好global separator没有想好怎么做。
 
-[[../images/morsel-par-merge-sort.png]]
+[[../images/Pasted-Image-20231225103221.png]]

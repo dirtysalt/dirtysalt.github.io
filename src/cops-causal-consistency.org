@@ -8,7 +8,7 @@ https://pdos.csail.mit.edu/6.824/papers/cops.pdf
 
 文章给出了两个系统，COPS(Clustering of Order-Preserving Servers)和COPS-GT，后者是前者的升级版本。COPS-GT里面有个接口 `get_trans(keys)`, 它确保返回的keys对应的值完全满足因果性，并且它的开销也不大，在local dc上最多发起两次local read. 下图是COPS/GT的架构图，client通常都是在local dc上发起read/write的，然后dc之间是async replicated的。为了确保返回的keys对应的值之间满足因果性，在调用 `get_by_version` 的时候，内部是会有个 `dep_check` 的过程，这个过程是在检查因果依赖是否已经满足，如果没有满足的话就会一直block操作。
 
-[[../images/cops-arch.png]]
+[[../images/Pasted-Image-20231225104808.png]]
 
 通过client API 我们可以更好地理解系统是怎么preserve order的。COPS/GT有下面几个API：
 1. createContext() -> ctx_id / deleteContext(ctx_id)
@@ -17,9 +17,9 @@ https://pdos.csail.mit.edu/6.824/papers/cops.pdf
 4. get_trans(ctx_id, keys) -> values [COPS/GT]
 也就是说，每当client需要发起一个事务的话，需要创建context. 在context中会维护好orders/deps. 在context要维护什么信息呢？下图或许可以说明
 
-[[../images/cops-deps.png]]
+[[../images/Pasted-Image-20231225103723.png]]
 
-在同一个execution thread里面，如果v6发生在t2, u1之后，那么它就依赖于t2, u1.同理z4依赖于几乎所有变量（All Deps). 不过在实际实现中，我们只需要存储离z4最近的几个deps就行，也就是nearest deps. 因为只要满足了nearest deps，那么all deps就可以满足了。这里的deps不仅仅是key, 还包括对应的version. dep = <key, version>
+在同一个execution thread里面，如果v6发生在t2, u1之后，那么它就依赖于t2, u1.同理z4依赖于几乎所有变量(All Deps). 不过在实际实现中，我们只需要存储离z4最近的几个deps就行，也就是nearest deps. 因为只要满足了nearest deps，那么all deps就可以满足了。这里的deps不仅仅是key, 还包括对应的version. dep = <key, version>
 
 Client API是上面那样，但是内部接口只有两个：
 1. put_after(key, value, [deps], nearest) -> version. 对于COPS来说只需要传入nearest_deps就行，这个只在写入时候dep_check时候有用。但是对于COPS-GT来说，除了nearest_deps，deps也需要因为这个值需要被一起写入key-value中，因为这个deps在 `get_trans` 的时候需要被使用。

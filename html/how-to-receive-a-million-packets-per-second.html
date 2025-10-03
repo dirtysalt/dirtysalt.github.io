@@ -43,7 +43,7 @@ On Linux, how hard is it to write a program that receives 1 million UDP packets 
 <p>
 baseline没有任何额外设置
 </p>
-<pre class="example" id="org1010cb7">
+<pre class="example" id="org73c1a28">
 sender$ ./udpsender 192.168.254.1:4321
 receiver$ ./udpreceiver1 0.0.0.0:4321
   0.352M pps  10.730MiB /  90.010Mb
@@ -59,7 +59,7 @@ receiver$ ./udpreceiver1 0.0.0.0:4321
 <p>
 可以看到pps在195k~352k之间浮动，这是因为进程每次调度被分配到不同的core上运行，使用taskset -c来绑定运行core. 这样可以充分利用cache locality.
 </p>
-<pre class="example" id="orge3b0f88">
+<pre class="example" id="orgc13bbd7">
 sender$ taskset -c 1 ./udpsender 192.168.254.1:4321
 receiver$ taskset -c 1 ./udpreceiver1 0.0.0.0:4321
   0.362M pps  11.058MiB /  92.760Mb
@@ -78,7 +78,7 @@ receiver$ taskset -c 1 ./udpreceiver1 0.0.0.0:4321
 <p>
 通过两个线程来提供发送pps, 但是可以看到接收pps并没有增长
 </p>
-<pre class="example" id="org313d3ed">
+<pre class="example" id="orgf220fc2">
 sender$ taskset -c 1,2 ./udpsender \
             192.168.254.1:4321 192.168.254.1:4321
 receiver$ taskset -c 1 ./udpreceiver1 0.0.0.0:4321
@@ -91,7 +91,7 @@ receiver$ taskset -c 1 ./udpreceiver1 0.0.0.0:4321
 <p>
 可以通过ethtool -S查看网口上统计数据. 这个网口有11个接受队列
 </p>
-<pre class="example" id="org54ce800">
+<pre class="example" id="org5861b1c">
 receiver$ watch 'sudo ethtool -S eth2 |grep rx'
      rx_nodesc_drop_cnt:    451.3k/s
      rx-0.rx_packets:     8.0/s
@@ -111,8 +111,8 @@ pps中有451k没有被kernel处理而丢弃，355.2k都是在rx-4接收队列上
 </p>
 
 
-<div id="orgc461347" class="figure">
-<p><img src="../images/nic-interrupt-to-onecpu.png" alt="nic-interrupt-to-onecpu.png" />
+<div id="org13fa855" class="figure">
+<p><img src="../images/Pasted-Image-20231225103823.png" alt="Pasted-Image-20231225103823.png" />
 </p>
 </div>
 
@@ -130,8 +130,8 @@ Historically, network cards had a single RX queue that was used to pass packets 
 </p>
 
 
-<div id="org9de9d19" class="figure">
-<p><img src="../images/nic-multiqueue.png" alt="nic-multiqueue.png" />
+<div id="org4915aed" class="figure">
+<p><img src="../images/Pasted-Image-20231225104728.png" alt="Pasted-Image-20231225104728.png" />
 </p>
 </div>
 
@@ -152,7 +152,7 @@ Historically, network cards had a single RX queue that was used to pass packets 
 现在场景还是one rx-queue to one cpu. 来看看NUMA造成的性能差异。
 </p>
 <ul class="org-ul">
-<li>Run receiver on another CPU, but on the same NUMA node as the RX queue. The performance as we saw above is around 360kpps.（同一个NUMA node但是另一块CPU，不同CPU Cache, pps = 360k)</li>
+<li>Run receiver on another CPU, but on the same NUMA node as the RX queue. The performance as we saw above is around 360kpps.(同一个NUMA node但是另一块CPU，不同CPU Cache, pps = 360k)</li>
 <li>With receiver on exactly same CPU as the RX queue we can get up to ~430kpps. But it creates high variability. The performance drops down to zero if the NIC is overwhelmed with packets.(同一块CPU，应该是相同core, pps = 430k)</li>
 <li>When the receiver runs on the HT counterpart of the CPU handling RX queue, the performance is half the usual number at around 200kpps.(同一个core但是不同HT，性能减半, pps = 200k)</li>
 <li>With receiver on a CPU on a different NUMA node than the RX queue we get ~330k pps. The numbers aren't too consistent though.(不同NUMA node，pps = 330k)</li>
@@ -169,7 +169,7 @@ While a 10% penalty for running on a different NUMA node may not sound too bad, 
 <p>
 除了使用多队列的方式外，我们还可以使用多IP来避免单个processor来处理中断。
 </p>
-<pre class="example" id="org2e26046">
+<pre class="example" id="org5bc4844">
 sender$ taskset -c 1,2 ./udpsender 192.168.254.1:4321 192.168.254.2:4321
 receiver$ watch 'sudo ethtool -S eth2 |grep rx'
      rx-0.rx_packets:     8.0/s
@@ -195,7 +195,7 @@ receiver$ taskset -c 1 ./udpreceiver1 0.0.0.0:4321
 <p>
 如果我们继续增加发送IP数量的话，接收pps不再上升，rx_nodesc_drop_cnt也不增加。netstat能够看到接收错误
 </p>
-<pre class="example" id="orge9fb29a">
+<pre class="example" id="orgb1bb77e">
 receiver$ watch 'netstat -s --udp'
 Udp:
       437.0k/s packets received
@@ -207,7 +207,7 @@ Udp:
     InCsumErrors: 0
 </pre>
 <p>
-这意味着packet可以被投递到kernel, 但是kernel没有办法投递到application，application处理packet速度太慢(386.9k + 123.8k被丢弃）
+这意味着packet可以被投递到kernel, 但是kernel没有办法投递到application，application处理packet速度太慢(386.9k + 123.8k被丢弃)
 </p>
 
 <hr />
@@ -223,7 +223,7 @@ Udp:
 可以使用 <a href="https://lwn.net/Articles/542629/">SO_REUSEPORT</a> 来解决这个问题. SO_REUSEPORT允许多个进程/线程绑定同一个端口(不同fd)来读取写入数据（底层实现是根据&lt;src-ip, src-port, dst-ip, dst-port&gt;做hash放入不同的bucket, 上层fd会在不同bucket里面取出链接来处理。如果某个fd进程挂掉的话，那么这个bucket里面所有packets都会作废）
 </p>
 
-<pre class="example" id="orgbb2ec97">
+<pre class="example" id="org44d4de2">
 receiver$ taskset -c 1,2,3,4 ./udpreceiver1 0.0.0.0:4321 4 1
   1.114M pps  34.007MiB / 285.271Mb
   1.147M pps  34.990MiB / 293.518Mb
@@ -248,5 +248,5 @@ To sum up, if you want a perfect performance you need to:
 While we had shown that it is technically possible to receive 1Mpps on a Linux machine, the application was not doing any actual processing of received packets - it didn't even look at the content of the traffic. Don't expect performance like that for any practical application without a lot more work.（注意这个实验里面没有对packet做任何处理）
 </p>
 </div>
-<div id="content"><!-- DISQUS BEGIN --><div id="disqus_thread"></div><script>/***  RECOMMENDED CONFIGURATION VARIABLES: EDIT AND UNCOMMENT THE SECTION BELOW TO INSERT DYNAMIC VALUES FROM YOUR PLATFORM OR CMS.*  LEARN WHY DEFINING THESE VARIABLES IS IMPORTANT: https://disqus.com/admin/universalcode/#configuration-variables*/var disqus_config = function () {this.page.url = 'https://dirtysalt.github.io/html/how-to-receive-a-million-packets-per-second.html';this.page.identifier = 'how-to-receive-a-million-packets-per-second.html';};(function() {var d = document, s = d.createElement('script');s.src = 'https://dirlt.disqus.com/embed.js';s.setAttribute('data-timestamp', +new Date());(d.head || d.body).appendChild(s);})();</script><noscript>Please enable JavaScript to view the <a href="https://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript><!-- DISQUS END --></div></body>
+</body>
 </html>

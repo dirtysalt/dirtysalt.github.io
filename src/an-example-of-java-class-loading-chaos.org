@@ -1,0 +1,260 @@
+#+title: Java Class 加载乱象一例
+
+** 问题
+
+这个问题是从github issue上来的.
+
+[[https://github.com/StarRocks/starrocks/issues/27556][Hudi fails to read Merge On Read table after adding logs files · Issue #27556 · StarRocks/starrocks]]
+
+目前我们读取hudi table有两个代码分支：
+1. 对于COW表(_ro)，因为里面只有parquet文件，那么使用我们的native C++ code.
+2. 对于MOR表(_rt)，因为可能涉及到多个文件的merge, 逻辑比较复杂，所以使用的是Java Code, C++中使用JNI来调用。
+
+这个issue看上去是，在访问Hudi Table的时候，没有办法读取 `s3://` 文件系统，走的是MOR表这个代码分支。
+
+** Hudi MOR Reader
+
+目前Hudi MOR Reader代码在我们的 java-extensions 这个目录下面。
+
+https://github.com/StarRocks/starrocks/blob/main/java-extensions/hudi-reader/src/main/java/com/starrocks/hudi/reader/HudiSliceScannerFactory.java
+
+这个factory类使用了定制的class loader. 因为如果不定制class loader的话，那么BE启动的时候其实会使用 `hadoop_env.sh` 里面定义的classpath
+
+#+BEGIN_SRC Bash
+export HADOOP_CLASSPATH=${STARROCKS_HOME}/lib/hadoop/common/*:${STARROCKS_HOME}/lib/hadoop/common/lib/*:${STARROCKS_HOME}/lib/hadoop/hdfs/*:${STARROCKS_HOME}/lib/hadoop/hdfs/lib/*
+#+END_SRC
+
+这个classpath加载的是 `be/lib/hadoop` 下面的jar.  **这些jars可能和目前hudi reader的jar是不兼容的，这就是要做定制class loader的原因。**
+
+#+BEGIN_SRC Java
+public class HudiSliceScannerFactory implements ScannerFactory {
+    static ChildFirstClassLoader classLoader;
+
+    static {
+        String basePath = System.getenv("STARROCKS_HOME");
+        File dir = new File(basePath + "/lib/hudi-reader-lib");
+        URL[] jars = Arrays.stream(Objects.requireNonNull(dir.listFiles()))
+                .map(f -> {
+                    try {
+                        return f.toURI().toURL();
+                    } catch (MalformedURLException e) {
+                        e.printStackTrace();
+                        throw new RuntimeException("Cannot init hudi slice classloader.", e);
+                    }
+                }).toArray(URL[]::new);
+        classLoader = new ChildFirstClassLoader(jars, ClassLoader.getSystemClassLoader());
+    }
+
+    /**
+     * Hudi scanner uses own independent classloader to find all classes
+     * due to hadoop version (hadoop-2.x) conflicts with JNI launcher of libhdfs (hadoop-3.x).
+     */
+    @Override
+    public Class getScannerClass() throws ClassNotFoundException {
+        try {
+            return classLoader.loadClass("com.starrocks.hudi.reader.HudiSliceScanner");
+        } catch (ClassNotFoundException e) {
+            e.printStackTrace();
+            throw e;
+        }
+    }
+}
+#+END_SRC
+
+** 引入hadoop-aws的问题
+
+所以解决办法就是让hadoop也支持s3这个协议，我们需要引入 hadoop-aws 这个包。 [[https://hadoop.apache.org/docs/stable/hadoop-aws/tools/hadoop-aws/index.html][Apache Hadoop Amazon Web Services support – Hadoop-AWS module: Integration with Amazon Web Services]].
+
+这个比较简单，修改pom.xml就行。并且为了和presto自带的hadoop兼容，我们需要使用相同的版本 2.7.4.
+
+#+BEGIN_SRC Xml
+        <presto.hadoop.version>2.7.4-11</presto.hadoop.version>
+        <presto.hive.version>3.0.0-8</presto.hive.version>
+        <hadoop.version>2.7.4</hadoop.version>
+
+        <dependency>
+            <groupId>org.apache.hadoop</groupId>
+            <artifactId>hadoop-aws</artifactId>
+            <version>${hadoop.version}</version>
+        </dependency>
+#+END_SRC
+
+完了之后还需要修改一下 be/conf/core-site.xml, 告诉hadoop jar：如果遇到 s3://这样的协议，那么使用其中某个类来处理。
+
+#+BEGIN_SRC Xml
+  <property>
+      <name>fs.s3.impl</name>
+      <value>org.apache.hadoop.fs.s3a.S3AFileSystem</value>
+   </property>
+   <property>
+      <name>fs.AbstractFileSystem.s3.impl</name>
+      <value>org.apache.hadoop.fs.s3a.S3A</value>
+   </property>
+   <property>
+      <name>fs.s3.access.key</name>
+      <value>*****</value>
+   </property>
+   <property>
+      <name>fs.s3.secret.key</name>
+      <value>*****</value>
+   </property>
+   <property>
+      <name>fs.s3.endpoint</name>
+      <value>*****</value>
+   </property>
+#+END_SRC
+
+测试下来访问s3上的文件没有问题
+
+** NoSuchFieldError
+
+但是今天早上daily出错了，而且是在访问hdfs文件系统出错的，错误信息如下
+
+#+BEGIN_EXAMPLE
+Exception in thread "main" java.lang.NoSuchFieldError: LOG
+        at org.apache.hadoop.hdfs.shortcircuit.DomainSocketFactory.<init>(DomainSocketFactory.java:110)
+        at org.apache.hadoop.hdfs.ClientContext.<init>(ClientContext.java:117)
+        at org.apache.hadoop.hdfs.ClientContext.get(ClientContext.java:159)
+        at org.apache.hadoop.hdfs.DFSClient.<init>(DFSClient.java:703)
+        at org.apache.hadoop.hdfs.DFSClient.<init>(DFSClient.java:619)
+        at org.apache.hadoop.hdfs.DistributedFileSystem.initialize(DistributedFileSystem.java:149)
+        at org.apache.hadoop.fs.FileSystem.createFileSystem(FileSystem.java:2669)
+        at org.apache.hadoop.fs.FileSystem.access$200(FileSystem.java:94)
+        at org.apache.hadoop.fs.FileSystem$Cache.getInternal(FileSystem.java:2703)
+        at org.apache.hadoop.fs.FileSystem$Cache.get(FileSystem.java:2685)
+        at org.apache.hadoop.fs.FileSystem.get(FileSystem.java:373)
+        at org.apache.hadoop.fs.Path.getFileSystem(Path.java:295)
+        at org.apache.parquet.hadoop.util.HadoopInputFile.fromPath(HadoopInputFile.java:38)
+        at org.apache.parquet.hadoop.ParquetFileReader.readFooter(ParquetFileReader.java:469)
+        at org.apache.parquet.hadoop.ParquetFileReader.readFooter(ParquetFileReader.java:454)
+        at org.apache.hadoop.hive.ql.io.parquet.ParquetRecordReaderBase.getSplit(ParquetRecordReaderBase.java:79)
+        at org.apache.hadoop.hive.ql.io.parquet.read.ParquetRecordReaderWrapper.<init>(ParquetRecordReaderWrapper.java:75)
+        at org.apache.hadoop.hive.ql.io.parquet.read.ParquetRecordReaderWrapper.<init>(ParquetRecordReaderWrapper.java:60)
+        at org.apache.hadoop.hive.ql.io.parquet.MapredParquetInputFormat.getRecordReader(MapredParquetInputFormat.java:92)
+        at org.apache.hudi.hadoop.HoodieParquetInputFormat.getRecordReaderInternal(HoodieParquetInputFormat.java:89)
+        at org.apache.hudi.hadoop.HoodieParquetInputFormat.getRecordReader(HoodieParquetInputFormat.java:83)
+        at org.apache.hudi.hadoop.realtime.HoodieParquetRealtimeInputFormat.getRecordReader(HoodieParquetRealtimeInputFormat.java:74)
+        at com.starrocks.hudi.reader.HudiSliceScanner.initReader(HudiSliceScanner.java:187)
+        at com.starrocks.hudi.reader.HudiSliceScanner.open(HudiSliceScanner.java:205)
+#+END_EXAMPLE
+
+我在github上看了一下 [[https://github.com/apache/hadoop/blob/release-2.7.4-RC0/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/util/PerformanceAdvisory.java][代码]]， 这个类里面的确是有LOG字段的。
+
+我遍历了一下hudi-reader-lib下面所有的jar, 看看那个jar里面包含了 `PerformanceAdvisory.java` 这个类
+- 一个是 `hadoop-apache2-2.7.4-11.jar` 这个是pom.xml里面显示指定的
+- 一个是 `hadoop-common-2.7.4.jar` 这个pom.xml是hadoop-aws间接引入的
+
+#+BEGIN_EXAMPLE
+hadoop-apache2-2.7.4-11.jar
+org/apache/hadoop/util/PerformanceAdvisory.class
+
+hadoop-common-2.7.4.jar
+org/apache/hadoop/util/PerformanceAdvisory.class
+#+END_EXAMPLE
+
+如果用javap查看这两个类，可以发现其实都有LOG，差别就是两者的类型不同
+
+#+BEGIN_EXAMPLE
+sandbox-cloud :: be/lib/hudi-reader-lib ‹main*› » javap hadoop-apache2-PerformanceAdvisory.class
+Compiled from "PerformanceAdvisory.java"
+public class org.apache.hadoop.util.PerformanceAdvisory {
+  public static final com.facebook.presto.hadoop.$internal.org.slf4j.Logger LOG;
+  public org.apache.hadoop.util.PerformanceAdvisory();
+  static {};
+}
+
+sandbox-cloud :: be/lib/hudi-reader-lib ‹main*› » javap hadoop-common-PerformanceAdvisory.class
+Compiled from "PerformanceAdvisory.java"
+public class org.apache.hadoop.util.PerformanceAdvisory {
+  public static final org.slf4j.Logger LOG;
+  public org.apache.hadoop.util.PerformanceAdvisory();
+  static {};
+}
+#+END_EXAMPLE
+
+看上去去解决办法就是，把hadoop-common-2.7.4从hadoop-aws里面挪出去
+
+#+BEGIN_SRC Xml
+        <dependency>
+            <groupId>org.apache.hadoop</groupId>
+            <artifactId>hadoop-aws</artifactId>
+            <version>${hadoop.version}</version>
+            <exclusions>
+                <exclusion>
+                    <groupId>org.apache.hadoop</groupId>
+                    <artifactId>hadoop-common</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+#+END_SRC
+
+测试下来hdfs是没有问题了。
+
+** NoClassDefFoundError
+
+但是自测s3的时候又发现一个问题，错误信息如下
+
+#+BEGIN_EXAMPLE
+Exception in thread "Thread-9" java.lang.NoClassDefFoundError: org/apache/commons/lang/StringUtils
+        at org.apache.hadoop.fs.s3a.BasicAWSCredentialsProvider.getCredentials(BasicAWSCredentialsProvider.java:37)
+        at com.amazonaws.auth.AWSCredentialsProviderChain.getCredentials(AWSCredentialsProviderChain.java:101)
+        at com.amazonaws.services.s3.AmazonS3Client.invoke(AmazonS3Client.java:3521)
+        at com.amazonaws.services.s3.AmazonS3Client.headBucket(AmazonS3Client.java:1031)
+        at com.amazonaws.services.s3.AmazonS3Client.doesBucketExist(AmazonS3Client.java:994)
+        at org.apache.hadoop.fs.s3a.S3AFileSystem.initialize(S3AFileSystem.java:297)
+        at org.apache.hadoop.fs.FileSystem.createFileSystem(FileSystem.java:2669)
+        at org.apache.hadoop.fs.FileSystem.access$200(FileSystem.java:94)
+        at org.apache.hadoop.fs.FileSystem$Cache.getInternal(FileSystem.java:2703)
+        at org.apache.hadoop.fs.FileSystem$Cache.get(FileSystem.java:2685)
+        at org.apache.hadoop.fs.FileSystem.get(FileSystem.java:373)
+        at org.apache.hadoop.fs.Path.getFileSystem(Path.java:295)
+        at org.apache.parquet.hadoop.util.HadoopInputFile.fromPath(HadoopInputFile.java:38)
+        at org.apache.parquet.hadoop.ParquetFileReader.readFooter(ParquetFileReader.java:469)
+        at org.apache.parquet.hadoop.ParquetFileReader.readFooter(ParquetFileReader.java:454)
+        at org.apache.hadoop.hive.ql.io.parquet.ParquetRecordReaderBase.getSplit(ParquetRecordReaderBase.java:79)
+        at org.apache.hadoop.hive.ql.io.parquet.read.ParquetRecordReaderWrapper.<init>(ParquetRecordReaderWrapper.java:75)
+        at org.apache.hadoop.hive.ql.io.parquet.read.ParquetRecordReaderWrapper.<init>(ParquetRecordReaderWrapper.java:60)
+        at org.apache.hadoop.hive.ql.io.parquet.MapredParquetInputFormat.getRecordReader(MapredParquetInputFormat.java:92)
+        at org.apache.hudi.hadoop.HoodieParquetInputFormat.getRecordReaderInternal(HoodieParquetInputFormat.java:89)
+        at org.apache.hudi.hadoop.HoodieParquetInputFormat.getRecordReader(HoodieParquetInputFormat.java:83)
+        at com.starrocks.hudi.reader.HudiSliceScanner.initReader(HudiSliceScanner.java:187)
+        at com.starrocks.hudi.reader.HudiSliceScanner.open(HudiSliceScanner.java:205)
+#+END_EXAMPLE
+
+这个问题看上去比较好理解：因为上面去掉了hadoop-common, 但是里面有个类被hadoop-aws又需要了。
+
+找了一下，这个package在
+
+#+BEGIN_SRC Xml
+        <dependency>
+            <groupId>commons-lang</groupId>
+            <artifactId>commons-lang</artifactId>
+            <version>2.6</version>
+        </dependency>
+#+END_SRC
+
+hadoop-apache2 jar其实里面也用到了StringUtils, 但是被放在了另外一个package下面
+
+#+BEGIN_EXAMPLE
+hadoop-apache2-2.7.4-11.jar
+org/apache/hadoop/util/StringUtils.class
+org/apache/hadoop/util/StringUtils$TraditionalBinaryPrefix.class
+org/apache/hadoop/util/StringUtils$1.class
+com/facebook/presto/hadoop/$internal/org/apache/commons/codec/binary/StringUtils.class
+com/facebook/presto/hadoop/$internal/org/apache/commons/lang/RandomStringUtils.class
+com/facebook/presto/hadoop/$internal/org/apache/commons/lang/StringUtils.class
+com/facebook/presto/hadoop/$internal/org/apache/commons/lang3/RandomStringUtils.class
+com/facebook/presto/hadoop/$internal/org/apache/commons/lang3/StringUtils.class
+#+END_EXAMPLE
+
+** 总结
+
+问题到这里， **基本** 算是被解决了：因为主要走这条代码逻辑，那么就不会出现class加载的问题。
+
+但是这个并不能保证未来不会出问题，因为其他代码分支可能会加载新的class.
+
+一些心得：
+- 整个过程按了葫芦起了瓢：现在s3不行，修复后hdfs不行，修复后s3不行
+- Java可以自己写class loader, 但是需要管理好依赖
+- 一旦出现依赖冲突，就只能找到冲突的包，把包挪出去
+- **这个冲突可能是动态发生的，没有办法通过静态方法发现。**

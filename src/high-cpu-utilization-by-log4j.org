@@ -5,7 +5,7 @@
 
 引入的是hdfs-client 2.8.5版本，我尝试了一下切换到其他版本也存在同样的问题。高CPU使用率相对还比较好分析，尝试了下面两种方法来定位。
 
-#+BEGIN_SRC xml
+#+BEGIN_SRC Xml
 <properties>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <java.version>1.8</java.version>
@@ -84,7 +84,7 @@ rank   self  accum   count trace method
   12  0.46% 76.91%      28 300660 org.apache.http.impl.conn.Wire.wire
 #+END_EXAMPLE
 
-因为这个工具是测试网络的，所以socketRead0很多这个也很正常，那么怀疑点就是log4j了。其实这个时候应该就可以分析出问题的原因了，但是我还有点不太相信这个结果：`org.apache.http.impl.conn.Wire.wire(Wire.java:72)` 这个地方调用了debug log，很可能就是造成CPU使用率很高的原因。但是我忽略这个过程，觉得这个工具不是特别靠谱，非常可惜，接着使用了更加复杂的profiling工具。
+因为这个工具是测试网络的，所以socketRead0很多这个也很正常，那么怀疑点就是log4j了。其实这个时候应该就可以分析出问题的原因了，但是我还有点不太相信这个结果： `org.apache.http.impl.conn.Wire.wire(Wire.java:72)` 这个地方调用了debug log，很可能就是造成CPU使用率很高的原因。但是我忽略这个过程，觉得这个工具不是特别靠谱，非常可惜，接着使用了更加复杂的profiling工具。
 
 ** Java In Flames
 
@@ -100,13 +100,13 @@ perf-map-agent地址在这 https://github.com/jvm-profiling-tools/perf-map-agent
 
 最后跑下来火焰图也是这样的，大部分时间都在 `org.apache.http.impl.conn.Wire:::wire` 这个函数上，看来这次应该能确定问题在这了。
 
-[[../images/high-cpu-utilization-by-log4j-0.png]]
+[[../images/Pasted-Image-20231225103209.png]]
 
 ** Wire::wire函数实现
 
 其实拿出代码来看，里面也没有什么复杂的。读取数据，然后拼接字符串，性能肯定不会是在jvm lib里面，唯一的原因就是在debug日志这块，这个和最开始Java HPROF的测试结果是可以对上的。
 
-#+BEGIN_SRC java
+#+BEGIN_SRC Java
 private void wire(final String header, final InputStream inStream)
   throws IOException {
     final StringBuilder buffer = new StringBuilder();

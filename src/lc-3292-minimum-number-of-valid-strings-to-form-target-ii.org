@@ -1,0 +1,76 @@
+#+title: LC 3292. 形成目标字符串需要的最少字符串数 II
+
+这题看了题解 https://leetcode.cn/problems/minimum-number-of-valid-strings-to-form-target-ii/solutions/2917929/ac-zi-dong-ji-pythonjavacgo-by-endlessch-hcqk/ 之前没有写过AC自动机，按照题解给的链接看了一下OI Wiki上的内容，大致搞清楚了AC自动机怎么写。这题用AC自动机还有一个前提就是尽可能匹配最长的前缀，如果有了这个特性之后就是一个DP算法了，最重要的就是知道当前位置可以匹配的最长前缀是多少。
+
+#+BEGIN_SRC Python
+class Solution:
+    def minValidStrings(self, words: List[str], target: str) -> int:
+
+        trie = ACTrie()
+        for w in words:
+            trie.add(w)
+        trie.build_fail()
+
+        n = len(target)
+        dp = [0] * (n + 1)
+        now = trie
+        for i, c in enumerate(target):
+            c = ord(c) - ord('a')
+            now = now.child[c]
+            if now is trie: return -1
+            dp[i + 1] = dp[i + 1 - now.length] + 1
+        return dp[-1]
+#+END_SRC
+
+ACTrie实现如下，实现有几个要点：
+1. root节点是fail的最根源，root节点其实是不匹配任何前缀的。
+2. 如果某个节点x的 `child[i]` 是空的话，可以将 `child[i]` 也设置成为fail节点，这样自动机就创建完成了。
+3. 整个 `build_fail` 是一个BFS过程，按照深度知道所有的fail节点。
+
+#+BEGIN_SRC Python
+class ACTrie:
+    def __init__(self):
+        self.child: List[ACTrie] = [None] * 26
+        self.fail = None
+        self.length = 0
+        self.word = None
+
+    def __repr__(self):
+        return '%s' % (self.word if self.word else '?')
+
+    def add(self, w):
+        root = self
+        for pos, c in enumerate(w):
+            c = ord(c) - ord('a')
+            if root.child[c] is None:
+                x = ACTrie()
+                root.child[c] = x
+            root = root.child[c]
+            root.length = pos + 1
+            # root.word = w[:pos + 1]
+
+    def build_fail(self):
+        root = self
+        from collections import deque
+        q = deque()
+        for i, t in enumerate(root.child):
+            if t is not None:
+                t.fail = root
+                q.append(t)
+            else:
+                root.child[i] = root
+
+        while q:
+            x = q.popleft()
+            for i, t in enumerate(x.child):
+                f = x.fail
+                while f and f.child[i] is None:
+                    f = f.fail
+                f = f.child[i] if f else root
+
+                if t is not None:
+                    t.fail = f
+                    q.append(t)
+                else:
+                    x.child[i] = f
+#+END_SRC

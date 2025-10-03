@@ -16,10 +16,10 @@
 <h2>Table of Contents</h2>
 <div id="text-table-of-contents" role="doc-toc">
 <ul>
-<li><a href="#org45c3323">1. 问题背景</a></li>
-<li><a href="#org6866454">2. 整体结构</a></li>
-<li><a href="#org97c681c">3. 资源配置</a></li>
-<li><a href="#org4f753be">4. 实现细节</a></li>
+<li><a href="#orgd564688">1. 问题背景</a></li>
+<li><a href="#org3f54310">2. 整体结构</a></li>
+<li><a href="#org89c2b5a">3. 资源配置</a></li>
+<li><a href="#org2cc24fa">4. 实现细节</a></li>
 </ul>
 </div>
 </div>
@@ -35,8 +35,8 @@
 这篇文章不是发在SIGMOD而是OSDI上，所以设计目标是通用eph-storage服务。
 </p>
 
-<div id="outline-container-org45c3323" class="outline-2">
-<h2 id="org45c3323"><span class="section-number-2">1.</span> 问题背景</h2>
+<div id="outline-container-orgd564688" class="outline-2">
+<h2 id="orgd564688"><span class="section-number-2">1.</span> 问题背景</h2>
 <div class="outline-text-2" id="text-1">
 <p>
 这篇文章的背景是，现在有各种serverless platform, 大家可以在上面写serverless function. 但是function之间如果先要交换数据的话，尤其是临时数据的话会很有问题，还有想比如MapReduce中间这个shuffle过程完全没有必要写在HDFS上。这些交换数据的特点是：
@@ -62,8 +62,8 @@ Ephemeral Storage Requirements
 </p>
 
 
-<div id="org29cfa92" class="figure">
-<p><img src="../images/pocket-elastic-ephemeral-storage-for-serverless-analytics-0.png" alt="pocket-elastic-ephemeral-storage-for-serverless-analytics-0.png" />
+<div id="org18938e0" class="figure">
+<p><img src="../images/Pasted-Image-20231225104507.png" alt="Pasted-Image-20231225104507.png" />
 </p>
 </div>
 
@@ -72,22 +72,22 @@ Ephemeral Storage Requirements
 </p>
 
 
-<div id="org7cb9567" class="figure">
-<p><img src="../images/pocket-elastic-ephemeral-storage-for-serverless-analytics-1.png" alt="pocket-elastic-ephemeral-storage-for-serverless-analytics-1.png" />
+<div id="orgcc52dd4" class="figure">
+<p><img src="../images/Pasted-Image-20231225104442.png" alt="Pasted-Image-20231225104442.png" />
 </p>
 </div>
 </div>
 </div>
 
-<div id="outline-container-org6866454" class="outline-2">
-<h2 id="org6866454"><span class="section-number-2">2.</span> 整体结构</h2>
+<div id="outline-container-org3f54310" class="outline-2">
+<h2 id="org3f54310"><span class="section-number-2">2.</span> 整体结构</h2>
 <div class="outline-text-2" id="text-2">
 <p>
 这个东西整个结构看上去和GFS/HDFS非常类似，只不过针对eph storage不用考虑storage server上面的高可用，然后在选择storage server上可以使用特定算法平衡吞吐和存储空间。整个系统架构如下：
 </p>
 <ul class="org-ul">
 <li>Controller 可以认为是GFS master，但是它只负责注册/销毁Job以及进行扩缩容。存储对象的metadata都放在了metadata server上面。</li>
-<li>Metadata server. 管理存储对象的metadata信息，对象按照64KB(可配置）进行拆分为block，然后选择不同的storage server进行存储。为了简化设计，每个Job下面产生的对象只会让一个metadata server来负责管理。</li>
+<li>Metadata server. 管理存储对象的metadata信息，对象按照64KB(可配置)进行拆分为block，然后选择不同的storage server进行存储。为了简化设计，每个Job下面产生的对象只会让一个metadata server来负责管理。</li>
 <li>Storage server. 实际存储对象block的服务器，根据Job特点可以选择不同类型的实例。</li>
 <li>HA策略：controller暂时没有做HA, 理论上可以使用master-slave来做；metadata server是写WAL到NFS上故障恢复可以恢复状态；storage server则没有必要做HA。</li>
 </ul>
@@ -108,15 +108,15 @@ Pocket offers high throughput and low latency for arbitrary size data sets, auto
 </ol>
 
 
-<div id="org2d3c222" class="figure">
-<p><img src="../images/pocket-elastic-ephemeral-storage-for-serverless-analytics-2.png" alt="pocket-elastic-ephemeral-storage-for-serverless-analytics-2.png" />
+<div id="org360b961" class="figure">
+<p><img src="../images/Pasted-Image-20231225104344.png" alt="Pasted-Image-20231225104344.png" />
 </p>
 </div>
 </div>
 </div>
 
-<div id="outline-container-org97c681c" class="outline-2">
-<h2 id="org97c681c"><span class="section-number-2">3.</span> 资源配置</h2>
+<div id="outline-container-org89c2b5a" class="outline-2">
+<h2 id="org89c2b5a"><span class="section-number-2">3.</span> 资源配置</h2>
 <div class="outline-text-2" id="text-3">
 <p>
 文章里面叫做“Rightsizing Resouce Allocations”，其实包含几个问题：
@@ -128,7 +128,7 @@ Pocket offers high throughput and low latency for arbitrary size data sets, auto
 </ol>
 
 <p>
-第一个问题的解决方式是，是在job创建的时候传入hints，告诉controller这个job对于吞吐(T)和存储(C)的需求情况（或者是估算出来），以及是否延迟敏（放置在什么介质上S/storage media)。如果T/C不满足的话，那么就需要进行扩容(seconds ~ minutes)，扩容完成之后使用online-binpack方式对T/C/S进行拆解，这样每个storage server上就有一个权重（优先顺序是T/C/S).  然后将这个weight map传递给metadata server, 这样metadata sever每次分配的都是按照weight分配storage server大体就不会有错误。其实这个思想很好，就是先从总体上得到概率分布，然后实际执行时候按照这个概率分布去分配。
+第一个问题的解决方式是，是在job创建的时候传入hints，告诉controller这个job对于吞吐(T)和存储(C)的需求情况（或者是估算出来），以及是否延迟敏(放置在什么介质上S/storage media)。如果T/C不满足的话，那么就需要进行扩容(seconds ~ minutes)，扩容完成之后使用online-binpack方式对T/C/S进行拆解，这样每个storage server上就有一个权重(优先顺序是T/C/S).  然后将这个weight map传递给metadata server, 这样metadata sever每次分配的都是按照weight分配storage server大体就不会有错误。其实这个思想很好，就是先从总体上得到概率分布，然后实际执行时候按照这个概率分布去分配。
 </p>
 
 
@@ -159,15 +159,15 @@ controller并不主动做load balance. 对于已经分配的资源不做任何�
 </p>
 
 
-<div id="org9e379eb" class="figure">
-<p><img src="../images/pocket-elastic-ephemeral-storage-for-serverless-analytics-3.png" alt="pocket-elastic-ephemeral-storage-for-serverless-analytics-3.png" />
+<div id="org1af80ec" class="figure">
+<p><img src="../images/Pasted-Image-20231225104408.png" alt="Pasted-Image-20231225104408.png" />
 </p>
 </div>
 </div>
 </div>
 
-<div id="outline-container-org4f753be" class="outline-2">
-<h2 id="org4f753be"><span class="section-number-2">4.</span> 实现细节</h2>
+<div id="outline-container-org2cc24fa" class="outline-2">
+<h2 id="org2cc24fa"><span class="section-number-2">4.</span> 实现细节</h2>
 <div class="outline-text-2" id="text-4">
 <p>
 controller使用python编写，每个节点上的daemon也使用python使用，使用K8s Operations(kops)来启动虚拟机(metadata server/storage server).
@@ -198,5 +198,5 @@ We implement three different storage tiers for Pocket. The first is a DRAM tier 
 </div>
 </div>
 </div>
-<div id="content"><!-- DISQUS BEGIN --><div id="disqus_thread"></div><script>/***  RECOMMENDED CONFIGURATION VARIABLES: EDIT AND UNCOMMENT THE SECTION BELOW TO INSERT DYNAMIC VALUES FROM YOUR PLATFORM OR CMS.*  LEARN WHY DEFINING THESE VARIABLES IS IMPORTANT: https://disqus.com/admin/universalcode/#configuration-variables*/var disqus_config = function () {this.page.url = 'https://dirtysalt.github.io/html/pocket-elastic-ephemeral-storage-for-serverless-analytics.html';this.page.identifier = 'pocket-elastic-ephemeral-storage-for-serverless-analytics.html';};(function() {var d = document, s = d.createElement('script');s.src = 'https://dirlt.disqus.com/embed.js';s.setAttribute('data-timestamp', +new Date());(d.head || d.body).appendChild(s);})();</script><noscript>Please enable JavaScript to view the <a href="https://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript><!-- DISQUS END --></div></body>
+</body>
 </html>

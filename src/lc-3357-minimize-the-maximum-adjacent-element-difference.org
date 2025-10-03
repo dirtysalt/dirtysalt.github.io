@@ -1,0 +1,98 @@
+#+title: LC 3357. 最小化相邻元素的最大差值
+https://leetcode.cn/problems/minimize-the-maximum-adjacent-element-difference/description/
+
+这题看了 [[https://leetcode.cn/problems/minimize-the-maximum-adjacent-element-difference/solutions/2991154/er-fen-tan-xin-fen-lei-tao-lun-by-tsreap-4p8l/][题解]] ，感觉解决过程有点意思，主要的突破点是把X和Y尝试固定下来，主框架还是使用二分搜索。
+
+假设我们选择出来了X, Y. 先要区分中间是一个-1,还是两个-1.
+- 如果是一个-1的话，那么只需要检查X, Y是否满足
+- 如果里面是两个-1的话，那么还需要检查Y-X是否满足条件。
+
+至于如何选择X, Y.
+- 我们可以先把所有可能的边界值全部列举出来，这些边界值的宽度都是 `2*k`
+- X一定是 `min(a) + k`. 而Y去尝试选择最大的，但是X没有办法覆盖的，下边界值，这样选择的理由是
+- 可以尽可能确保Y可以覆盖X没有办法覆盖到的范围。
+- 同时选择下边界值值确保X, Y之间可以尽可能满足条条件。
+- 本质上这里还是使用贪心算法。
+
+#+BEGIN_SRC Python
+
+class Solution:
+    def minDifference(self, nums: List[int]) -> int:
+
+        def test(arr, k):
+            border = []
+            for l, c, r in arr:
+                if c > 1 and (r - l) > 3 * k:
+                    return False
+                border.append((l - k, l + k))
+                border.append((r - k, r + k))
+            border.sort()
+
+            # choose X
+            x = border[0][1]
+            # choose Y
+            y = border[0][0]
+            for l, r in border:
+                if x < l: y = max(y, l)
+
+            # print(border, k, x, y)
+
+            def ok(l, c, r):
+                if abs(l - x) <= k and abs(r - x) <= k: return True
+                if abs(l - y) <= k and abs(r - y) <= k: return True
+                if c > 1:
+                    if (y - x) > k: return False
+                    if abs(l - x) <= k and abs(r - y) <= k: return True
+                return False
+
+            # right now (Y-X) maybe > k
+            # but we can check if we can cover only with X
+            for l, c, r in arr:
+                if not ok(l, c, r): return False
+            return True
+
+        s, e = 0, max(nums)
+        # arr -> list[(left, how many -1, right)]
+        # left, right could be -1
+        arr, l, cnt = [], -1, 0
+        for i in range(len(nums)):
+            if nums[i] == -1:
+                cnt += 1
+                continue
+
+            if cnt != 0:
+                arr.append((l, cnt, nums[i]))
+                cnt = 0
+            l = nums[i]
+
+            if i > 0 and nums[i - 1] != -1:
+                s = max(s, abs(nums[i - 1] - nums[i]))
+            if (i + 1) < len(nums) and nums[i + 1] != -1:
+                s = max(s, abs(nums[i + 1] - nums[i]))
+
+        if cnt != 0:
+            arr.append((l, cnt, -1))
+
+        if not arr: return s
+        if len(arr) == 1 and (arr[0], arr[-1]) == (-1, -1): return 0
+
+        for i in range(len(arr)):
+            l, cnt, r = arr[i]
+            l = l if l != -1 else r
+            r = r if r != -1 else l
+            if l > r:
+                l, r = r, l
+            arr[i] = (l, cnt, r)
+
+        # print(arr)
+
+        while s <= e:
+            m = (s + e) // 2
+            ok = test(arr, m)
+            # print(ok)
+            if ok:
+                e = m - 1
+            else:
+                s = m + 1
+        return s
+#+END_SRC

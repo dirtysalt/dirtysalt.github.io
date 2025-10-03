@@ -10,7 +10,7 @@ Two solutions have been explored to mitigate this network bot- tleneck: caching 
 Existing DBMSs consider caching and computation pushdown as orthogonal. Most systems implement only one of them. Some systems, such as Exadata [49], Netezza [23], Redshift Spectrum [8], and Presto [14] consider the two techniques as independent: query operators can either access cached data (i.e., full tables) or push down computation on remote data, but not both.
 #+END_QUOTE
 
-理想的查询应该是， 一部分从caching里面拿数据，一部分交给pushdown，然后数据源在上面做merge两路数据。FPDB(FlexPushdownDB)引入separable operators的概念，这对这类operator是可以拆分成为两路查询，并且将结果合并上来的。并且一旦出现cache miss, 我们并不会急于立刻取cache,  是需要评估相比pushdown的cost如何：如果pushdown cost很低的话，并且访问频次很低的话，那么对未来查询可以继续使用pushdown.  为此引入的cache淘汰策略叫做weighted-lfu, 所谓weight就是这个cache的benefit，综合考虑cache size，access frequency，以及作用在这个cache上的predicate（由此计算出来的selectivity).
+理想的查询应该是， 一部分从caching里面拿数据，一部分交给pushdown，然后数据源在上面做merge两路数据。FPDB(FlexPushdownDB)引入separable operators的概念，这对这类operator是可以拆分成为两路查询，并且将结果合并上来的。并且一旦出现cache miss, 我们并不会急于立刻取cache,  是需要评估相比pushdown的cost如何：如果pushdown cost很低的话，并且访问频次很低的话，那么对未来查询可以继续使用pushdown.  为此引入的cache淘汰策略叫做weighted-lfu, 所谓weight就是这个cache的benefit，综合考虑cache size，access frequency，以及作用在这个cache上的predicate(由此计算出来的selectivity).
 
 #+BEGIN_QUOTE
 FPDB introduces the concept of separable operators, which com- bine local computation on cached segments and pushdown on the segments in the cloud storage. This hybrid execution can leverage cached data at a fine granularity. While not all relational operators are separable, some of the most commonly-used ones are, including filtering, projection, aggregation. We introduce a merge operator to combine the outputs from caching and pushdown.
@@ -48,7 +48,7 @@ Moreover, some recent work explored processing-in-memory (PIM) to push computati
 
 架构图示
 
-[[../images/flexpushdowndb-hybrid-pushdown-and-caching-in-cloud-dbms-0.png]]
+[[../images/Pasted-Image-20231225104533.png]]
 
 - Caching Table Data or Query Results. 是缓存Table Data还是缓存结果，FPDB选择了缓存Table Data. 如果选择Query Results并且是中间节点结果的话，其实就相当于是MV.
 - Storage and Caching Granularity. 将table拆分成为许多个partition, 每个partition下面的column data作为cache unit. 可以使用(table name, partition name, colum name)  tuple作为cache key,  使用Apache Arrow作为cache file.
@@ -74,7 +74,7 @@ The basic caching unit in FPDB is a segment, which contains data for a particula
 - Hash Join. Build side没有办法，Probe side需要下推bloom filter, 这个需要pushdown storage支持bloom filter. 可能比较难。
 - Sort.  要求cache和pushdown storage都支持sort. 但是大部分pushdown storage都不支持sort(However, since the cloud storage today does not support sorting (e.g., S3 Select), the separation of sorting is not supported in FPDB.)
 
-FPDB在生成计划的时候有下面这样的假设：从cost上来看, local cache < pushdown < pullup(拿到所有数据，或者说在上面做random access).  不过感觉这里有个问题就是，以SR为例FE需要知道每个节点的缓存情况，才能生成具体的计划，但是让FE去追踪BE cache情况比较复杂（心跳会比较多，而且还涉及到pin/unpin cache file). 最好的方式还是让BE自己决定走cache还是pushdown.
+FPDB在生成计划的时候有下面这样的假设：从cost上来看, local cache < pushdown < pullup(拿到所有数据，或者说在上面做random access).  不过感觉这里有个问题就是，以SR为例FE需要知道每个节点的缓存情况，才能生成具体的计划，但是让FE去追踪BE cache情况比较复杂(心跳会比较多，而且还涉及到pin/unpin cache file). 最好的方式还是让BE自己决定走cache还是pushdown.
 
 #+BEGIN_QUOTE
 FPDB currently uses heuristics to generate separable query plans. It takes an initial plan from the query optimizer, and splits the execution of separable operators based on the current cache content. Specifically, an operator on a partition is always processed based on cached segments whenever the accessed data is cached. Otherwise, we try to pushdown the processing of the partition as much as we can. If neither works (e.g., the operator is not separable), we fall back to the pullup solution and load the missing segments from the storage layer. Note that the heuristics we adopt can generate only one separable plan given an input query plan. We adopt these heuristics based on the following two assumptions:
@@ -97,13 +97,13 @@ Cache Eviction策略叫做Benefit-Based Caching Framework, 这个东西的好处
 - LFU  把benefit 设置成为 (frequency * 1/(segment size)). 这里把segment size考虑进去
 - Belady 把benefit 设置成为 1/(下次使用这个cache的时间). 这个是理想的情况
 
-[[../images/flexpushdowndb-hybrid-pushdown-and-caching-in-cloud-dbms-1.png]]
+[[../images/Pasted-Image-20231225104628.png]]
 
 Weighted-LFU算法则考虑了：如果这个cache被evicted出去之后，使用pushdown的代价如何，包括网络传输，扫描代价，计算predicates代价。每次访问都需要更新这个benefit.
 
 但是我觉得好像有个点没有考虑进去，就是考虑data freshness/recency.  如果某个file对应的数据特别老，再次被访问的几率很小的话，那么需要花很长时间才能evicted出去。
 
-[[../images/flexpushdowndb-hybrid-pushdown-and-caching-in-cloud-dbms-2.png]]
+[[../images/Pasted-Image-20231225104737.png]]
 
 ** 实现和实验细节
 

@@ -8,7 +8,7 @@ Code
 - https://code.launchpad.net/~codership/codership-mysql/5.6
 - [[file:galera-code.org][Galera代码分析]]
 
-[[../images/galera-code-structure.png]]
+[[../images/Pasted-Image-20231225103228.png]]
 
 Official
 - Index http://www.codership.com/wiki/doku.php
@@ -49,7 +49,7 @@ Info.(@2012)
   - Severalnines
 
 ** Replicator Architecture
-[[../images/galera-overview.png]] [[../images/galera-library.png]]
+[[../images/Pasted-Image-20231225103655.png]] [[../images/Pasted-Image-20231225103334.png]]
 
 - 完成事务在集群内的广播
 - 应用从其他节点接收并全局验证通过的事件到本地
@@ -59,9 +59,9 @@ Info.(@2012)
 
 -----
 
-[[../images/galera-gcs2.png]]
+[[../images/Pasted-Image-20231225104223.png]]
 
-[[../images/galera-gcs.jpg]]
+[[../images/Pasted-Image-20231225105103.png]]
 
 - Group Communication层实现统一全局数据同步策略和集群内所有事务的排序，便于生成GTID。
   - Galera cluster is built on top of *a proprietary group communication system* layer which implements virtual synchrony QoS.
@@ -72,7 +72,7 @@ Info.(@2012)
 
 -----
 
-[[../images/galera-certification.png]] [[../images/galera-certification-en.png]]
+[[../images/Pasted-Image-20231225103511.png]] [[../images/Pasted-Image-20231225104905.png]]
 
 在数据库事务提交时，会使用2阶段提交方式，在ha_trans_commit中，首先会针对每一个存储引擎执行一个ht->prepare函数，而对于Galera，在内部实现也是当作一个内嵌的存储引擎使用的，所以它执行的是wsrep_prepare，这个函数的功能是将在执行过程中产生的binlog通过下面会介绍到的接口append_data传到其它节点上面去（或者没有传过去，只是将这些数据对象存储在本地，等待提交操作），然后再通过下面这个接口pre_commit去与其它节点的Galera通讯检查有没有冲突，这个过程也就是在 *介绍Galera的文章中说到的certification阶段* 。 *note:是在本地先提交吗？*
 - Transactions process independently in each cluster node
@@ -88,7 +88,7 @@ http://en.wikipedia.org/wiki/Virtual_synchrony
 - http://www.codership.com/wiki/doku.php?id=node_failure
 - http://www.codership.com/wiki/doku.php?id=node_provisioning_recovery
 
-[[../images/galera-fsm.png]]
+[[../images/Pasted-Image-20231225103929.png]]
 
 1. Node establishes connection to a primary component.
 2. Node succeeds in state transfer request. It starts to cache the writesets.
@@ -120,7 +120,7 @@ http://www.codership.com/wiki/doku.php?id=gcache
 
 *Swap Size Requirements*
 
-During normal operation MySQL/Galera node does not consume much more memory than a regular MySQL server. Additional memory is consumed for certification index and uncommitted writesets, but normally this should not be noticeable in a typical application. There is one exception though: （维护certification index以及没有提交的writeset)
+During normal operation MySQL/Galera node does not consume much more memory than a regular MySQL server. Additional memory is consumed for certification index and uncommitted writesets, but normally this should not be noticeable in a typical application. There is one exception though: (维护certification index以及没有提交的writeset)
 
 Writeset caching during state transfer. When a node is receiving a state transfer it cannot process and apply incoming writesets because it has no state to apply them to yet. Depending on a state transfer mechanism (e.g. mysqldump) the node that sends state transfer may not be able to apply writesets as well. Thus they need to cache those writesets for a catch-up phase. Currently the writesets are cached in memory and, if the system runs out of memory either state transfer will fail or the cluster would block waiting for the state transfer to end.(在state transfer阶段，donor是不可以写入的，所以在这期间需要缓存所有到达的writeset)
 
@@ -157,14 +157,14 @@ To control memory usage for writeset caching, check Galera parameters: *note：b
 
 There are two conceptually different ways to transfer a state from one MySQL server to another:
 - Using mysqldump. This requires the receiving server to be fully initialized and ready to accept connections *before* the transfer. This method is by definition blocking, in that it blocks donor server from modifying its own state for the duration of transfer. It is also the slowest of all, and in the loaded cluster that might be an issue in a loaded cluster.（使用mysqldump。要求在transfer之前配置好。会阻塞donor操作，速度比较慢，高负载情况下会有问题）
-- Copying data files directly. This requires that the receiving server is initialized *after* the transfer. rsync, xtrabackup and other methods fall into this category. These methods a much faster than mysqldump, but they have certain limitations, like they can be used only on server startup and receiving server must be configured very similarly to the donor (e.g. innodb_file_per_table should be the same and so on). Some of these methods, e.g. xtrabackup, can be potentially made non-blocking on donor.（直接copy文件。要求transfer之后配置好？？速度比较快，但是要求配置源和目的配置相同。使用xtrabackup不会阻塞donor)
+- Copying data files directly. This requires that the receiving server is initialized *after* the transfer. rsync, xtrabackup and other methods fall into this category. These methods a much faster than mysqldump, but they have certain limitations, like they can be used only on server startup and receiving server must be configured very similarly to the donor (e.g. innodb_file_per_table should be the same and so on). Some of these methods, e.g. xtrabackup, can be potentially made non-blocking on donor.(直接copy文件。要求transfer之后配置好？？速度比较快，但是要求配置源和目的配置相同。使用xtrabackup不会阻塞donor)
 - *Xtrabackup and rsync SST cannot be used for a running server.* It is not possible to copy datafiles under running InnoDB. Having wsrep_address set to a list of node addresses and starting replication on a running node can lead to node crash. +#todo: Xtrabackup需要停机处理吗？+  #note: xtrabackup不需要停机处理
 
 SST Donor
 - All SST methods cause some disturbance for donor node
 - By default donor accepts client connections, although committing will be prohibited for a while
 - If wsrep_sst_donor_rejects_queries is set, donor gives unknown command error to clients
-- Best practice is to dedicate a reference node for donor and backup activities（使用单独一台机器来做参照节点，这个机器上面没有负载，可以用作备份以及donor)
+- Best practice is to dedicate a reference node for donor and backup activities(使用单独一台机器来做参照节点，这个机器上面没有负载，可以用作备份以及donor)
 
 IST(Very effective)
 - If joining node had some previous state and gcache spans to that, then IST can be used.
@@ -172,7 +172,7 @@ IST(Very effective)
 - A short asynchronous replication session. If communication is bad quality, node can drop and join back fast with IST.
 
 *** Parallel Applying
-[[../images/galera-parallel-applying.png]]
+[[../images/Pasted-Image-20231225104747.png]]
 
 - Galera assigns non-conflicting WS tasks to parallel appliers
 - Works not on database, not on table, but on row level
@@ -202,7 +202,7 @@ Use wsrep_osu_method to choose either option. *ALTER TABLE to create new autoinc
 - Each node will get the DDL statement and must process the DDL at same slot in transaction stream
 - Galera will isolate the affected table/database for the duration of DDL processing
 
-[[../images/galera-schema-upgrade-toi.png]] [[../images/galera-schema-upgrade-toi2.png]]
+[[../images/Pasted-Image-20231225103809.png]] [[../images/Pasted-Image-20231225104018.png]]
 
 *Rolling Schema Upgrade* （节点首先desync，DDL作用在节点上之后，然后resync）
 - DDL is not replicated
@@ -211,11 +211,11 @@ Use wsrep_osu_method to choose either option. *ALTER TABLE to create new autoinc
 - DBA should roll RSU operation over allnodes
 - Requires backwards compatible schema changes
 
-[[../images/galera-schema-upgrade-rsu.png]] [[../images/galera-schema-upgrade-rsu2.png]] [[../images/galera-schema-upgrade-rsu3.png]] [[../images/galera-schema-upgrade-rsu4.png]]
+[[../images/Pasted-Image-20231225103322.png]] [[../images/Pasted-Image-20231225104751.png]] [[../images/Pasted-Image-20231225104819.png]] [[../images/Pasted-Image-20231225104554.png]]
 
 ** Certification Based Replication
 *** Introduction
-Certification based replication uses group communication and transaction ordering techniques to achieve synchronous replication. Transactions execute optimistically in a single node (or replica) and, at commit time, run a coordinated certification process to enforce global consistency. Global coordination is achieved with the help of a broadcast service, that establishes a global total order among concurrent transactions. (基于 *组通信* 以及 *事务顺序化* 技术来达到同步备份。事务首先是乐观地在本地执行，然后提交给其他节点做验证来保证全局一致性）
+Certification based replication uses group communication and transaction ordering techniques to achieve synchronous replication. Transactions execute optimistically in a single node (or replica) and, at commit time, run a coordinated certification process to enforce global consistency. Global coordination is achieved with the help of a broadcast service, that establishes a global total order among concurrent transactions. (基于 *组通信* 以及 *事务顺序化* 技术来达到同步备份。事务首先是乐观地在本地执行，然后提交给其他节点做验证来保证全局一致性)
 
 Pre-requisites for certification based replication: *note：that's why InnoDB is choosen？*
 - database is transactional (i.e. it can rollback uncommitted changes)（数据库必须支持事务）
@@ -233,7 +233,7 @@ Database Hot-Spots
 Certification based replication (or more precisely, certification-based conflict resolution) is based on academic research, in particular on Fernando Pedone's Ph.D. thesis http://www.inf.usi.ch/faculty/pedone/Paper/199x/These-2090-Pedone.pdf
 
 *** Consistent read(read causality)
-[[../images/galera-consistent-read.png]]
+[[../images/Pasted-Image-20231225103909.png]]
 
 There is causal dependency between operations on two database connections:
 - One thread does a database operation
@@ -272,11 +272,11 @@ Possible methods:
 
 *Disconnecting a node for backup*
 
-[[../images/galera-backup-disconnect-node.png]] [[../images/galera-backup-backup.png]]
+[[../images/Pasted-Image-20231225104532.png]] [[../images/Pasted-Image-20231225104620.png]]
 
 *Backup by SST API*
 
-[[../images/galera-backup-by-sst-api.png]]
+[[../images/Pasted-Image-20231225103404.png]]
 
 *Backup by xtrabackup*
 - Xtrabackup is hot backup method and can be used anytime

@@ -1,0 +1,220 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>data skew hash join优化方法</title>
+<meta name="author" content="dirtysalt" />
+<meta name="generator" content="Org Mode" />
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content" class="content">
+<h1 class="title">data skew hash join优化方法</h1>
+<p>
+<a href="https://docs.databricks.com/en/optimizations/skew-join.html">Skew join optimization | Databricks on AWS</a>
+</p>
+
+<p>
+<a href="https://medium.com/expedia-group-tech/skew-join-optimization-in-hive-b66a1f4cc6ba">Skew Join Optimization in Hive. Handling skewed data with Hive UDF | by Ambrish Bhargava | Expedia Group Technology | Medium</a>
+</p>
+
+<p>
+data skew hash join问题是这样的：
+</p>
+<ul class="org-ul">
+<li>假设左右表需要按照某个key进行join.</li>
+<li>右表是维表，每个key有各种属性</li>
+<li>左表是事实表，但是一个或者是几个key特别多，这些就是skewed key.</li>
+<li>当进行shuffle hash join的时候，按照key进行shuffle的话，那么skewed key落在的机器上压力就比较大。</li>
+</ul>
+
+<p>
+解决办法可以从broadcast hash join找灵感：使用了broadcast join的话，那么其实左表不用做任何shuffle, 这样就不会出现单点压力了。但是其实我们只需要部分的broadcast hash join, 针对skewed key进行broadcast join就行，而对其他的key还是走shuffle join.
+</p>
+
+<p>
+所以解决办法有点类似于partial broadcast join + partial shuffle join:
+</p>
+<ul class="org-ul">
+<li>右表的skew values产生复制多份，而对于non skew values则不需要进行复制。复制时候产生一个 `rand_col`</li>
+<li>左表针对每个value产生一个随机 `rand_col`.</li>
+<li>join条件改为 `L.key = R.key and L.rand_col = R.rand_col`.</li>
+<li>这样shuffle就不是按照key, 而是按照 `(key, rand_col)` 来做分发了，这样就可以避免单点问题。</li>
+<li>但是对于skewed value, 因为右表复制了多份，所以其实肯定在某个机器上可以join到。</li>
+</ul>
+
+<hr />
+
+<p>
+下面是实现方式
+</p>
+
+<p>
+<b><b>产生salt_table</b></b>  首先产生一个 `salt_table`. 这个table针对 skewed value 进行复制
+</p>
+
+<div class="org-src-container">
+<pre class="src src-Sql">with A as (select 1),
+salt_table as (
+  select unnest as salt_name,  generate_series as salt_rand from A, unnest(['CHINA', 'UNITED STATES']), generate_series(0, 10)
+) select * from salt_table;
+</pre>
+</div>
+
+<p>
+以tpch.nation来看，输出结果就是
+</p>
+
+<pre class="example" id="org2632c1b">
++---------------+-----------+
+| salt_name     | salt_rand |
++---------------+-----------+
+| CHINA         |         0 |
+| CHINA         |         1 |
+| CHINA         |         2 |
+| CHINA         |         3 |
+| CHINA         |         4 |
+| CHINA         |         5 |
+| CHINA         |         6 |
+| CHINA         |         7 |
+| CHINA         |         8 |
+| CHINA         |         9 |
+| CHINA         |        10 |
+| UNITED STATES |         0 |
+| UNITED STATES |         1 |
+| UNITED STATES |         2 |
+| UNITED STATES |         3 |
+| UNITED STATES |         4 |
+| UNITED STATES |         5 |
+| UNITED STATES |         6 |
+| UNITED STATES |         7 |
+| UNITED STATES |         8 |
+| UNITED STATES |         9 |
+| UNITED STATES |        10 |
++---------------+-----------+
+</pre>
+
+<p>
+<b><b>扩展右表</b></b> 然后在salt_table基础上扩展右表：右表和salt_tabl做left join. 如果没有join上，那么产生固定的值，否则使用 `salt_rand`.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-Sql">with A as (select 1),
+salt_table as (
+  select unnest as salt_name,  generate_series as salt_rand from A, unnest(['CHINA', 'UNITED STATES']), generate_series(0, 10)
+),
+right_table as (
+  select *, ifnull(salt_rand, 0) as rand_col
+    from nation left join salt_table
+   on nation.n_name = salt_table.salt_name
+) select * from right_table;
+</pre>
+</div>
+
+<p>
+以tpch.nation来看，输出结果如下
+</p>
+
+<pre class="example" id="org8b82968">
++-------------+----------------+-------------+---------------+-----------+----------+
+| n_nationkey | n_name         | n_regionkey | salt_name     | salt_rand | rand_col |
++-------------+----------------+-------------+---------------+-----------+----------+
+|           0 | ALGERIA        |           0 | NULL          |      NULL |        0 |
+|           1 | ARGENTINA      |           1 | NULL          |      NULL |        0 |
+|           2 | BRAZIL         |           1 | NULL          |      NULL |        0 |
+|           3 | CANADA         |           1 | NULL          |      NULL |        0 |
+|           4 | EGYPT          |           4 | NULL          |      NULL |        0 |
+|           5 | ETHIOPIA       |           0 | NULL          |      NULL |        0 |
+|           6 | FRANCE         |           3 | NULL          |      NULL |        0 |
+|           7 | GERMANY        |           3 | NULL          |      NULL |        0 |
+|           8 | INDIA          |           2 | NULL          |      NULL |        0 |
+|           9 | INDONESIA      |           2 | NULL          |      NULL |        0 |
+|          10 | IRAN           |           4 | NULL          |      NULL |        0 |
+|          11 | IRAQ           |           4 | NULL          |      NULL |        0 |
+|          12 | JAPAN          |           2 | NULL          |      NULL |        0 |
+|          13 | JORDAN         |           4 | NULL          |      NULL |        0 |
+|          14 | KENYA          |           0 | NULL          |      NULL |        0 |
+|          15 | MOROCCO        |           0 | NULL          |      NULL |        0 |
+|          16 | MOZAMBIQUE     |           0 | NULL          |      NULL |        0 |
+|          17 | PERU           |           1 | NULL          |      NULL |        0 |
+|          18 | CHINA          |           2 | CHINA         |        10 |       10 |
+|          18 | CHINA          |           2 | CHINA         |         9 |        9 |
+|          18 | CHINA          |           2 | CHINA         |         8 |        8 |
+|          18 | CHINA          |           2 | CHINA         |         7 |        7 |
+|          18 | CHINA          |           2 | CHINA         |         6 |        6 |
+|          18 | CHINA          |           2 | CHINA         |         5 |        5 |
+|          18 | CHINA          |           2 | CHINA         |         4 |        4 |
+|          18 | CHINA          |           2 | CHINA         |         3 |        3 |
+|          18 | CHINA          |           2 | CHINA         |         2 |        2 |
+|          18 | CHINA          |           2 | CHINA         |         1 |        1 |
+|          18 | CHINA          |           2 | CHINA         |         0 |        0 |
+|          19 | ROMANIA        |           3 | NULL          |      NULL |        0 |
+|          20 | SAUDI ARABIA   |           4 | NULL          |      NULL |        0 |
+|          21 | VIETNAM        |           2 | NULL          |      NULL |        0 |
+|          22 | RUSSIA         |           3 | NULL          |      NULL |        0 |
+|          23 | UNITED KINGDOM |           3 | NULL          |      NULL |        0 |
+|          24 | UNITED STATES  |           1 | UNITED STATES |        10 |       10 |
+|          24 | UNITED STATES  |           1 | UNITED STATES |         9 |        9 |
+|          24 | UNITED STATES  |           1 | UNITED STATES |         8 |        8 |
+|          24 | UNITED STATES  |           1 | UNITED STATES |         7 |        7 |
+|          24 | UNITED STATES  |           1 | UNITED STATES |         6 |        6 |
+|          24 | UNITED STATES  |           1 | UNITED STATES |         5 |        5 |
+|          24 | UNITED STATES  |           1 | UNITED STATES |         4 |        4 |
+|          24 | UNITED STATES  |           1 | UNITED STATES |         3 |        3 |
+|          24 | UNITED STATES  |           1 | UNITED STATES |         2 |        2 |
+|          24 | UNITED STATES  |           1 | UNITED STATES |         1 |        1 |
+|          24 | UNITED STATES  |           1 | UNITED STATES |         0 |        0 |
++-------------+----------------+-------------+---------------+-----------+----------+
+</pre>
+
+<p>
+<b><b>扩展左表</b></b> skewed value随机产生，non skewed value使用0. 这样就可以和上面左表join上.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-Sql">with left_table as (
+select n_nationkey, n_name, n_regionkey, case when n_name in ('CHINA', 'UNITED STATES') then round(rand() * 10) else 0 end as rand_col from nation
+)select * from left_table;
+</pre>
+</div>
+
+<p>
+输出如下，因为CHINA和US只有一个所以只产生了一个值。如果有多个的话，那么rand_col是不同的。
+</p>
+
+<pre class="example" id="org952c505">
++-------------+----------------+-------------+----------+
+| n_nationkey | n_name         | n_regionkey | rand_col |
++-------------+----------------+-------------+----------+
+|           0 | ALGERIA        |           0 |        0 |
+|           1 | ARGENTINA      |           1 |        0 |
+|           2 | BRAZIL         |           1 |        0 |
+|           3 | CANADA         |           1 |        0 |
+|           4 | EGYPT          |           4 |        0 |
+|           5 | ETHIOPIA       |           0 |        0 |
+|           6 | FRANCE         |           3 |        0 |
+|           7 | GERMANY        |           3 |        0 |
+|           8 | INDIA          |           2 |        0 |
+|           9 | INDONESIA      |           2 |        0 |
+|          10 | IRAN           |           4 |        0 |
+|          11 | IRAQ           |           4 |        0 |
+|          12 | JAPAN          |           2 |        0 |
+|          13 | JORDAN         |           4 |        0 |
+|          14 | KENYA          |           0 |        0 |
+|          15 | MOROCCO        |           0 |        0 |
+|          16 | MOZAMBIQUE     |           0 |        0 |
+|          17 | PERU           |           1 |        0 |
+|          18 | CHINA          |           2 |       10 |
+|          19 | ROMANIA        |           3 |        0 |
+|          20 | SAUDI ARABIA   |           4 |        0 |
+|          21 | VIETNAM        |           2 |        0 |
+|          22 | RUSSIA         |           3 |        0 |
+|          23 | UNITED KINGDOM |           3 |        0 |
+|          24 | UNITED STATES  |           1 |        7 |
++-------------+----------------+-------------+----------+
+</pre>
+</div>
+</body>
+</html>

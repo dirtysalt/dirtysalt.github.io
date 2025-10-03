@@ -9,7 +9,7 @@ define an arbitrary, dynamic topology. Records are delivered con-tinuously along
 ** MOTIVATION AND REQUIREMENTS
 文中以Google Zeitgeist产品举例，用于实时地发现一些搜索关键词热度变化。热度变化不能仅仅通过观察关键词搜索量的变化来判断，还要考虑关键词本身属性造成的随时间变化产生的波动（比如晚上搜索今晚电视节目预告就会比较多），所以热度变化需要考虑到关键词属性（模型）。
 
-[[../images/millwheel-google-zeitgeist.png]]
+[[../images/Pasted-Image-20231225104806.png]]
 
 In order to implement the Zeitgeist system, our approach is to bucket records into one-second intervals and to compare the ac-tual traffic for each time bucket to the expected traffic that the model predicts. If these quantities are consistently different over a non-trivial number of buckets, then we have high confidence that a query is spiking or dipping. In parallel, we update the model with the newly received data and store it for future use. # 将记录按照1s进行分组，然后对比实际流量和预期流量。如果持续地在多个分组上差异很大，那么我们就可以相信这个检索量在增高或是降低，同时我们用这些记录来更新模型。
 
@@ -66,7 +66,7 @@ Low watermark values are seeded by injectors, which send data into MillWheel fro
 
 By waiting for the low watermark of a computation to advance　past a certain value, the user can determine that they have a com-　plete picture of their data up to that time, as previously illustrated　by Zeitgeist’s dip detection. When assigning timestamps to new or　aggregate records, it is up to the user to pick a timestamp no smaller　than any of the source records. The low watermark reported by the　MillWheel framework measures known work in the system, shownin Figure 6. # 一旦知道LW, 那么就可以认为timestamp < LW的记录全部到达。下图说明LW是如何变化的.
 
-[[../images/millwheel-low-watermark-evolve.png]]
+[[../images/Pasted-Image-20231225104301.png]]
 
 *** Timers
 Timers are per-key programmatic hooks that trigger at a specific wall time or low watermark value. Timers are created and run in the context of a computation, and accordingly can run arbitrary code. The decision to use a wall time or low watermark value is dependent on the application – a heuristic monitoring system that wants to push hourly emails (on the hour, regardless of whether data was delayed) might use wall time timers, while an analytics system performing windowed aggregates could use low watermark timers. Once set, timers are guaranteed to fire in increasing times-tamp order. They are journaled in persistent state and can survive process restarts and machine failures. When a timer fires, it runs the specified user function and has the same exactly-once guaran-tee as input records. A simple implementation of dips in Zeitgeist would set a low watermark timer for the end of a given time bucket, and report a dip if the observed traffic falls well below the model’s prediction. # 定时器是和key绑定的，触发条件可以是wall time也可以是LW. 一旦timer被触发的话同样会在持久化状态上记录下来，确保exactly-once-delivery语义。
@@ -88,7 +88,7 @@ class Computation {
 #+END_EXAMPLE
 
 *** Computation API
-[[../images/millwheel-api-illustraed.png]]
+[[../images/Pasted-Image-20231225104337.png]]
 
 *** Injector and Low Watermark API
 At the system layer, each computation calculates a low water-mark value for all of its pending work (in-progress and queued de-liveries). Persistent state can also be assigned a timestamp value (e.g. the trailing edge of an aggregation window). This is rolled up automatically by the system in order to provide API semantics for timers in a transparent way – users rarely interact with low water-marks in computation code, but rather manipulate them indirectly through timestamp assignation to records. #  用户一般不用计算LW, 只需要关注定时器
@@ -127,7 +127,7 @@ We use a storage system such as Bigtable, which efficiently implements blind wri
 
 WP是向下游发送时候，在持久化状态和productions之前，乐观地先往下面发送records并且等待ACK. 如果接受ACK的话那么我们没有必要持久化productions. 可是如果整个pipeline非常深的话，如果其中一个computation没有回复ACK的话那么整个pipeline都会stall. 解决办法就是如果发现等待ACK时间太长的话，先在本地做好checkpoint(productions)然后ACK上层。
 
-[[../images/millwheel-weak-production-checkpoint.png]]
+[[../images/Pasted-Image-20231225104040.png]]
 
 *** State Manipulation
 In implementing mechanisms to manipulate user state in Mill-Wheel, we discuss both the “hard” state that is persisted to our backing store and the “soft” state which includes any in-memory caches or aggregates. We must satisfy the following user-visible guarantees: # 包括持久化状态和内存状态
@@ -172,26 +172,26 @@ In summary, our implementation of low watermarks does not re-quire any sort of s
 A critical metric for the performance of streaming systems is latency. The MillWheel framework supports low latency results, and it keeps latency low as the distributed system scales to more machines. To demonstrate the performance of MillWheel, we mea-sured record-delivery latency using a simple, single-stage MillWheel pipeline that buckets and sorts numbers. This resembles the many-to-many shuffle that occurs between successive computations that are keyed differently, and thus is a worst case of sorts for record delivery in MillWheel. Figure 13 shows the latency distribution
 for records when running over 200 CPUs. Median record delay is 3.6 milliseconds and 95th-percentile latency is 30 milliseconds, which easily fulfills the requirements for many streaming systems at Google (even 95th percentile is within human reaction time). # 实验的计算过程是单阶段实时排序，扩展到200CPUs. 中位延迟是3.6ms, 95%延迟是在30ms一下. 这个计算过程是idempotent的.
 
-[[../images/millwheel-output-latency.png]]
+[[../images/Pasted-Image-20231225103219.png]]
 
 This test was performed with strong productions and exactly-once disabled. With both of these features enabled, median latency jumps up to 33.7 milliseconds and 95th-percentile latency to 93.8 milliseconds. This is a succinct demonstration of how idempotent computations can decrease their latency by disabling these two fea-tures. # 因为上面计算是幂等的，所以我们可以关闭SP和exactly-once-delivery语义，然后中位延迟上升到33.7ms, 95%延迟在93.8ms一下。
 
 To verify that MillWheel’s latency profile scales well with the system’s resource footprint, we ran the single-stage latency exper-iment with setups ranging in size from 20 CPUs to 2000 CPUs, scaling input proportionally. Figure 14 shows that median latency stays roughly constant, regardless of system size. 99th-percentile latency does get significantly worse (though still on the order of 100ms). However, tail latency is expected to degrade with scale –more machines mean that there are more opportunities for things to go wrong. # 下图是验证规模扩展对延迟的影响，测试从20CPUs到2000CPUs. 可以看到中位延迟和95%延迟变化不是特别大，但是99%延迟也就是tail-latency迅速增长。
 
-[[../images/millwheel-latency-scalability.png]]
+[[../images/Pasted-Image-20231225103300.png]]
 
 *** Watermark Lag
 While some computations (like spike detection in Zeitgeist) do not need timers, many computations (like dip detection) use timers to wait for the low watermark to advance before outputting aggre-
 gates. For these computations, the low watermark’s lag behind real time bounds the freshness of these aggregates. Since the low wa-termark propagates from injectors through the computation graph, we expect the lag of a computation’s low watermark to be propor-tional to its maximum pipeline distance from an injector. We ran a simple three-stage MillWheel pipeline on 200 CPUs, and polledeach computation’s low watermark value once per second. In Fig-ure 15, we can see that the first stage’s watermark lagged real time by 1.8 seconds, however, for subsequent stages, the lag increased per stage by less than 200ms. Reducing watermark lag is an active area of development. # 一部分计算依赖于LW触发定时器，所以LW计算延迟也非常关键。这里实验构造了一个简单的3阶段计算过程在200CPUs上运行，然后下图是延迟情况
 
-[[../images/millwheel-low-watermark-lag.png]]
+[[../images/Pasted-Image-20231225104525.png]]
 
 从injector到第一阶段的LW延迟在1.8s, 之后每个阶段之间段延迟在200ms.
 
 *** Framework-Level Caching
 Due to its high rate of checkpointing, MillWheel generates sig-nificant amounts of traffic to the storage layer. When using a stor-age system such as Bigtable, reads incur a higher cost than writes, and MillWheel alleviates this with a framework-level cache. A common use case for MillWheel is to buffer data in storage until the low watermark has passed a window boundary and then to fetch the data for aggregation. This usage pattern is hostile to the LRU caches commonly found in storage systems, as the most recently modified row is the one least likely to be fetched soon. MillWheel knows how this data is likely to be used and can provide a bet-ter cache-eviction policy. In Figure 16 we measure the combined CPU usage of the MillWheel workers and the storage layer, relative to maximum cache size (for corporate-secrecy reasons, CPU usage has been normalized). Increasing available cache linearly improves CPU usage (after 550MB most data is cached, so further increases were not helpful). In this experiment, MillWheel’s cache was able to decrease CPU usage by a factor of two. # 使用框架级别的Cache来缓存之前处理过的数据结果，这样可以减少BigTable等data store的读取压力
 
-[[../images/millwheel-framework-level-cache.png]]
+[[../images/Pasted-Image-20231225103541.png]]
 
 *** Real-world Deployments
 MillWheel powers a diquote set of internal Google systems. It performs streaming joins for a variety of Ads customers, many of whom require low latency updates to customer-visible dashboards. Billing pipelines depend on MillWheel’s exactly-once guarantees. Beyond Zeitgeist, MillWheel powers a generalized anomaly-detection service that is used as a turnkey solution by many different teams. Other deployments include network switch and cluster health moni-toring. MillWheel also powers user-facing tools like image panorama generation and image processing for Google Street View. # 广告流式join, 计费系统，异常检测，网络集群健康监控，一些面向用户产品比如google street view中的图像全息生成和图像处理。
@@ -201,5 +201,3 @@ There are problems that MillWheel is poorly suited for. Mono-lithic operations t
 If a computation is performing an aggregation based on low wa-termark timers, MillWheel’s performance degrades if data delays hold back low watermarks for large amounts of time. This can result in hours of skew over buffered records in the system. Often-times memory usage is proportional to skew, because an application depends on low watermarks to flush this buffered data. To prevent memory usage from growing without bound, an effective remedy is to limit the total skew in the system, by waiting to inject newer records until the low watermarks have advanced. # 使用LW定时器的时候，如果输入数据延迟到来的话会让LW一直不动，造成的结果就是所有计算节点需要一直buffer数据（因为LW触发计算，计算完成之后，这部分buffered数据才可以释放）。一个有效的解决办法是injector插入新的记录让LW增长。
 
 ** RELATED WORK
-
-

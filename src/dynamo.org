@@ -44,7 +44,7 @@ We are extremely fortunate that the paper was selected for publication in SOSP; 
 - Clients and services engage in a Service Level Agreement (SLA), a formally negotiated contract where a client and a service agree on several system-related characteristics, which most prominently include the client’s expected request rate distribution for a particular API and the expected service latency under those conditions. An example of a simple SLA is a service guaranteeing that it will provide a response within 300ms for 99.9% of its requests for a peak client load of 500 requests per second.
 - In Amazon’s decentralized service oriented infrastructure, SLAs play an important role. For example a page request to one of the e-commerce sites typically requires the rendering engine to construct its response by sending requests to over 150 services. These services often have multiple dependencies, which frequently are other services, and as such it is not uncommon for the call graph of an application to have more than one level. To ensure that the page rendering engine can maintain a clear bound on page delivery each service within the call chain must obey its performance contract.（SLA对于SOA的重要性）
 
-[[../images/soa-amazon-platform.png]]
+[[../images/Pasted-Image-20231225104631.png]]
 
 -----
 - A common approach in the industry for forming a performance oriented SLA is to describe it using average, median and expected variance. *At Amazon we have found that these metrics are not good enough if the goal is to build a system where all customers have a good experience, rather than just the majority.* For example if extensive personalization techniques are used then customers with longer histories require more processing which impacts performance at the high-end of the distribution.
@@ -107,7 +107,7 @@ The architecture of a storage system that needs to operate in a production setti
 5. failure handling
 6. and scaling.
 
-[[../images/dynamo-techniques-summary.png]]
+[[../images/Pasted-Image-20231225103844.png]]
 
 *** System Interface
 Dynamo stores objects associated with a key through a simple interface; it exposes two operations: get() and put().
@@ -138,7 +138,7 @@ To address these issues, Dynamo uses a variant of consistent hashing (similar to
 - Each key, k, is assigned to a coordinator node (described in the previous section). The coordinator is in charge of the replication of the data items that fall within its range.
 - In addition to locally storing each key within its range, the coordinator replicates these keys at the N-1 clockwise successor nodes in the ring. This results in a system where each node is responsible for the region of the ring between it and its Nth predecessor.（在顺时针方向的N个节点上保存副本）
 
-[[../images/dynamo-partition-and-replication.png]]
+[[../images/Pasted-Image-20231225104829.png]]
 
 The list of nodes that is responsible for storing a particular key is called the *preference list*. The system is designed, as will be explained in Section 4.8, so that every node in the system can determine which nodes should be in this list for any particular key.
 - To account for node failures, preference list contains more than N nodes. Note that with the use of virtual nodes, it is possible that the first N successor positions for a particular key may be owned by less than N distinct physical nodes (i.e. a node may hold more than one of the first N positions). （因为引入了虚拟节点，所以preference list的长度会比N要大。副本必须确保在N个不同的物理机器上）
@@ -155,7 +155,7 @@ Dynamo uses vector clocks in order to capture causality between different versio
 
 In Dynamo, when a client wishes to update an object, it must specify which version it is updating. This is done by passing the context it obtained from an earlier read operation, which contains the vector clock information. Upon processing a read request, if Dynamo has access to multiple branches that cannot be syntactically reconciled, it will return all the objects at the leaves, with the corresponding version information in the context. An update using this context is considered to have reconciled the divergent versions and the branches are collapsed into a single new version.
 
-[[../images/dynamo-version-evolution-illustration.png]]
+[[../images/Pasted-Image-20231225103600.png]]
 
 A possible issue with vector clocks is that the size of vector clocks may grow if many servers coordinate the writes to an object. In practice, this is not likely because the writes are usually handled by one of the top N nodes in the preference list. In case of network partitions or multiple server failures, write requests may be handled by nodes that are not in the top N nodes in the preference list causing the size of vector clock to grow. In these scenarios, it is desirable to limit the size of vector clock. To this end, Dynamo employs the following clock truncation scheme: *Along with each (node, counter) pair, Dynamo stores a timestamp that indicates the last time the node updated the data item. When the number of (node, counter) pairs in the vector clock reaches a threshold (say 10), the oldest pair is removed from the clock.* Clearly, this truncation scheme can lead to inefficiencies in reconciliation as the descendant relationships cannot be derived accurately. However, this problem has not surfaced in production and therefore this issue has not been thoroughly investigated.（通过删除历史来确保vector clock大小保持在合适的范围。每个vector clock包括若干个(node,counter)的组合，表明在node这个节点上发生过多少次更新。同时在这个组合上保存timestamp，如果这个组合历史超过一定数目的话，那么就会考虑删除历史）
 
@@ -251,7 +251,7 @@ The common (N,R,W) configuration used by several instances of Dynamo is (3,2,2).
   - the latencies exhibit a clear diurnal pattern which is a result of the diurnal pattern in the incoming request rate
   - Moreover, the write latencies are higher than read latencies obviously because write operations always results in disk access.
   - Also, the 99.9th percentile latencies are around 200 ms and are an order of magnitude higher than the averages.
-[[../images/dynamo-latency-distribution.png]]
+[[../images/Pasted-Image-20231225104538.png]]
 
 
 While this level of performance is acceptable for a number of services, a few customer-facing services required higher levels of performance. For these services, Dynamo provides the ability to trade-off durability guarantees for performance. In the optimization each storage node maintains an object buffer in its main memory. Each write operation is stored in the buffer and gets periodically written to storage by a writer thread. In this scheme, read operations first check if the requested key is present in the buffer. If so, the object is read from the buffer instead of the storage engine.（修改存储引擎，写入的话并没有直接写入磁盘而是写入到buffer里面，有专门的后台线程将这些数据刷出，然后read操作都去buffer内容，实现上和leveldb等非常类似）
@@ -260,12 +260,12 @@ Obviously, this scheme trades durability for performance. In this scheme, a serv
 
 This optimization has resulted in lowering the 99.9th percentile latency by a factor of 5 during peak traffic even for a very small buffer of a thousand objects (see Figure 5). Also, as seen in the figure, write buffering smoothes out higher percentile latencies.
 
-[[../images/dynamo-write-optimization.png]]
+[[../images/Pasted-Image-20231225103934.png]]
 
 *** Ensuring Uniform Load distribution
 To study the load imbalance and its correlation with request load, the total number of requests received by each node was measured for a period of 24 hours - broken down into intervals of 30 minutes. In a given time window, a node is considered to be “in- balance”, if the node’s request load deviates from the average load by a value a less than a certain threshold (here 15%). Otherwise the node was deemed “out-of-balance”. Figure 6 presents the fraction of nodes that are “out-of-balance” (henceforth, “imbalance ratio”) during this time period.（定义balance标准）
 
-[[../images/dynamo-balance.png]]
+[[../images/Pasted-Image-20231225103737.png]]
 
 As seen in the figure, the imbalance ratio decreases with increasing load. For instance, during low loads the imbalance ratio is as high as 20% and during high loads it is close to 10%. Intuitively, this can be explained by the fact that under high loads, a large number of popular keys are accessed and due to uniform distribution of keys the load is evenly distributed. However, during low loads (where load is 1/8th of the measured peak load), fewer popular keys are accessed, resulting in a higher load imbalance.（情况是在高负载的情况下面，还是相对比较均衡的。可是在低负载的情况下，分布就不均衡了） #note: 可能这个结论适合几乎所有的分布式系统
 
@@ -273,7 +273,7 @@ As seen in the figure, the imbalance ratio decreases with increasing load. For i
 
 This section discusses how Dynamo’s partitioning scheme has evolved over time and its implications on load distribution.
 
-[[../images/dynamo-partition-strategy.png]]
+[[../images/Pasted-Image-20231225104325.png]]
 
 - Strategy 1: T random tokens per node and partition by token value
   - In this scheme, each node is assigned T tokens (chosen uniformly at random from the hash space). The tokens of all nodes are ordered according to their values in the hash space. Every two consecutive tokens define a range. The last token and the first token form a range that "wraps" around from the highest value to the lowest value in the hash space. Because the tokens are chosen randomly, the ranges vary in size. As nodes join and leave the system, the token set changes and consequently the ranges change. Note that the space needed to maintain the membership at each node increases linearly with the number of nodes in the system.（两个连续token定义一个range，所以如果节点发生变化的话，那么range也会发生变化）
@@ -297,7 +297,7 @@ This section discusses how Dynamo’s partitioning scheme has evolved over time 
 
 The results are given in Figure 8. As seen in the figure, strategy 3 achieves the best load balancing efficiency and strategy 2 has the worst load balancing efficiency.
 
-[[../images/dynamo-partition-strategy-evaluation.png]]
+[[../images/Pasted-Image-20231225103506.png]]
 
 - Compared to Strategy 1, Strategy 3 achieves better efficiency and reduces the size of membership information maintained at each node by three orders of magnitude. While storage is not a major issue the nodes gossip the membership information periodically and as such it is desirable to keep this information as compact as possible.（策略3所需要保存的信息更加简单，这样就使得gossip membership过程更加高效）
 - In addition to this, strategy 3 is advantageous and simpler to deploy for the following reasons:
@@ -332,7 +332,7 @@ Obviously, the efficiency of this scheme is dependent on how fresh the membershi
 
 Table 2 shows the latency improvements at the 99.9th  percentile and averages that were observed for a period of 24 hours using client-driven coordination compared to the server-driven approach. As seen in the table, the client-driven coordination approach reduces the latencies by at least 30 milliseconds for 99.9th percentile latencies and decreases the average by 3 to 4 milliseconds. *The latency improvement is because the client-driven approach eliminates the overhead of the load balancer and the extra network hop that may be incurred when a request is assigned to a random node.* As seen in the table, average latencies tend to be significantly lower than latencies at the 99.9th percentile. *This is because Dynamo’s storage engine caches and write buffer have good hit ratios.* Moreover, since the load balancers and network introduce additional variability to the response time, the gain in response time is higher for the 99.9th percentile than the average. #note: 似乎说的不错，cache是造成average和99.9%的延迟差别较大的主要原因
 
-[[../images/dynamo-client-and-server-driven.png]]
+[[../images/Pasted-Image-20231225104323.png]]
 
 *** Balancing background vs. foreground tasks
 Each node performs different kinds of background tasks for replica synchronization and data handoff (either due to hinting or adding/removing nodes) in addition to its normal foreground put/get operations. In early production settings, these background tasks triggered the problem of resource contention and affected the performance of the regular put and get operations. Hence, it became necessary to ensure that background tasks ran only when the regular critical operations are not affected significantly.（后台任务会影响到前台任务，而很明显前台任务的优先级更高）

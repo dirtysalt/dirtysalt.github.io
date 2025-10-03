@@ -2,13 +2,13 @@
 
 ** 测试代码
 
-测试代码是在Clickhouse memcpy-bench基础上改造过来的  [ClickHouse/utils/memcpy-bench at master · ClickHouse/ClickHouse](https://github.com/ClickHouse/ClickHouse/tree/master/utils/memcpy-bench)
+测试代码是在Clickhouse memcpy-bench基础上改造过来的  [[https://github.com/ClickHouse/ClickHouse/tree/master/utils/memcpy-bench][ClickHouse/utils/memcpy-bench at master · ClickHouse/ClickHouse]]
 
-不过我们这里没有使用clickhouse的统计方式，而是使用google benchmark驱动。代码放在了这里 [codes/cc/sr-test/memcpy-bench at master · dirtysalt/codes](https://github.com/dirtysalt/codes/tree/master/cc/sr-test/memcpy-bench)
+不过我们这里没有使用clickhouse的统计方式，而是使用google benchmark驱动。代码放在了这里 [[https://github.com/dirtysalt/codes/tree/master/cc/sr-test/memcpy-bench][codes/cc/sr-test/memcpy-bench at master · dirtysalt/codes]]
 
 这个测试相比CK测试会简化一些，只关注单线程上的memcpy性能，然后选择了几种尺寸进行测试，并且在每种尺寸上做了微调确保没有完全对齐。 UPDATE: 后面增加了多线程场景下的比较。
 
-#+BEGIN_SRC cpp
+#+BEGIN_SRC C++
 #define BM(IMPL)                                                                                \
     void BM**IMPL(benchmark::State& state) {                                                    \
         size_t size = state.range(0);                                                           \
@@ -36,7 +36,7 @@ static constexpr size_t MB = 1024 * 1024;
 
 其中有好几个版本是glibc自带的，后面就不分析了，他们都是汇编实现，比较难看懂。
 
-#+BEGIN_SRC cpp
+#+BEGIN_SRC C++
 VARIANT(21, __memcpy_erms)
 VARIANT(22, __memcpy_sse2_unaligned)
 VARIANT(23, __memcpy_ssse3)
@@ -57,13 +57,13 @@ VARIANT(5, memcpy_jart)
 - avx_unaligned
 - avx_unaligned_erms
 
-[[../images/media/16684889455769/memcpy_size_16.png]]
+[[../images/Pasted-Image-20231225103255.png]]
 
-[[../images/media/16684889455769/memcpy_size_64.png]]
+[[../images/Pasted-Image-20231225103250.png]]
 
-[[../images/media/16684889455769/memcpy_size_256.png]]
+[[../images/Pasted-Image-20231225103251.png]]
 
-[[../images/media/16684889455769/memcpy_size_1024.png]]
+[[../images/Pasted-Image-20231225103302.png]]
 
 
 *** 小尺寸
@@ -75,11 +75,11 @@ VARIANT(5, memcpy_jart)
 - 64K上，my/my2/avx_unaligned/AVX2表现都不错
 
 
-[[../images/media/16684889455769/memcpy_size_4096.png]]
+[[../images/Pasted-Image-20231225103256.png]]
 
-[[../images/media/16684889455769/memcpy_size_16384.png]]
+[[../images/Pasted-Image-20231225103258.png]]
 
-[[../images/media/16684889455769/memcpy_size_65536.png]]
+[[../images/Pasted-Image-20231225103301.png]]
 
 *** 中尺寸
 
@@ -90,11 +90,11 @@ VARIANT(5, memcpy_jart)
 - 1MB上 erms/avx_unaligned_erms 最好，my版本表现也可以
 - 4MB上 my/my2/AVX2/avx_unaligned 表现都可以
 
-[[../images/media/16684889455769/memcpy_size_262144.png]]
+[[../images/Pasted-Image-20231225103259.png]]
 
-[[../images/media/16684889455769/memcpy_size_1048576.png]]
+[[../images/Pasted-Image-20231225103254.png]]
 
-[[../images/media/16684889455769/memcpy_size_4194304.png]]
+[[../images/Pasted-Image-20231225103253.png]]
 
 *** 大尺寸
 
@@ -104,11 +104,11 @@ VARIANT(5, memcpy_jart)
 - 单线程上 my/my2/AVX2 似乎实现比较好
 - 多线程上 avx_unaligned/erms 似乎比较好
 
-[[../images/media/16684889455769/memcpy_size_16777216.png]]
+[[../images/Pasted-Image-20231225103252.png]]
 
-[[../images/media/16684889455769/memcpy_size_67108864.png]]
+[[../images/Pasted-Image-20231225103300.png]]
 
-[[../images/media/16684889455769/memcpy_size_134217728.png]]
+[[../images/Pasted-Image-20231225103257.png]]
 
 *** 初步总结
 
@@ -127,7 +127,7 @@ VARIANT(5, memcpy_jart)
 
 这个实现比较简单，不过只是对于x86有效
 
-#+BEGIN_SRC cpp
+#+BEGIN_SRC C++
 static void* memcpy_erms(void* dst, const void* src, size_t size) {
     asm volatile("rep movsb" : "=D"(dst), "=S"(src), "=c"(size) : "0"(dst), "1"(src), "2"(size) : "memory");
     return dst;
@@ -141,7 +141,7 @@ static void* memcpy_erms(void* dst, const void* src, size_t size) {
 - 按照32字节对齐，然后每次拷贝32字节
 - 对最后尾部继续使用 `memcpy_tiny` 进行拷贝
 
-#+BEGIN_SRC cpp
+#+BEGIN_SRC C++
 static void* memcpyAVX2(void* __restrict destination, const void* __restrict source, size_t size) {
     unsigned char* dst = reinterpret_cast<unsigned char*>(destination);
     const unsigned char* src = reinterpret_cast<const unsigned char*>(source);
@@ -184,7 +184,7 @@ static void* memcpyAVX2(void* __restrict destination, const void* __restrict sou
 - 对于16,32,64字节则使用sse2_16,sse2_32,sse2_64函数来拷贝
 - 这种实现问题在于展开text段会比较大，对于icache不是特别好。
 
-#+BEGIN_SRC cpp
+#+BEGIN_SRC C++
 //---------------------------------------------------------------------
 // tiny memory copy with jump table optimized
 //---------------------------------------------------------------------
@@ -248,7 +248,7 @@ static INLINE void memcpy_sse2_32(void* __restrict dst, const void* __restrict s
 
 *** memcpy_my/my2
 
-代码比较长，完整代码可以看这里 https://github.com/dirtysalt/codes/blob/master/cc/sr-test/memcpy-bench/memcpy-impl.h#L308. 两者实现逻辑非常接近，差别在于`memcpy_my2` 版本在
+代码比较长，完整代码可以看这里 https://github.com/dirtysalt/codes/blob/master/cc/sr-test/memcpy-bench/memcpy-impl.h#L308. 两者实现逻辑非常接近，差别在于 `memcpy_my2` 版本在
 - `if (size < 30000 || !have_avx)` 条件下面使用128字节sse2版本，因为使用avx指令会有额外开销。
 - 对于大块内存拷贝，不会再使用 `goto tail` 来单独处理尾部的字符串，而是直接使用重复拷贝来避开tail bytes的处理。
 
@@ -257,7 +257,7 @@ static INLINE void memcpy_sse2_32(void* __restrict dst, const void* __restrict s
 **** 16字节以内
 16字节以内走下面这个逻辑，使用的是 `__builtin_memcpy` 感觉这个部分应该是足够高效了。
 
-#+BEGIN_SRC cpp
+#+BEGIN_SRC C++
 tail:
     if (size <= 16) {
         if (size >= 8) {
@@ -277,7 +277,7 @@ tail:
 **** 32字节以内
 32字节以内先拷贝16字节，然后走上面的小于16字节的逻辑。但是这个部分并没有使用sse(m128i)
 
-#+BEGIN_SRC cpp
+#+BEGIN_SRC C++
         if (size <= 32) {
             __builtin_memcpy(dst, src, 8);
             __builtin_memcpy(dst + 8, src + 8, 8);
@@ -294,7 +294,7 @@ tail:
 
 avx版本是先对 `dst+size-32` 和 `src+size-32` 进行单独处理，然后分别按照32字节进行拷贝，这样会出现重复拷贝，但是没有tail bytes判断情况。
 
-#+BEGIN_SRC cpp
+#+BEGIN_SRC C++
         if (size <= 256) {
             __asm__("vmovups    -0x20(%[s],%[size],1), %%ymm0\n"
                     "vmovups    %%ymm0, -0x20(%[d],%[size],1)\n"
@@ -317,7 +317,7 @@ avx版本是先对 `dst+size-32` 和 `src+size-32` 进行单独处理，然后�
 #+END_SRC
 
 sse2版本和avx版本其实是差不过的，只不过按照16字节进行拷贝，同样不会有tail bytes的情况。
-#+BEGIN_SRC cpp
+#+BEGIN_SRC C++
         if (size <= 128) {
             _mm_storeu_si128(reinterpret_cast<__m128i*>(dst + size - 16),
                              _mm_loadu_si128(reinterpret_cast<const __m128i*>(src + size - 16)));
@@ -339,7 +339,7 @@ sse2版本和avx版本其实是差不过的，只不过按照16字节进行拷�
 - 然后每次拷贝128字节，并且使用循环展开的方式
 - 对于之后剩余的字节，使用 `goto tail` 进行单独处理。
 
-#+BEGIN_SRC cpp
+#+BEGIN_SRC C++
             /// Align destination to 16 bytes boundary.
             size_t padding = (16 - (reinterpret_cast<size_t>(dst) & 15)) & 15;
 
@@ -418,12 +418,12 @@ sse2版本和avx版本其实是差不过的，只不过按照16字节进行拷�
 
 
 实现上有下面这些注意点：
-- 对于小尺寸分支重要（减少分支或者是变成jmp table/switch)
-- 处理非对齐尺寸(1,3,5,7字节），通常使用重叠move
+- 对于小尺寸分支重要(减少分支或者是变成jmp table/switch)
+- 处理非对齐尺寸(1,3,5,7字节)，通常使用重叠move
 - 对于大尺寸可以使用sse/avx或者是rep movsb.（看上去大尺寸rep movsb比sse/avx要差点）
-- avx-512会造成CPU降频, 混合sse/avx使用会有开销（但是好像最新的CPU是没有这个问题了的) https://www.zhihu.com/question/37230675/answer/273654228
-- 循环展开最多8次，使用寄存器xmm0-xmm7或者是ymm0-ymm7（其实也有ymm8-ymm15). 但是这个也不是最优解。
-- 使用unaligned load和aligned store (但是好像其实两者差别不是很大）
+- avx-512会造成CPU降频, 混合sse/avx使用会有开销(但是好像最新的CPU是没有这个问题了的) https://www.zhihu.com/question/37230675/answer/273654228
+- 循环展开最多8次，使用寄存器xmm0-xmm7或者是ymm0-ymm7(其实也有ymm8-ymm15). 但是这个也不是最优解。
+- 使用unaligned load和aligned store (但是好像其实两者差别不是很大)
 - 使用好prefetch以及non-temporal store比较困难。
 
 #+BEGIN_EXAMPLE
@@ -498,7 +498,7 @@ sse2版本和avx版本其实是差不过的，只不过按照16字节进行拷�
 
 测试的时候发现 `memcpy_my` 的AVX版本有正确行问题，问题在下面这段代码上
 
-#+BEGIN_SRC cpp
+#+BEGIN_SRC C++
         if (size <= 256) {
             __asm__("vmovups    -0x20(%[s],%[size],1), %%ymm0\n"
                     "vmovups    %%ymm0, -0x20(%[d],%[size],1)\n"
@@ -521,15 +521,15 @@ sse2版本和avx版本其实是差不过的，只不过按照16字节进行拷�
 
 如果放在 https://gcc.godbolt.org/ 里面编译会发现，这个编译结果是有问题的。汇编代码的40行，如果<=256那么进入L7, 但是L7直接就ret了。说明这个部分其实是没有做任何处理的。如果在 asm 关键字后面加上 volatile 关键字则没有问题。
 
-[[../images/media/16684889455769/16685679306882.jpg]]
+[[../images/Pasted-Image-20231225103308.png]]
 
 增加了volatile关键字之后就没有问题
 
-[[../images/media/16684889455769/16685680484758.jpg]]
+[[../images/Pasted-Image-20231225103305.png]]
 
 ** 改进方案设计
 
-个人觉得可以根据 `memcpy_my` 这个版本 ~~，然后在某些区间上使用erms特性来做改善~~。
+个人觉得可以根据 `memcpy_my` 这个版本为基础， **然后在某些区间上使用erms特性来做改善** 。
 
 实现放在了这个PR里面 [[Enhancement] improve performance of `inline_memcpy` by dirtysalt · Pull Request #13330 · StarRocks/starrocks](https://github.com/StarRocks/starrocks/pull/13330)
 
@@ -538,8 +538,8 @@ sse2版本和avx版本其实是差不过的，只不过按照16字节进行拷�
 - memcpy_my(noavx) 当前CK使用的版本
 - memcpy_sr PR里面提交的版本
 
-[[../images/media/16684889455769/16686035679546.jpg]]
-[[../images/media/16684889455769/16686035738395.jpg]]
+[[../images/Pasted-Image-20231225103306.png]]
+[[../images/Pasted-Image-20231225103310.png]]
 
 ** 细粒度分析
 
@@ -557,9 +557,9 @@ sse2版本和avx版本其实是差不过的，只不过按照16字节进行拷�
 - memcpy_my 有个问题就是4KB左右会存在一定的波动
 - memcpy_sr 相对比较平稳，总体比memcpy_my(avx)版本差些，但是没有尖峰出现
 
-[[../images/media/16684889455769/16686528258206.jpg]]
+[[../images/Pasted-Image-20231225103309.png]]
 
-[[../images/media/16684889455769/16686528488477.jpg]]
+[[../images/Pasted-Image-20231225103304.png]]
 
 *** 32KB~2MB
 
@@ -567,8 +567,8 @@ sse2版本和avx版本其实是差不过的，只不过按照16字节进行拷�
 - 因为 memcpy_gutil 差距比较大，所以就删除了这个
 - 从512KB到2MB区间内，erms版本不不管是单线程还是多线程都好。
 
-[[../images/media/16684889455769/16686546607635.jpg]]
-[[../images/media/16684889455769/16686546707508.jpg]]
+[[../images/Pasted-Image-20231225103307.png]]
+[[../images/Pasted-Image-20231225103311.png]]
 
 *** 2MB~64MB
 
@@ -577,5 +577,5 @@ sse2版本和avx版本其实是差不过的，只不过按照16字节进行拷�
 - 多线程版本 avx_unaligned和erms版本更好些
 - 很难选择一个比较general的版本
 
-[[../images/media/16684889455769/16686553116226.jpg]]
-[[../images/media/16684889455769/16686553169239.jpg]]
+[[../images/Pasted-Image-20231225103303.png]]
+[[../images/Pasted-Image-20231225103312.png]]

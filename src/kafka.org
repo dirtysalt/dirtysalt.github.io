@@ -32,9 +32,9 @@
     - Each message stream provides an iterator interface over the continual stream of messages being produced. The consumer then iterates over every message in the stream and processes the payload of the message.
     - Unlike traditional iterators, the message stream iterator never terminates. If there are currently no more messages to consume, the iterator blocks until new messages are published to the topic.（以iterators方式提供消息）
     - We support both the point-topoint delivery model in which multiple consumers jointly consume a single copy of all messages in a topic, as well as the publish/subscribe model in which multiple consumers each retrieve its own copy of a topic.（多个consumer可以共同消费一份，或者是各自消费一份）
-- Since Kafka is distributed in nature, an Kafka cluster typically consists of multiple brokers. To balance load, a topic is divided into multiple partitions and each broker stores one or more of those partitions. Multiple producers and consumers can publish and retrieve messages at the same time.（一个topic被分割成多个partition, 每个broker上面可以host多个partition)
+- Since Kafka is distributed in nature, an Kafka cluster typically consists of multiple brokers. To balance load, a topic is divided into multiple partitions and each broker stores one or more of those partitions. Multiple producers and consumers can publish and retrieve messages at the same time.(一个topic被分割成多个partition, 每个broker上面可以host多个partition)
 
-[[../images/kafka-architecture.png]]
+[[../images/Pasted-Image-20231225104135.png]]
 
 Producer Code
 #+BEGIN_SRC Java
@@ -55,16 +55,16 @@ for (message : streams[0]) {
 
 *** Efficiency on a Single Partition
 - Simple storage
-  - Each partition of a topic corresponds to a logical log. Physically, a log is implemented as a set of segment files of approximately the same size (e.g., 1GB).(每个partition对应一个logical log, 每个logical log对应多个segment file，这些文件都近似大小） Every time a producer publishes a message to a partition, the broker simply appends the message to the last segment file.（每个追加到最后一个segment file上）
+  - Each partition of a topic corresponds to a logical log. Physically, a log is implemented as a set of segment files of approximately the same size (e.g., 1GB).(每个partition对应一个logical log, 每个logical log对应多个segment file，这些文件都近似大小) Every time a producer publishes a message to a partition, the broker simply appends the message to the last segment file.（每个追加到最后一个segment file上）
   - For better performance, we flush the segment files to disk only after a configurable number of messages have been published or a certain amount of time has elapsed. A message is only exposed to the consumers after it is flushed.（积累到一定的数据量才会进行刷新）
   - Unlike typical messaging systems, a message stored in Kafka doesn’t have an explicit message id. Instead, each message is addressed by its logical offset in the log. This avoids the overhead of maintaining auxiliary, seek-intensive random-access index structures that map the message ids to the actual message locations. （没有messageid, 但是可以通过logical offset来定位log. 这样可以免去从message id对应到message这个过程，因为这个过程需要mapping需要random access index. 这样的message id自然不是连续的，但是却是递增的）
   - A consumer always consumes messages from a particular partition sequentially. If the consumer acknowledges a particular message offset, it implies that the consumer has received all messages prior to that offset in the partition.（consumer只能通过偏移顺序读取内容） Under the covers, the consumer is issuing asynchronous pull requests to the broker to have a buffer of data ready for the application to consume. Each pull request contains the offset of the message from which the consumption begins and an acceptable number of bytes to fetch.
   - Each broker keeps in memory a sorted list of offsets, including the offset of the first message in every segment file. The broker locates the segment file where the requested message resides by searching the offset list, and sends the data back to the consumer. After a consumer receives a message, it computes the offset of the next message to consume and uses it in the next pull request.（每个broker在内存保存各个文件的起始的offset，这样就可以很容易地进行定位）
 
-[[../images/kafka-log-layout.png]]
+[[../images/Pasted-Image-20231225103839.png]]
 
 - Efficient transfer
-  - Although the end consumer API iterates one message at a time, under the covers, each pull request from a consumer also retrieves multiple messages up to a certain size, typically hundreds of kilobytes.(批量传输）
+  - Although the end consumer API iterates one message at a time, under the covers, each pull request from a consumer also retrieves multiple messages up to a certain size, typically hundreds of kilobytes.(批量传输)
   - Another unconventional choice that we made is to avoid explicitly caching messages in memory at the Kafka layer. Instead, we rely on the underlying file system page cache.（在kafka层面不进行cache，而由system完成page cache简化工作）This has the main benefit of avoiding double buffering---messages are only cached in the page cache. This has the additional benefit of retaining warm cache even when a broker process is restarted. Since Kafka doesn’t cache messages in process at all, it has very little overhead in garbage collecting its memory, making efficient implementation in a VM-based language feasible.（这样也避免了GC带来的额外开销）
   - Finally, since both the producer and the consumer access the segment files sequentially, with the consumer often lagging the producer by a small amount, normal operating system caching heuristics are very effective (specifically write-through caching and read- ahead).
   - On Linux and other Unix operating systems, there exists a sendfile API that can directly transfer bytes from a file channel to a socket channel.（通过sendfile这个API减少系统调用次数）
@@ -81,18 +81,18 @@ for (message : streams[0]) {
    - Kafka uses Zookeeper for the following tasks:
      - detecting the addition and the removal of brokers and consumers
 - when each broker or consumer starts up, it stores its information in a broker or consumer registry in Zookeeper.（启动时候在上面进行注册）
-       - The broker registry contains the broker’s host name and port, and the set of topics and partitions stored on it.（broker注册hostname和port,管理的topics以及partitions)
+       - The broker registry contains the broker’s host name and port, and the set of topics and partitions stored on it.(broker注册hostname和port,管理的topics以及partitions)
 - The consumer registry includes the consumer group to which a consumer belongs and the set of topics that it subscribes to.(consumer注册consumer group，以及订阅的topics)
        - Each consumer group is associated with an ownership registry and an offset registry in Zookeeper.
   - The ownership registry has one path for every subscribed partition and the path value is the id of the consumer currently consuming from this partition（每个订阅partition是一个path, path value是这个consumer id, 这个consumer来消费这个partition的）
          - The offset registry stores for each subscribed partition, the offset of the last consumed message in the partition.（记录订阅partition的最后一个offset）
      - triggering a rebalance process in each consumer when the above events happen,
      - maintaining the consumption relationship and keeping track of the consumed offset of each partition.
- - During the initial startup of a consumer or when the consumer is notified about a broker/consumer change through the watcher, the consumer initiates a rebalance process to determine the new subset of partitions that it should consume from.（consumer或者是broker发生变化的话，那么就会触发balance)
+ - During the initial startup of a consumer or when the consumer is notified about a broker/consumer change through the watcher, the consumer initiates a rebalance process to determine the new subset of partitions that it should consume from.(consumer或者是broker发生变化的话，那么就会触发balance)
    - When there are multiple consumers within a group, each of them will be notified of a broker or a consumer change. However, the notification may come at slightly different times at the consumers. So, it is possible that one consumer tries to take ownership of a partition still owned by another consumer. When this happens, the first consumer simply releases all the partitions that it currently owns, waits a bit and retries the rebalance process. In practice, the rebalance process often stabilizes after only a few retries.（可能会出现一些颠簸的情况，但是这个情况最终是会稳定下来的）
    - When a new consumer group is created, no offsets are available in the offset registry. In this case, the consumers will begin with either the smallest or the largest offset (depending on a configuration) available on each subscribed partition, using an API that we provide on the brokers.（新增的consume group可以选择最老的点开始读取，也可以选择最新的点开始读取）
 
-[[../images/kafka-coordination-algorithm.png]]
+[[../images/Pasted-Image-20231225103805.png]]
 
 *** Delivery Guarantees
 - In general, Kafka only guarantees at-least-once delivery. Exactly- once delivery typically requires two-phase commits and is not necessary for our applications.（至少保证一次投递）
@@ -102,7 +102,7 @@ for (message : streams[0]) {
 - If a broker goes down, any message stored on it not yet consumed becomes unavailable. If the storage system on a broker is permanently damaged, any unconsumed message is lost forever. In the future, we plan to add built-in replication in Kafka to redundantly store each message on multiple brokers.（现在broker没有做replication, 也就是说如果down的话那么上面数据读取不到，如果磁盘坏的话那么数据就发生丢失）
 
 ** Kafka Usage at LinkedIn
-[[../images/kafka-deployment.png]]
+[[../images/Pasted-Image-20231225104524.png]]
 
 - We rely on a hardware load-balancer to distribute the publish requests to the set of Kafka brokers evenly. （硬件负载均衡）
 - We also deploy a cluster of Kafka in a separate datacenter for offline analysis, located geographically close to our Hadoop cluster and other data warehouse infrastructure. Without too much tuning, the end-to-end latency for the complete pipeline is about 10 seconds on average, good enough for our requirements.（跨机房数据延迟在10s以内）
@@ -114,7 +114,7 @@ for (message : streams[0]) {
 ** Experimental Results
 ** Conclusion and Future Works
 There are a number of directions that we’d like to pursue in the future.
-- First, we plan to add built-in replication of messages across multiple brokers to allow durability and data availability guarantees even in the case of unrecoverable machine failures.（broker replicaiton需要线上，这样可以确保durability以及availability) We’d like to support both asynchronous and synchronous replication models to allow some tradeoff between producer latency and the strength of the guarantees provided. An application can choose the right level of redundancy based on its requirement on durability, availability and throughput. (在replication上面可以选择同步还是异步方式）
+- First, we plan to add built-in replication of messages across multiple brokers to allow durability and data availability guarantees even in the case of unrecoverable machine failures.(broker replicaiton需要线上，这样可以确保durability以及availability) We’d like to support both asynchronous and synchronous replication models to allow some tradeoff between producer latency and the strength of the guarantees provided. An application can choose the right level of redundancy based on its requirement on durability, availability and throughput. (在replication上面可以选择同步还是异步方式)
 - Second, we want to add some stream processing capability in Kafka.（提供一些流式处理方面的能力）
   - After retrieving messages from Kafka, real time applications often perform similar operations such as window-based counting and joining each message with records in a secondary store or with messages in another stream.
   - At the lowest level this is supported by semantically partitioning messages on the join key during publishing so that all messages sent with a particular key go to the same partition and hence arrive at a single consumer process. This provides the foundation for processing distributed streams across a cluster of consumer machines.
@@ -132,4 +132,3 @@ replication实现方式大致是这样的：
 3. producers写入数据时候可以指定说，是否写入master就返回，还是必须等待写入k个followers才返回，还是不需要等待master的ack就返回。策略牵扯到latency和durabilityz之间的tradeoff.
 4. 常见quorum要求，如果集群节点数量为2f+1的话，那么必须得到f+1个节点的相同认定（容忍f个节点失效）。但是kafka quorum不是这样做的，kafka会在保存一个ISR(in-sync replicas)到可能是zookeeper上，这个集合代表当前有哪些节点是处于in-sync状态的。在进行quorum时候只允许ISR里面节点进行投票。和微软 [[http://research.microsoft.com/apps/pubs/default.aspx?id=66814][PacificA]] 一致性协议比较类似，和常见quorum协议差别就在于在更新状态时候保存了ISR。如果节点数量为2f+1的话，那么可以容忍2f个节点失效。
 5. 如果一个broker挂掉的话，迁移决策过程是由另外一个broker来代理完成的，这个broker称为controller.
-

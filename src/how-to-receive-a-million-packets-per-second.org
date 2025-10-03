@@ -74,7 +74,7 @@ receiver$ watch 'sudo ethtool -S eth2 |grep rx'
 #+END_EXAMPLE
 pps中有451k没有被kernel处理而丢弃，355.2k都是在rx-4接收队列上。通常一个接收队列只由一个特定processor来处理中断，所以这个时候会看到某个processor使用率特别高(cs应该也非常高)
 
-[[../images/nic-interrupt-to-onecpu.png]]
+[[../images/Pasted-Image-20231225103823.png]]
 
 所以我们做的是让packet能够尽可能地均匀地落在每个rx queue上，这样就不会让某个processor成为bottleneck.
 
@@ -83,7 +83,7 @@ pps中有451k没有被kernel处理而丢弃，355.2k都是在rx-4接收队列上
 
 Historically, network cards had a single RX queue that was used to pass packets between hardware and kernel. This design had an obvious limitation - it was impossible to deliver more packets than a single CPU could handle. To utilize multicore systems, NICs began to support multiple RX queues. The design is simple: each RX queue is pinned to a separate CPU, therefore, by delivering packets to all the RX queues a NIC can utilize all CPUs.
 
-[[../images/nic-multiqueue.png]]
+[[../images/Pasted-Image-20231225104728.png]]
 
 如何让packet均匀地落在rx-queue上？使用packet-base-round-robin是不可行的，因为这样会造成一个链接上多个packets之间顺序错乱。最好的方式当然是用(src-ip, src-port, dst-ip, dst-port)做hash然后取模。
 
@@ -93,7 +93,7 @@ Historically, network cards had a single RX queue that was used to pass packets 
 *A note on NUMA performance*
 
 现在场景还是one rx-queue to one cpu. 来看看NUMA造成的性能差异。
-- Run receiver on another CPU, but on the same NUMA node as the RX queue. The performance as we saw above is around 360kpps.（同一个NUMA node但是另一块CPU，不同CPU Cache, pps = 360k)
+- Run receiver on another CPU, but on the same NUMA node as the RX queue. The performance as we saw above is around 360kpps.(同一个NUMA node但是另一块CPU，不同CPU Cache, pps = 360k)
 - With receiver on exactly same CPU as the RX queue we can get up to ~430kpps. But it creates high variability. The performance drops down to zero if the NIC is overwhelmed with packets.(同一块CPU，应该是相同core, pps = 430k)
 - When the receiver runs on the HT counterpart of the CPU handling RX queue, the performance is half the usual number at around 200kpps.(同一个core但是不同HT，性能减半, pps = 200k)
 - With receiver on a CPU on a different NUMA node than the RX queue we get ~330k pps. The numbers aren't too consistent though.(不同NUMA node，pps = 330k)
@@ -136,7 +136,7 @@ Udp:
     SndbufErrors: 0
     InCsumErrors: 0
 #+END_EXAMPLE
-这意味着packet可以被投递到kernel, 但是kernel没有办法投递到application，application处理packet速度太慢(386.9k + 123.8k被丢弃）
+这意味着packet可以被投递到kernel, 但是kernel没有办法投递到application，application处理packet速度太慢(386.9k + 123.8k被丢弃)
 
 -----
 *Receive from many threads*

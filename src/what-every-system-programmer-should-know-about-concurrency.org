@@ -1,0 +1,60 @@
+#+title: What every systems programmer should know about concurrency
+文章里面讲到了一系列并发/同步/锁的基础知识：为什么需要memory barrier, memory order底层语义是什么样的，现在硬件上做了那些变化来简化并发编程等等。
+
+编译器会对程序代码做指令重排，只要保证以”当前线程“的视角来看结果是正确的就可以；而CPU在执行上也会做reorder instructions来避免executon staleness; 为了reduce gap between memory access latency和cpu latency, cpu core上加了cache/store-buffer等组件，但是这些组件在many-cores的环境下面需要taken care of carefully.
+
+#+BEGIN_QUOTE
+[!NOTE]
+For starters, any compiler worth its salt will happily modify and reorder your code to take better advantage of the hardware it runs on. So long as the re- sulting instructions run to the same effect for the current thread, reads and writes can be moved to avoid pipeline stalls* or to improve locality.† Variables can be assigned to the same mem- ory location if they’re never used in overlapping time frames. Instructions can be executed speculatively, before a branch is taken, then undone if the compiler guessed incorrectly.‡
+
+Even if we used a compiler that didn’t reorder our code, we’d still be in trouble, since our hardware does it too! Mod- ern cpu designs handle incoming instructions in a much more complicated fashion than traditional pipelined approaches like the one shown in Figure 1. They contain multiple data paths, each for different types of instructions, and schedulers which reorder and route instructions through these paths.
+
+While processor speeds have in- creased exponentially over the past decades, ram hasn’t been able to keep up, creating an ever-widening gulf between the time it takes to run an instruction and the time needed to re- trieve data from main memory. Hardware manufacturers have compensated by placing an increasing number of hierarchical caches directly on the cpu die. Each core also usually has a store buffer that handles pending writes while subsequent in- structions are executed. Keeping this memory system coherent, so that writes made by one core are observable by others, even if those cores use different caches, is quite challenging.
+#+END_QUOTE
+
+上面三个问题造成，在many-cores/many-threads的环境下面，其实没有一个now或者是total order存在。需要有显式的方法来协调多个threads之间对于时间的理解
+
+#+BEGIN_QUOTE
+[!NOTE]
+
+The net effect of these complications is that there is no consistent concept of “now” in a multithreaded program, espe- cially one running on a multiprocessor. Attaining some sense of order so that threads can communicate is a team effort of hardware manufacturers, compiler writers, language design- ers, and application developers. Let’s explore what we can do, and what tools we will need.
+#+END_QUOTE
+
+
+x86在memory-order上相对还是比较简单的，ARM上可能就要复杂一些。但是后面也提到，ARM v8相比ARM v7提供了更多的用于并发编程的指令。
+
+#+BEGIN_QUOTE
+[!NOTE]
+
+As mentioned in §2, different hardware architectures provide different ordering guarantees, or memory models. For exam- ple, x64 is relatively strongly-ordered, and can be trusted to preserve some system-wide order of loads and stores in most cases. Other architectures like arm are more weakly-ordered, so one shouldn’t assume that loads and stores are executed in program order unless the cpu is given special instructions— called memory barriers—to not shuffle them around.
+
+Those familiar with the platform may have noticed that all arm assembly shown here is from the seventh version of the architecture. Excitingly, the current (eighth) generation offers a massive improvement for lockless code. Since most pro- gramming languages have converged on the memory model we’ve been exploring, armv8 processors offer dedicated load- acquire and store-release instructions, lda and stl. We can use them to implement everything we’ve discussed here with- out resorting to memory barriers. Hopefully, future cpu ar- chitectures will follow suit.
+#+END_QUOTE
+
+除了原子类型之外，文章介绍了几种memory-order特性以及使用范围
+- seq_cst. 基本上无脑使用
+- acq/rel. 这个用于读写threads之间同步
+- relaxed. 只需要在threads之间传递不在意顺序(我觉得可能volatile就可以)。
+- acq_rel. 同时读写一个变量比如引用计数=0的时候(很难区别与seq_cst差别).
+- consume. 我理解是类似relaxed, 但是需要结合compiler，在某些特殊场景下有用
+
+这个图片有点意思：atomic -> atom.
+
+[[../images/Pasted-Image-20240928105009.png]]
+
+关于这几个memory-order选择，基本就是无脑选择seq_cst. 除非 a)知道特定模式 b)在tight-loop中耗时 c)性能特别关键
+
+#+BEGIN_QUOTE
+[!NOTE]
+
+Non-sequentially consistent orderings have many subtleties, and a slight mistake can cause elusive Heisenbugs that only oc- cur sometimes, on some platforms. Before reaching for them, ask yourself:
+
+-  Am I using a well-known and understood pattern (such as the ones shown above)?
+
+- Are the operations in a tight loop?
+
+- Does every microsecond count here?
+
+If the answer isn’t yes for at least one of these, default to se- quentially consistent operations. Otherwise, be sure to give your code extra review and testing.
+
+#+END_QUOTE

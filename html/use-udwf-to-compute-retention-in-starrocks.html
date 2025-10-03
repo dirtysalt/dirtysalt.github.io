@@ -1,0 +1,365 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>在StarRocks中使用UDWF计算用户留存</title>
+<meta name="author" content="dirtysalt" />
+<meta name="generator" content="Org Mode" />
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content" class="content">
+<h1 class="title">在StarRocks中使用UDWF计算用户留存</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>Table of Contents</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#org0913c5f">1. 问题定义</a></li>
+<li><a href="#org5ae5197">2. 测试数据</a></li>
+<li><a href="#org8fa034a">3. 留存SQL</a></li>
+<li><a href="#orgeb2f965">4. 测试UDWF</a></li>
+<li><a href="#orgc86bcfb">5. UDWF实现</a></li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-org0913c5f" class="outline-2">
+<h2 id="org0913c5f"><span class="section-number-2">1.</span> 问题定义</h2>
+<div class="outline-text-2" id="text-1">
+<p>
+假设用户的table schema是下面这样的：
+</p>
+<ul class="org-ul">
+<li>uid 表示用户id</li>
+<li>date 表示用户在这天活跃</li>
+</ul>
+
+<p>
+然后我们要计算，T这天活跃的用户，在T+1, T+2, T+3 后面几天的活跃数量。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-Sql">create table user_activity (uid int, date string)
+    engine = olap duplicate key (`uid`)
+    distributed by hash(`uid`)
+    properties ("replication_num" = "1");
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org5ae5197" class="outline-2">
+<h2 id="org5ae5197"><span class="section-number-2">2.</span> 测试数据</h2>
+<div class="outline-text-2" id="text-2">
+<p>
+使用python脚本来生成测试数据
+</p>
+
+<div class="org-src-container">
+<pre class="src src-Python">def main():
+    data = []
+    today = datetime.date.today()
+    for user_id in range(3):
+        for d in range(10):
+            if random.random() &lt; 0.5:
+                date = today - datetime.timedelta(days=d)
+                data.append((date.strftime('%Y-%m-%d'), user_id))
+
+    with open('user_activity.csv', 'w', newline='') as csvfile:
+        fieldnames = ['date', 'user_id']
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+
+        # writer.writeheader()
+        for row in data:
+            writer.writerow({'date': row[0], 'user_id': row[1]})
+
+main()
+</pre>
+</div>
+
+<p>
+然后使用 stream load 将这些数据导入到 SR 里面
+</p>
+
+<div class="org-src-container">
+<pre class="src src-Shell">curl --location-trusted -u root: -H "label:124" \
+    -H "column_separator:," \
+    -H "columns: date,uid" \
+    -T user_activity.csv -XPUT \
+    http://127.0.0.1:41001/api/zya/user_activity/_stream_load
+</pre>
+</div>
+
+<p>
+大概数就就是这样的
+</p>
+
+<pre class="example" id="org03c04d3">
+MySQL [zya]&gt; select * from user_activity;
++------+------------+
+| uid  | date       |
++------+------------+
+|    0 | 2023-07-10 |
+|    0 | 2023-07-09 |
+|    0 | 2023-07-08 |
+|    0 | 2023-07-06 |
+|    0 | 2023-07-05 |
+|    1 | 2023-07-12 |
+|    1 | 2023-07-10 |
+|    1 | 2023-07-09 |
+|    1 | 2023-07-07 |
+|    1 | 2023-07-05 |
+|    1 | 2023-07-04 |
+|    2 | 2023-07-12 |
+|    2 | 2023-07-10 |
+|    2 | 2023-07-08 |
+|    2 | 2023-07-06 |
+|    2 | 2023-07-03 |
++------+------------+
+</pre>
+</div>
+</div>
+
+
+<div id="outline-container-org8fa034a" class="outline-2">
+<h2 id="org8fa034a"><span class="section-number-2">3.</span> 留存SQL</h2>
+<div class="outline-text-2" id="text-3">
+<p>
+这里我们需要使用到窗口函数 <a href="https://docs.starrocks.io/en-us/latest/sql-reference/sql-functions/Window_function">Window function @ Window_function @ StarRocks Docs</a>
+</p>
+
+<p>
+但是窗口函数有个限制，就是一行数据只能输出一个值，但是我们可能想知道 T 这天之后，T+1, T+2 &#x2026; 这些天的留存情况。
+</p>
+
+<p>
+所以这里我们使用了 bit trick，最多计算 63 天的留存情况。我们使用一个 long类型的字段 `encoded` 来进行编码
+</p>
+<ul class="org-ul">
+<li>假设 T 天uid有活跃，那么在 bit 0 进行设置 `encoded |= (1 &lt;&lt; 0)`</li>
+<li>假设 T+x 天 uid 依然有活跃，那么 `encoded |= (1 &lt;&lt; x)`</li>
+</ul>
+
+<p>
+然后在统计的时候，我们使用不同的 bit right shift 来统计不同天数的留存情况，其中 `RetentionEncode` 是我们要实现的UDWF(user define window function)
+</p>
+
+<div class="org-src-container">
+<pre class="src src-Sql">with Rte as (select uid, date as date , RetentionEncode(date)  over (partition by uid order by date desc) as encoded from user_activity)
+     select date, count(1) as cohort,
+          sum(bitand(bit_shift_right(encoded, 1), 1)) as day1,
+          sum(bitand(bit_shift_right(encoded, 2), 1)) as day2 from Rte
+          group by date order by date;
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgeb2f965" class="outline-2">
+<h2 id="orgeb2f965"><span class="section-number-2">4.</span> 测试UDWF</h2>
+<div class="outline-text-2" id="text-4">
+<p>
+使用 global function 机制将这个UDWF测试到SR里面
+</p>
+
+<p>
+<a href="https://docs.starrocks.io/en-us/latest/sql-reference/sql-functions/JAVA_UDF#java-udfs">https://docs.starrocks.io/en-us/latest/sql-reference/sql-functions/JAVA_UDF#java-udfs</a>
+</p>
+
+<div class="org-src-container">
+<pre class="src src-Sql">drop global function RetentionEncode(string);
+
+CREATE GLOBAL AGGREGATE FUNCTION RetentionEncode(string)
+RETURNS bigint
+properties
+(
+    "analytic" = "true",
+    "symbol" = "com.starrocks.udf.retentionEncode",
+    "type" = "StarrocksJar",
+    "file" = "http://127.0.0.1:41006/data/sr-udf-1.0-SNAPSHOT-jar-with-dependencies.jar"
+);
+</pre>
+</div>
+
+<p>
+然后我们看一下 1，2 天的留存情况
+</p>
+
+<pre class="example" id="orge40eccb">
+MySQL [zya]&gt; select * from user_activity;
++------+------------+
+| uid  | date       |
++------+------------+
+|    0 | 2023-07-10 |
+|    0 | 2023-07-09 |
+|    0 | 2023-07-08 |
+|    0 | 2023-07-06 |
+|    0 | 2023-07-05 |
+|    1 | 2023-07-12 |
+|    1 | 2023-07-10 |
+|    1 | 2023-07-09 |
+|    1 | 2023-07-07 |
+|    1 | 2023-07-05 |
+|    1 | 2023-07-04 |
+|    2 | 2023-07-12 |
+|    2 | 2023-07-10 |
+|    2 | 2023-07-08 |
+|    2 | 2023-07-06 |
+|    2 | 2023-07-03 |
++------+------------+
+16 rows in set (0.070 sec)
+
+MySQL [zya]&gt; with Rte as (select uid, date as date , RetentionEncode(date)  over (partition by uid order by date desc) as encoded from user_activity)    select date, count(1) as cohort, sum(bitand(bit_shift_right(encoded, 1), 1)) as day1, sum(bitand(bit_shift_right(encoded, 2), 1)) as day2 from Rte group by date order by date;
++------------+--------+------+------+
+| date       | cohort | day1 | day2 |
++------------+--------+------+------+
+| 2023-07-03 |      1 |    0 |    0 |
+| 2023-07-04 |      1 |    1 |    0 |
+| 2023-07-05 |      2 |    1 |    1 |
+| 2023-07-06 |      2 |    0 |    2 |
+| 2023-07-07 |      1 |    0 |    1 |
+| 2023-07-08 |      2 |    1 |    2 |
+| 2023-07-09 |      2 |    2 |    0 |
+| 2023-07-10 |      3 |    0 |    2 |
+| 2023-07-12 |      2 |    0 |    0 |
++------------+--------+------+------+
+9 rows in set (0.385 sec)
+</pre>
+
+<p>
+这里验证一下效果，以 07-08 这天为例
+</p>
+<ul class="org-ul">
+<li>在 07-08 这天，uid = 0, 2 有活跃，所以 cohort = 2</li>
+<li>在 07-09 这天，uid = 0 有活跃, 所以 day1 = 1</li>
+<li>在 07-10 这天，uid= 0, 2 有活跃，所以 day2 = 2</li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-orgc86bcfb" class="outline-2">
+<h2 id="orgc86bcfb"><span class="section-number-2">5.</span> UDWF实现</h2>
+<div class="outline-text-2" id="text-5">
+<p>
+<a href="https://docs.starrocks.io/en-us/latest/sql-reference/sql-functions/JAVA_UDF#use-a-udwf">https://docs.starrocks.io/en-us/latest/sql-reference/sql-functions/JAVA_UDF#use-a-udwf</a>
+</p>
+
+<p>
+代码如下，大致思路是：
+</p>
+<ul class="org-ul">
+<li>我们会看到一系列dates, 这些dates是降序排列的</li>
+<li>我们首先看到T+x, 然后在看到T</li>
+<li>使用 `TreeSet` 维护63天以内的所有的日期</li>
+<li>遍历这个 `TreeSet` 来生成对应的 encoded</li>
+</ul>
+
+<div class="org-src-container">
+<pre class="src src-Java">package com.starrocks.udf;
+
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.TreeSet;
+import java.util.concurrent.TimeUnit;
+
+public class retentionEncode {
+    public static class State {
+        TreeSet&lt;Long&gt; buffer = new TreeSet&lt;&gt;();
+
+        Long encoded = 0L;
+
+        @Override
+        public String toString() {
+            return String.format("State(encoded = 0x%x, buffer = %d)", encoded, buffer.size());
+        }
+
+        public int serializeLength() {
+            return 4;
+        }
+    }
+
+    public State create() {
+        return new State();
+    }
+
+    public void destroy(State state) {
+
+    }
+
+    public void update(State state, String val) {
+    }
+
+    public void serialize(State state, java.nio.ByteBuffer buff) {
+    }
+
+    public void merge(State state, java.nio.ByteBuffer buffer) {
+    }
+
+    public Long finalize(State state) {
+        System.out.println("finalize: " + state.toString());
+        return state.encoded;
+    }
+
+    public void reset(State state) {
+        System.out.println("reset: " + state.toString());
+        state.buffer.clear();
+        state.encoded = 0L;
+    }
+
+    private static Date stringToDate(String val) {
+        SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd");
+        try {
+            Date date = dateFormat.parse(val);
+            return date;
+        } catch (Exception e) {
+            e.printStackTrace();
+            return null;
+        }
+    }
+
+    private void updateEncoded(State state, Date val) {
+        state.encoded = 0L;
+        if (val == null) {
+            return;
+        }
+
+        long now = val.getTime();
+        state.buffer.add(now);
+
+        final int maxDays = 8;
+
+        // pop out date &gt;= maxDays
+        while (state.buffer.size() &gt; 0) {
+            long last = state.buffer.last();
+            long diffInMs = last - now;
+            long diffInDays = TimeUnit.DAYS.convert(diffInMs, TimeUnit.MILLISECONDS);
+            if (diffInDays &gt;= maxDays) {
+                state.buffer.pollLast();
+            } else {
+                break;
+            }
+        }
+
+        for (long t : state.buffer) {
+            long diffInMs = t - now;
+            long diffInDays = TimeUnit.DAYS.convert(diffInMs, TimeUnit.MILLISECONDS);
+            assert diffInDays &lt; maxDays;
+            state.encoded |= (1L &lt;&lt; diffInDays);
+        }
+    }
+
+    public void windowUpdate(State state, int peer_group_start, int peer_group_end, int frame_start, int frame_end,
+                             String[] dates) {
+        Date val = stringToDate(dates[frame_start]);
+        updateEncoded(state, val);
+    }
+}
+</pre>
+</div>
+</div>
+</div>
+</div>
+</body>
+</html>

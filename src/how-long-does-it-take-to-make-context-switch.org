@@ -47,11 +47,11 @@ static inline void switch_mm(struct mm_struct *prev, struct mm_struct *next,
 
 之后作者尝试测试在不同规模memory footprint下cache pollution对context switch的性能影响.下面是没有设置affinity在5150上的测试结果. 可以看到workset大小超过32k之后写入时间没有太大变化，但是cs时间却持续上升。
 
-[[../images/cs-wo-affinity-on-5150.png]]
+[[../images/Pasted-Image-20231225103203.png]]
 
 下面是设置affinity在5150上的测试结果，可以看到workset超过32k之后变化cs时间变化增速很慢
 
-[[../images/cs-w-affinity-on-5150.png]]
+[[../images/Pasted-Image-20231225104255.png]]
 
 其中5150参数是(5150: L1i & L1d = 32K each, L2 = 4M). note: 我没有办法解释为什么出现这些拐点
 
@@ -64,4 +64,3 @@ cs开销在虚拟机里面是在物理机的2.5-3倍，对此解释是guest OS�
 Context switching is expensive. My rule of thumb is that it'll cost you about 30µs of CPU overhead. This seems to be a good worst-case approximation. Applications that create too many threads that are constantly fighting for CPU time (such as Apache's HTTPd or many Java applications) can waste considerable amounts of CPU cycles just to switch back and forth between different threads. I think the sweet spot for optimal CPU use is to have the same number of worker threads as there are hardware threads, and write code in an asynchronous / non-blocking fashion. Asynchronous code tends to be CPU bound, because anything that would block is simply deferred to later, until the blocking operation completes. This means that threads in asynchronous / non-blocking applications are much more likely to use their full time quantum before the kernel scheduler preempts them. And if there's the same number of runnable threads as there are hardware threads, the kernel is very likely to reschedule threads on the same core, which significantly helps performance.
 #+END_QUOTE
 设想scheduler为每个task分配10ms的时间片，但是每个task只运行了其中0.03ms就被切换出去。而一旦切换就会产生context switch, 话费在0.03ms上。也就是说整个CPU只有50%时间在做真正的工作，而剩下50%时间在cs. 而async就是希望每个task一旦被分配到时间片就可以完全利用，这样cs时间比率就在0.3%上。将线程数目限制和hardware threads相等的话，还可以减少对cache & TLB hit rate带来的影响提升性能。
-

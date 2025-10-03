@@ -1,0 +1,221 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Measuring your system’s performance using software (Go edition)</title>
+<meta name="author" content="dirtysalt" />
+<meta name="generator" content="Org Mode" />
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content" class="content">
+<h1 class="title">Measuring your system’s performance using software (Go edition)</h1>
+<p>
+<a href="https://lemire.me/blog/2024/03/17/measuring-your-systems-performance-using-software-go-edition/?continueFlag=6e2109ebedef4e4aef083a29820ed2a3">https://lemire.me/blog/2024/03/17/measuring-your-systems-performance-using-software-go-edition/?continueFlag=6e2109ebedef4e4aef083a29820ed2a3</a>
+</p>
+
+<p>
+cache line的测试我花了好一阵子才理解清楚：
+</p>
+<ul class="org-ul">
+<li>如果stride size小于cache line size的话，那么每次访问都会加载cache line</li>
+<li>如果是cache line size两倍的话，那么每次访问其实是跳过一个cache line</li>
+<li>假设整个数组是N的话，如果每个cche line都加载的话，实际上内存读取就花费了N字节</li>
+<li>但是如果是跳着读取的话，那么实际上内存读取只花费了N/2字节</li>
+</ul>
+
+<div class="org-src-container">
+<pre class="src src-Go">package main
+
+import (
+    "fmt"
+    "time"
+)
+
+const size = 33554432 // 32 MB
+func Cpy(arr1 []uint8, arr2 []uint8, slice int) {
+    for i := 0; i &lt; len(arr1); i += slice {
+        arr2[i] = arr1[i]
+    }
+}
+
+func AverageMinMax(f func() float64) (float64, float64, float64) {
+    var sum float64
+    var minimum float64
+    var maximum float64
+
+    for i := 0; i &lt; 10; i++ {
+        arr1 = make([]uint8, size)
+        arr2 = make([]uint8, size)
+
+        v := f()
+        sum += v
+        if i == 0 || v &lt; minimum {
+            minimum = v
+        }
+        if i == 0 || v &gt; maximum {
+            maximum = v
+        }
+    }
+    return sum / 10, minimum, maximum
+}
+
+var arr1 []uint8
+var arr2 []uint8
+
+func run(size int, slice int) float64 {
+    start := time.Now()
+    times := 10
+    for i := 0; i &lt; times*slice; i++ {
+        Cpy(arr1, arr2, slice)
+    }
+    end := time.Now()
+    dur := float64(end.Sub(start)) / float64(times*slice)
+    return dur
+}
+
+func main() {
+    for slice := 16; slice &lt;= 4096; slice *= 2 {
+        a, m, M := AverageMinMax(func() float64 { return run(size, slice-1) })
+        fmt.Printf("%10d: %10.1f GB/s [%4.1f - %4.1f]\n", slice-1, float64(size)/a, float64(size)/M, float64(size)/m)
+    }
+}
+</pre>
+</div>
+
+<p>
+比如下面这个输出结果的话，在255这个地方出现了一次2x. 所以cache line size可能是在128字节。
+</p>
+
+
+<pre class="example" id="org07d8f4d">
+$ go run cacheline.go
+        15:       23.6 GB/s [21.3 - 24.4]
+        31:       24.3 GB/s [23.8 - 24.5]
+        63:       24.2 GB/s [23.6 - 24.6]
+       127:       26.9 GB/s [23.8 - 27.9]
+       255:       40.8 GB/s [37.8 - 43.6]
+       511:      162.0 GB/s [130.4 - 203.4]
+      1023:      710.0 GB/s [652.0 - 744.4]
+      2047:      976.1 GB/s [967.1 - 983.8]
+      4095:     1247.4 GB/s [1147.7 - 1267.0]
+</pre>
+
+
+<hr />
+
+
+<p>
+memory latency &amp; parallelism 可以通过访问链表的方式来做测量内存延迟。但是如果同时访问两个内存链表的话，延迟实际上差不多的，这是因为多个内存访问是可以并行的，延迟可以只被计算成为一次。
+</p>
+
+<p>
+这个实验设计比较巧妙，感觉可以好好学习一下：
+</p>
+<ul class="org-ul">
+<li>首先创建 0..n-1 的数组array，并且shuffle.  注意这里必须swap.</li>
+<li>然后根据这个array来产生index. 这个index有个特点是可以循环访问的。</li>
+<li>然后将这个index拆分成为 `mlp` 个group. 按照每个group里面下表去访问array的时候，就是随机的访问</li>
+<li>这样相当于模拟出 `mlp` 个memory request. 然后观察延迟的抖动情况</li>
+</ul>
+
+<div class="org-src-container">
+<pre class="src src-Go">package main
+
+import (
+    "fmt"
+    "math/rand"
+    "time"
+)
+
+// makeCycle creates a cycle of a specified length starting at element 0
+func makeCycle(length int) ([]uint64, []uint64) {
+    array := make([]uint64, length)
+    index := make([]uint64, length)
+    // Create a cycle of maximum length within the big array
+    for i := 0; i &lt; length; i++ {
+        array[i] = uint64(i)
+    }
+
+    // Sattolo shuffle
+    for i := 0; i+1 &lt; length; i++ {
+        swapIdx := rand.Intn(length-i-1) + i + 1
+        array[i], array[swapIdx] = array[swapIdx], array[i]
+    }
+
+    total := 0
+    cur := uint64(0)
+    for cur != 0 {
+        index[total] = cur
+        total++
+        cur = array[cur]
+    }
+    return array, index
+}
+
+// setupPointers sets up pointers based on the given index
+func setupPointers(index []uint64, length, mlp int) []uint64 {
+    sp := make([]uint64, mlp)
+    sp[0] = 0
+
+    totalInc := 0
+    for m := 1; m &lt; mlp; m++ {
+        totalInc += length / mlp
+        sp[m] = index[totalInc]
+    }
+    return sp
+}
+
+func runBench(array []uint64, index []uint64, mlp int) time.Duration {
+    length := len(array)
+    sp := setupPointers(index, length, mlp)
+    hits := length / mlp
+    before := time.Now()
+    for i := 0; i &lt; hits; i++ {
+        for m := 0; m &lt; mlp; m++ {
+            sp[m] = array[sp[m]]
+        }
+    }
+    after := time.Now()
+    return after.Sub(before)
+}
+
+func main() {
+    const length = 100000000
+    array, index := makeCycle(length)
+    fmt.Println("Length:", length*8/1024/1024, "MB")
+    base := runBench(array, index, 1)
+    fmt.Println("Lanes:", 1, "Time:", base)
+
+    for mlp := 2; mlp &lt;= 40; mlp *= 2 {
+        t := runBench(array, index, mlp)
+        fmt.Println("Lanes:", mlp, "Speedup:", fmt.Sprintf("%.1f", float64(base)/float64(t)))
+    }
+}
+</pre>
+</div>
+
+<p>
+下面是我的M3上运行结果，看上去大约是在128这个水平上。
+</p>
+
+<pre class="example" id="orge020a8d">
+(base) (StarRocks)(Warehouse) m3-book :: ~/Downloads » go run bench_mlp.go
+Length: 1024 MB
+Lanes: 1 Time: 14.852118916s
+Lanes: 2 Speedup: 2.0
+Lanes: 4 Speedup: 4.0
+Lanes: 8 Speedup: 8.1
+Lanes: 16 Speedup: 15.8
+Lanes: 32 Speedup: 30.6
+Lanes: 64 Speedup: 57.8
+Lanes: 128 Speedup: 98.6
+Lanes: 256 Speedup: 147.9
+Lanes: 512 Speedup: 209.4
+Lanes: 1024 Speedup: 270.2
+</pre>
+</div>
+</body>
+</html>

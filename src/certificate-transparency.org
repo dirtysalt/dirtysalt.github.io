@@ -16,13 +16,13 @@ CT可以在现在的TSL/SSL系统上改进得到，下图是三种方式：
 2. TLS ext. 将log写入由domain owner来完成。CA不会知道这个SCT. 这个是在握手阶段进行扩展。
 3. OCSP Stapling. 和第二个有点像，但是是CA异步地去申请SCT. LogServer接收到请求可能并不会立刻就写入到Log, 估计会攒一些记录。
 
-[[../images/ct-deploy0.png]] [[../images/ct-deploy1.png]]
+[[../images/Pasted-Image-20231225104407.png]] [[../images/Pasted-Image-20231225104346.png]]
 
 下面图是一张CT的部署方式：
 1. CA需要不断地与Log Servers进行沟通，并且上面运行这monitor，检查自己拿到的Logs copy是否有问题。
 2. Client上面运行Auditor. 它要检查自己从CA上申请拿到的公钥和SCT是否合法，同时会校验CA的合法性。这个合法性是和其他log server通信知道的。
 
-[[../images/ct-deploy2.png]]
+[[../images/Pasted-Image-20231225104444.png]]
 
 了解了CT的工作原理，就看LogServer是如何实现了。这个就要看论文了，关键的数据结构是Merkel Tree，论文里面有详细说明。所有的Log都被当做了叶子节点，然后这些叶子节点组成一个二叉树。可以通过SCT找到这些Log的下标，如果在知道这个树的大小，就可以做许多操作了。我觉得先看看这个Log Server提供了那些关键的API：
 1. Latest() returns the current log size and top-level hash, cryptographically signed by the server for non-repudiation.
@@ -36,11 +36,11 @@ CT可以在现在的TSL/SSL系统上改进得到，下图是三种方式：
 
 如何操作这个Merkel Tree，论文里面有说明。简单地说就是按照level进行存储，并且仅仅存completed-size tree的hash value. 至于那些non completed的，则是需要计算得到，但是这个时间复杂度是O(lgN). 以下图为例的话，增加12节点，我们需要[3,0], [2,2], [0,12]，其中[3,0],[2,2]已经是completed-size tree.
 
-[[../images/ct-merkel-tree0.png]]
+[[../images/Pasted-Image-20231225103612.png]]
 
 然后如果要验证某个tree是否为另外一个tree的前缀的话，下图为例假设我们要验证y是否为x的前缀，y的大小是7, 我们使用x上[2,0], [1,2], [0,6] 这三个节点可以得到y的root hash value. 注意这三个节点也都是completed-size的。
 
-[[../images/ct-merkel-tree1.png]]
+[[../images/Pasted-Image-20231225103549.png]]
 
 
 下面是Python伪代码其中：
@@ -48,7 +48,7 @@ CT可以在现在的TSL/SSL系统上改进得到，下图是三种方式：
 2. prefix = append，prefix表示为了计算tree大小为N的root hash, 需要使用哪些节点。这个问题等同于加入编号为N的节点。
 3. update(N) 表示将要加入编号为N的节点，计算出来hash之后，需要更新哪些level.
 
-#+BEGIN_SRC python
+#+BEGIN_SRC Python
 #!/usr/bin/env python3
 # coding:utf-8
 # Copyright (C) dirlt

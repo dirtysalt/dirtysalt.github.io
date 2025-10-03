@@ -184,14 +184,14 @@ KeepAlive reply spent in flight, and the rate at which the master's clock is adv
 - If a client holds a handle H on a node and any oper-ation on H fails because the associated session has ex-pired, all subsequent operations on H (except Close() andPoison()) will fail in the same way. Clients can use this to guarantee that network and server outages cause only a suffix of a sequence of operations to be lost, rather than an arbitrary subsequence, thus allowing complex changes to be marked as committed with a final write.
 
 *** Fail-overs
-[[../images/chubby-grace-period-in-master-fail-over.png]]
+[[../images/Pasted-Image-20231225104335.png]]
 
 - When a master fails or otherwise loses mastership, it dis-cards its in-memory state about sessions, handles, and locks. The authoritative timer for session leases runs at the master, so until a new master is elected the session lease timer is stopped; this is legal because it is equiva-lent to extending the client’s leas.(如果master fail的话那么会丢弃内存内部的状态，其lease也会停止计时)
 - If a master election occurs quickly, clients can contact the new master before their local (approximate) lease timers expire. If the elec-tion takes a long time, clients flush their caches and wait for the grace period while trying to find the new master. Thus the grace period allows sessions to be maintained across fail-overs that exceed the normal lease timeout.(如果master在grace period之前选举出来的话，那么client就可以在session断开之前连接上master.但是如果选举使用了很长时间的话，那么session就断开了，对于client来说的话就需要重新进行连接。因此引入grace period的意图就是为能够在master failover期间依然保持session).
 - 论文给出了一个master出现failover的时序图。这里对于时序图最不能够理解的一点就是为什么需要引入master lease M3.这里的M3是一个conservative assumption.
 - Once a client has contacted the new master, the client library and master co-operate to provide the illusion to the application that no failure has occurred. To achieve this, the new master must reconstruct a conservative ap-proximation of the in-memory state that the previous master had. It does this partly by reading data stored stably on disc (replicated via the normal database repli-cation protocol), partly by obtaining state from clients, and partly by conservative assumptions. The database records each session, held lock, and ephemeral file.(对于client如果在grace period之间连接上新的master的话，比如给client提供一个假象好像master没有出现failover,因此这个过程必须足够平滑并且进行一些状态的恢复。master会使用各种方式构造原来的in-memory状态，包括从磁盘读取(之前master保存的状态,包括session,lock以及临时文件),根据client状态(client之前是出于什么状态),以及conservative assumption.
 - 对于一个新选举出来的master需要经过下面几个步骤：
-  - It first picks a new client epoch number, which clients are required to present on every call. The master rejects calls from clients using older epoch numbers, and provides the new epoch number. This ensures that the new master will not respond to a very old packet that was sent to a previous master, even one running on the same machine(首先挑选一个新epoch number.client每次和master交互都需要带上这个epoch number.因为原来client持有的epoch number和当前是不同的，因此会被拒绝掉而下次以正确的epoch number来进行发送。文中说可以过滤发给原来master的请求。这点对于TCP来说应该是不会存在这个问题的，因为重新更换了一次连接，但是对于UDP可能存在这个问题。另外引入这个原因我猜想是希望client library能够意识到master已经发生改变，需要做相应调整。）
+  - It first picks a new client epoch number, which clients are required to present on every call. The master rejects calls from clients using older epoch numbers, and provides the new epoch number. This ensures that the new master will not respond to a very old packet that was sent to a previous master, even one running on the same machine(首先挑选一个新epoch number.client每次和master交互都需要带上这个epoch number.因为原来client持有的epoch number和当前是不同的，因此会被拒绝掉而下次以正确的epoch number来进行发送。文中说可以过滤发给原来master的请求。这点对于TCP来说应该是不会存在这个问题的，因为重新更换了一次连接，但是对于UDP可能存在这个问题。另外引入这个原因我猜想是希望client library能够意识到master已经发生改变，需要做相应调整。)
   - The new master may respond to master-location equests, but does not at first process incoming session-related operations.(可以相应master-location的相应但是不能够影响任何session相关的操作)
   - It builds in-memory data structures for sessions and locks that are recorded in the database. Session leases are extended to the maximum that the pre-vious master may have been using.(从database中恢复各个session以及locks,然后为每个session分配最大的session lease.这个session lease就是conservative assumption.
   - The master now lets clients perform KeepAlives, but no other session-related operations.(然后master允许接收KeepAlive请求但是依然不允许接收session相关请求)
@@ -257,7 +257,7 @@ newly replaced replica without placing load on replicas that are in service.
 
 ** Use, surprises and design errors
 *** Use and behaviour
-[[../images/chubby-statistics.png]]
+[[../images/Pasted-Image-20231225103645.png]]
 
 - The following table gives statistics taken as a snapshot of a Chubby cell; the RPC rate was a seen over a ten-minute period. The numbers are typical of cells in Google. Several things can be seen:(论文中给出了一个cell使用统计情况，RPC一段时间内观察的数据):
   - 大部分文件都用来做name service.

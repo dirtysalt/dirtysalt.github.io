@@ -1,0 +1,141 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Adaptive self-tuning memory in DB2</title>
+<meta name="author" content="dirtysalt" />
+<meta name="generator" content="Org Mode" />
+<script>
+  window.MathJax = {
+    tex: {
+      ams: {
+        multlineWidth: '85%'
+      },
+      tags: 'ams',
+      tagSide: 'right',
+      tagIndent: '.8em'
+    },
+    chtml: {
+      scale: 1.0,
+      displayAlign: 'center',
+      displayIndent: '0em'
+    },
+    svg: {
+      scale: 1.0,
+      displayAlign: 'center',
+      displayIndent: '0em'
+    },
+    output: {
+      font: 'mathjax-modern',
+      displayOverflow: 'overflow'
+    }
+  };
+</script>
+
+<script
+  id="MathJax-script"
+  async
+  src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js">
+</script>
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content" class="content">
+<h1 class="title">Adaptive self-tuning memory in DB2</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>Table of Contents</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#orgce7e35e">1. abstract</a></li>
+<li><a href="#org8fed954">2. design overview</a></li>
+</ul>
+</div>
+</div>
+<p>
+<a href="https://www.vldb.org/conf/2006/p1081-storm.pdf">https://www.vldb.org/conf/2006/p1081-storm.pdf</a>
+</p>
+
+<p>
+这篇文章主要是讲DB2如何来为各个组件(sort,join,buffer cache等)调整内存总量的，来确保性能可以达到最优，这篇文章没有讨论说应该在一个query内给每个operators分配多少内存什么的。
+</p>
+
+<p>
+2006年的VLDB，这篇文章技术用于DB2 V9.1 这个是2006年发行的。最新版本的DB2是11.5(2021.9)。
+</p>
+
+<div id="outline-container-orgce7e35e" class="outline-2">
+<h2 id="orgce7e35e"><span class="section-number-2">1.</span> abstract</h2>
+<div class="outline-text-2" id="text-1">
+<p>
+STMM(self-tunning memory manager)
+</p>
+<ul class="org-ul">
+<li>cost-benefit analyais. 基于代价收益分析（增大memory可以节省多少运行时间）</li>
+<li>runtime simulation modeling. 这些数据是通过模拟过程来得到的</li>
+<li>control theory. 根据这些数据进行建模，然后提供内存调整的反馈</li>
+</ul>
+
+<p>
+设计上偏向数据建模的东西稍微多些，所以看的有点走马观花，主要就是看看工程上的架构。
+</p>
+
+<blockquote>
+<p>
+DB2 for Linux, UNIX, and Windows Version 9.1 introduces the Self-Tuning Memory Manager (STMM), which provides adaptive self tuning of both database memory heaps and cumulative database memory allocation. This technology provides state-of- the-art memory tuning combining control theory, runtime simulation modeling, cost-benefit analysis, and operating system resource analysis. In particular, the novel use of cost-benefit analysis and control theory techniques makes STMM a breakthrough technology in database memory management. The cost-benefit analysis allows STMM to tune memory between radically different memory consumers such as compiled statement cache, sort, and buffer pools.
+</p>
+</blockquote>
+</div>
+</div>
+
+<div id="outline-container-org8fed954" class="outline-2">
+<h2 id="org8fed954"><span class="section-number-2">2.</span> design overview</h2>
+<div class="outline-text-2" id="text-2">
+<blockquote>
+<p>
+The principal component of the Self-Tuning Memory Manager feature is the memory controller. During each tuning cycle, the memory controller (or memory tuner) evaluates the memory distribution and determines if system performance can be enhanced through the redistribution of the database memory. To do this, the controller uses cost-benefit data as input into a control model whose output is an improved memory distribution. The control model also determines an appropriate tuning frequency, typically between 30 seconds and 10 minutes, based on the workload characteristics (as defined through the input cost-benefit data).
+</p>
+</blockquote>
+
+
+<div id="org51d1ff6" class="figure">
+<p><img src="../images/Pasted-Image-20231201140710.png" alt="Pasted-Image-20231201140710.png" />
+</p>
+</div>
+
+<hr />
+
+<p>
+cost-benefit数值是通过模拟来收集的：假设在Y MB的基础上，增加X MB的内存，那么可以T sec运行时间的节省。有了这些数值之后，就可以开始每个内存组件的建模： \(X=A(1-e^{-bu})\)  其中X表示节省的运行时间，U表示增加的内存大小。
+</p>
+
+<hr />
+
+<p>
+STMM Controller结构如下,下面由两个模型组成：
+</p>
+<ul class="org-ul">
+<li>MIMO Controller 这个是按照模型做的调整算法，里面也用了某种积分控制算法什么的保证调整平滑。</li>
+<li>Oscillation Dampening. 这个是没有数据模型之前的某种按照fixed step调整的算法，但是要避免震荡。</li>
+</ul>
+
+
+<div id="org6d3885b" class="figure">
+<p><img src="../images/Pasted-Image-20231201141339.png" alt="Pasted-Image-20231201141339.png" />
+</p>
+</div>
+
+<p>
+文章后面大部分都是将怎么进行建模的：
+</p>
+<ul class="org-ul">
+<li>如何构建模型和检查模型有效性</li>
+<li>确定多长时间重新建模一次</li>
+<li>确定如何在各个组件之间做memory transfer.</li>
+</ul>
+</div>
+</div>
+</div>
+</body>
+</html>

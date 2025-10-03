@@ -30,15 +30,15 @@ throttle实现依赖于FlowRate来计算rate，根据计算出来的rate和设�
 </p>
 
 <div class="org-src-container">
-<pre class="src src-python"><span class="org-py-def-class">class</span> <span class="org-py-class-name">NaiveFlowRate</span>:
-    <span class="org-py-def-class">def</span> <span class="org-function-name">__init__</span>(<span class="org-py-object-reference">self</span>):
-        <span class="org-py-object-reference">self</span>.cnt = <span class="org-py-number">0</span>
-        <span class="org-py-object-reference">self</span>.ts = <span class="org-py-builtins">int</span>(time.time())
+<pre class="src src-Python">class NaiveFlowRate:
+    def __init__(self):
+        self.cnt = 0
+        self.ts = int(time.time())
 
-    <span class="org-py-def-class">def</span> <span class="org-function-name">update</span>(<span class="org-py-object-reference">self</span>, <span class="org-py-variable-name">inc</span>=<span class="org-py-number">1</span>):
-        <span class="org-py-object-reference">self</span>.cnt += inc
-        <span class="org-py-variable-name">now_ts</span> = <span class="org-py-builtins">int</span>(time.time())
-        <span class="org-keyword">return</span> <span class="org-py-object-reference">self</span>.cnt / (now_ts - <span class="org-py-object-reference">self</span>.ts)
+    def update(self, inc=1):
+        self.cnt += inc
+        now_ts = int(time.time())
+        return self.cnt / (now_ts - self.ts)
 </pre>
 </div>
 
@@ -49,64 +49,64 @@ throttle实现依赖于FlowRate来计算rate，根据计算出来的rate和设�
 </p>
 
 <div class="org-src-container">
-<pre class="src src-python"><span class="org-py-def-class">class</span> <span class="org-py-class-name">RedisFlowRate</span>:
-    <span class="org-py-def-class">def</span> <span class="org-function-name">__init__</span>(<span class="org-py-object-reference">self</span>, client: redis.StrictRedis, key_prefix):
-        <span class="org-py-object-reference">self</span>.key_prefix = key_prefix
-        <span class="org-py-object-reference">self</span>.client: <span class="org-py-variable-name">redis.StrictRedis</span> = client
+<pre class="src src-Python">class RedisFlowRate:
+    def __init__(self, client: redis.StrictRedis, key_prefix):
+        self.key_prefix = key_prefix
+        self.client: redis.StrictRedis = client
 
-    <span class="org-py-def-class">def</span> <span class="org-function-name">update</span>(<span class="org-py-object-reference">self</span>, key, <span class="org-py-variable-name">value</span>=<span class="org-py-number">1</span>):
-        <span class="org-py-variable-name">value</span> = <span class="org-py-builtins">int</span>(value)
-        <span class="org-py-variable-name">cur_ts</span> = <span class="org-py-builtins">int</span>(date_util.current_timestamp())
-        <span class="org-py-variable-name">cur_sec</span>, <span class="org-py-variable-name">cur_min</span> = cur_ts % <span class="org-py-number">60</span>, (cur_ts // <span class="org-py-number">60</span>) % <span class="org-py-number">60</span>
-        <span class="org-py-variable-name">past_min</span> = (cur_min + <span class="org-py-number">59</span>) % <span class="org-py-number">60</span>
-        <span class="org-py-variable-name">past_key</span> = <span class="org-string">'{}{}.{}'</span>.format(<span class="org-py-object-reference">self</span>.key_prefix, key, past_min)
-        <span class="org-py-variable-name">cur_key</span> = <span class="org-string">'{}{}.{}'</span>.format(<span class="org-py-object-reference">self</span>.key_prefix, key, cur_min)
+    def update(self, key, value=1):
+        value = int(value)
+        cur_ts = int(date_util.current_timestamp())
+        cur_sec, cur_min = cur_ts % 60, (cur_ts // 60) % 60
+        past_min = (cur_min + 59) % 60
+        past_key = '{}{}.{}'.format(self.key_prefix, key, past_min)
+        cur_key = '{}{}.{}'.format(self.key_prefix, key, cur_min)
 
-        <span class="org-py-variable-name">pipe</span> = <span class="org-py-object-reference">self</span>.client.pipeline(<span class="org-py-variable-name">transaction</span>=<span class="org-py-pseudo-keyword">False</span>)
+        pipe = self.client.pipeline(transaction=False)
         pipe.get(past_key)
         pipe.incr(cur_key, value)
-        pipe.expire(cur_key, <span class="org-py-number">2</span> * <span class="org-py-number">60</span> - cur_sec)
+        pipe.expire(cur_key, 2 * 60 - cur_sec)
 
-        <span class="org-py-variable-name">resp</span> = pipe.execute()
-        <span class="org-py-variable-name">past_counter</span> = <span class="org-py-builtins">int</span>(resp[<span class="org-py-number">0</span>]) <span class="org-keyword">if</span> resp[<span class="org-py-number">0</span>] <span class="org-keyword">else</span> <span class="org-py-number">0</span>
-        <span class="org-py-variable-name">current_counter</span> = <span class="org-py-builtins">max</span>(<span class="org-py-number">0</span>, <span class="org-py-builtins">int</span>(resp[<span class="org-py-number">1</span>]) - value)
-        <span class="org-py-variable-name">current_rate</span> = past_counter * ((<span class="org-py-number">60</span> - cur_sec) / <span class="org-py-number">60</span>) + current_counter
-        <span class="org-keyword">return</span> current_rate / <span class="org-py-number">60</span>
+        resp = pipe.execute()
+        past_counter = int(resp[0]) if resp[0] else 0
+        current_counter = max(0, int(resp[1]) - value)
+        current_rate = past_counter * ((60 - cur_sec) / 60) + current_counter
+        return current_rate / 60
 
-<span class="org-py-def-class">class</span> <span class="org-py-class-name">SmoothFlowRate</span>:
-    <span class="org-py-def-class">def</span> <span class="org-function-name">__init__</span>(<span class="org-py-object-reference">self</span>, <span class="org-py-variable-name">unit</span>=<span class="org-py-number">60</span>):
-        <span class="org-py-object-reference">self</span>.last_count = <span class="org-py-number">0</span>
-        <span class="org-py-object-reference">self</span>.cur_count = <span class="org-py-number">0</span>
-        <span class="org-py-object-reference">self</span>.cur_ts = <span class="org-py-number">0</span>
-        <span class="org-py-object-reference">self</span>.cur_bucket = <span class="org-py-number">0</span>
-        <span class="org-py-object-reference">self</span>.unit = unit
+class SmoothFlowRate:
+    def __init__(self, unit=60):
+        self.last_count = 0
+        self.cur_count = 0
+        self.cur_ts = 0
+        self.cur_bucket = 0
+        self.unit = unit
 
-    <span class="org-py-def-class">def</span> <span class="org-function-name">__str__</span>(<span class="org-py-object-reference">self</span>):
-        <span class="org-keyword">return</span> <span class="org-string">'{}(ts = {}, bucket = {}, last = {}, curr = {})'</span>.format(
-            __class__.__name__, <span class="org-py-object-reference">self</span>.cur_ts, <span class="org-py-object-reference">self</span>.cur_bucket,
-            <span class="org-py-object-reference">self</span>.last_count, <span class="org-py-object-reference">self</span>.cur_count)
+    def __str__(self):
+        return '{}(ts = {}, bucket = {}, last = {}, curr = {})'.format(
+            __class__.__name__, self.cur_ts, self.cur_bucket,
+            self.last_count, self.cur_count)
 
-    <span class="org-py-def-class">def</span> <span class="org-function-name">update</span>(<span class="org-py-object-reference">self</span>, <span class="org-py-variable-name">inc</span>=<span class="org-py-number">1</span>):
-        <span class="org-py-variable-name">now</span> = <span class="org-py-builtins">int</span>(date_util.current_timestamp())
-        <span class="org-py-variable-name">bucket</span> = now // <span class="org-py-object-reference">self</span>.unit
+    def update(self, inc=1):
+        now = int(date_util.current_timestamp())
+        bucket = now // self.unit
 
-        <span class="org-keyword">if</span> <span class="org-py-object-reference">self</span>.cur_bucket == <span class="org-py-number">0</span>:
-            <span class="org-py-object-reference">self</span>.cur_bucket = bucket
-        <span class="org-keyword">elif</span> <span class="org-py-object-reference">self</span>.cur_bucket &lt; (bucket - <span class="org-py-number">1</span>):
-            <span class="org-py-object-reference">self</span>.last_count = <span class="org-py-number">0</span>
-            <span class="org-py-object-reference">self</span>.cur_count = <span class="org-py-number">0</span>
-        <span class="org-keyword">elif</span> <span class="org-py-object-reference">self</span>.cur_bucket == (bucket - <span class="org-py-number">1</span>):
-            <span class="org-py-object-reference">self</span>.last_count = <span class="org-py-object-reference">self</span>.cur_count
-            <span class="org-py-object-reference">self</span>.cur_count = <span class="org-py-number">0</span>
+        if self.cur_bucket == 0:
+            self.cur_bucket = bucket
+        elif self.cur_bucket &lt; (bucket - 1):
+            self.last_count = 0
+            self.cur_count = 0
+        elif self.cur_bucket == (bucket - 1):
+            self.last_count = self.cur_count
+            self.cur_count = 0
 
-        <span class="org-py-object-reference">self</span>.cur_ts = now
-        <span class="org-py-object-reference">self</span>.cur_bucket = bucket
-        <span class="org-py-object-reference">self</span>.cur_count += inc
+        self.cur_ts = now
+        self.cur_bucket = bucket
+        self.cur_count += inc
 
-        <span class="org-py-variable-name">last_ratio</span> = (<span class="org-py-object-reference">self</span>.cur_ts % <span class="org-py-object-reference">self</span>.unit) / <span class="org-py-object-reference">self</span>.unit
-        <span class="org-py-variable-name">rate</span> = (<span class="org-py-number">1</span> - last_ratio) * <span class="org-py-object-reference">self</span>.last_count + <span class="org-py-object-reference">self</span>.cur_count
-        <span class="org-py-variable-name">rate</span> = rate / <span class="org-py-object-reference">self</span>.unit  <span class="org-comment"># per seconds.</span>
-        <span class="org-keyword">return</span> rate
+        last_ratio = (self.cur_ts % self.unit) / self.unit
+        rate = (1 - last_ratio) * self.last_count + self.cur_count
+        rate = rate / self.unit  # per seconds.
+        return rate
 
 </pre>
 </div>
@@ -162,57 +162,57 @@ throttle实现依赖于FlowRate来计算rate，根据计算出来的rate和设�
 </ul>
 
 <div class="org-src-container">
-<pre class="src src-python"><span class="org-py-variable-name">throttle</span> = SmoothThrottle(<span class="org-py-variable-name">rate_limit</span>=<span class="org-py-number">50</span>)
-<span class="org-py-variable-name">flow_rate</span> = throttle.flow_rate
+<pre class="src src-Python">throttle = SmoothThrottle(rate_limit=50)
+flow_rate = throttle.flow_rate
 
-<span class="org-py-def-class">class</span> <span class="org-py-class-name">Worker</span>:
-    <span class="org-py-def-class">def</span> <span class="org-function-name">__init__</span>(<span class="org-py-object-reference">self</span>, Q):
-        <span class="org-py-object-reference">self</span>.Q: <span class="org-py-variable-name">Queue</span> = Q
-        <span class="org-py-object-reference">self</span>.rates = []
-        <span class="org-py-object-reference">self</span>._exit = <span class="org-py-pseudo-keyword">False</span>
+class Worker:
+    def __init__(self, Q):
+        self.Q: Queue = Q
+        self.rates = []
+        self._exit = False
 
-    <span class="org-py-def-class">def</span> <span class="org-function-name">run</span>(<span class="org-py-object-reference">self</span>):
-        <span class="org-py-variable-name">Q</span> = <span class="org-py-object-reference">self</span>.Q
-        <span class="org-keyword">while</span> <span class="org-py-pseudo-keyword">True</span>:
-            <span class="org-py-try-if">try</span>:
-                <span class="org-py-variable-name">v</span> = <span class="org-py-object-reference">self</span>.Q.get(<span class="org-py-variable-name">timeout</span>=<span class="org-py-number">0</span>.<span class="org-py-number">1</span>)
-            <span class="org-keyword">except</span> queue.Empty:
-                <span class="org-py-variable-name">v</span> = <span class="org-py-pseudo-keyword">None</span>
-            <span class="org-keyword">if</span> <span class="org-py-object-reference">self</span>._exit:
-                <span class="org-keyword">break</span>
-            <span class="org-keyword">if</span> v <span class="org-keyword">is</span> <span class="org-keyword">not</span> <span class="org-py-pseudo-keyword">None</span>:
-                throttle.run(v) <span class="org-comment"># &#27979;&#35797;&#38480;&#36895;&#26159;&#21542;&#24037;&#20316;</span>
-                <span class="org-comment"># flow_rate.update(v) # &#27979;&#35797;rate&#26159;&#21542;&#20272;&#31639;&#27491;&#30830;</span>
-            <span class="org-py-variable-name">rate</span> = flow_rate.update(<span class="org-py-number">0</span>)
-            <span class="org-py-object-reference">self</span>.rates.append(rate)
+    def run(self):
+        Q = self.Q
+        while True:
+            try:
+                v = self.Q.get(timeout=0.1)
+            except queue.Empty:
+                v = None
+            if self._exit:
+                break
+            if v is not None:
+                throttle.run(v) # 测试限速是否工作
+                # flow_rate.update(v) # 测试rate是否估算正确
+            rate = flow_rate.update(0)
+            self.rates.append(rate)
 
-    <span class="org-py-def-class">def</span> <span class="org-function-name">exit</span>(<span class="org-py-object-reference">self</span>):
-        <span class="org-py-object-reference">self</span>._exit = <span class="org-py-pseudo-keyword">True</span>
-
-
-<span class="org-py-def-class">class</span> <span class="org-py-class-name">Producer</span>:
-    <span class="org-py-def-class">def</span> <span class="org-function-name">__init__</span>(<span class="org-py-object-reference">self</span>, Q, mean, std):
-        <span class="org-py-object-reference">self</span>.Q: <span class="org-py-variable-name">Queue</span> = Q
-        <span class="org-py-object-reference">self</span>.mean = mean
-        <span class="org-py-object-reference">self</span>.std = std
-
-    <span class="org-py-def-class">def</span> <span class="org-function-name">run</span>(<span class="org-py-object-reference">self</span>):
-        <span class="org-py-variable-name">size</span> = <span class="org-py-number">1000</span>
-
-        <span class="org-keyword">for</span> x <span class="org-keyword">in</span> <span class="org-py-builtins">range</span>(<span class="org-py-number">5</span>):
-            <span class="org-py-variable-name">values</span> = np.random.normal(<span class="org-py-variable-name">loc</span>= <span class="org-py-object-reference">self</span>.mean, <span class="org-py-variable-name">scale</span>= <span class="org-py-object-reference">self</span>.std, <span class="org-py-variable-name">size</span>=size)
-            <span class="org-keyword">for</span> v <span class="org-keyword">in</span> values:
-                <span class="org-py-object-reference">self</span>.Q.put(v)
-                date_util.delay_seconds(<span class="org-py-number">0</span>.<span class="org-py-number">1</span>)
-            date_util.delay_seconds(<span class="org-py-number">100</span>)
+    def exit(self):
+        self._exit = True
 
 
-<span class="org-py-def-class">def</span> <span class="org-function-name">collect</span>():
-    <span class="org-py-variable-name">Q</span> = queue.Queue(<span class="org-py-variable-name">maxsize</span>=<span class="org-py-number">1</span>)
-    <span class="org-py-variable-name">worker</span> = Worker(Q)
-    <span class="org-py-variable-name">t1</span> = threading.Thread(<span class="org-py-variable-name">target</span>=worker.run)
-    <span class="org-py-variable-name">producer</span> = Producer(Q, <span class="org-py-variable-name">mean</span>=<span class="org-py-number">10</span>, <span class="org-py-variable-name">std</span>=<span class="org-py-number">5</span>)
-    <span class="org-py-variable-name">t2</span> = threading.Thread(<span class="org-py-variable-name">target</span>=producer.run)
+class Producer:
+    def __init__(self, Q, mean, std):
+        self.Q: Queue = Q
+        self.mean = mean
+        self.std = std
+
+    def run(self):
+        size = 1000
+
+        for x in range(5):
+            values = np.random.normal(loc= self.mean, scale= self.std, size=size)
+            for v in values:
+                self.Q.put(v)
+                date_util.delay_seconds(0.1)
+            date_util.delay_seconds(100)
+
+
+def collect():
+    Q = queue.Queue(maxsize=1)
+    worker = Worker(Q)
+    t1 = threading.Thread(target=worker.run)
+    producer = Producer(Q, mean=10, std=5)
+    t2 = threading.Thread(target=producer.run)
     t1.start()
     t2.start()
 
@@ -220,9 +220,9 @@ throttle实现依赖于FlowRate来计算rate，根据计算出来的rate和设�
     worker.exit()
     t1.join()
 
-    <span class="org-py-variable-name">rates</span> = worker.rates
-    <span class="org-keyword">print</span>(<span class="org-string">'# of pts = {}'</span>.format(len(rates)))
-    <span class="org-keyword">return</span> rates
+    rates = worker.rates
+    print('# of pts = {}'.format(len(rates)))
+    return rates
 </pre>
 </div>
 
@@ -231,8 +231,8 @@ throttle实现依赖于FlowRate来计算rate，根据计算出来的rate和设�
 </p>
 
 
-<div id="org2ea9ddb" class="figure">
-<p><img src="../images/throttle-in-python0.png" alt="throttle-in-python0.png" />
+<div id="org999261d" class="figure">
+<p><img src="../images/Pasted-Image-20231225103921.png" alt="Pasted-Image-20231225103921.png" />
 </p>
 </div>
 
@@ -241,8 +241,8 @@ throttle的rate_limit设置为50, 所以在50上会被削平.
 </p>
 
 
-<div id="org20bc93e" class="figure">
-<p><img src="../images/throttle-in-python1.png" alt="throttle-in-python1.png" />
+<div id="org3ed432e" class="figure">
+<p><img src="../images/Pasted-Image-20231225103953.png" alt="Pasted-Image-20231225103953.png" />
 </p>
 </div>
 
@@ -262,7 +262,7 @@ UPDATE@202002 最近发现这个限速器在生产环境有点问题，没有对
 </ul>
 
 <p>
-其实这些实现都是使用固定窗口（有1s, 10s, 60s)的，在这个时间窗口内设置一个次数上限。而我上面的rate limiter是60s的近似滑动窗口，在限速上会更加平滑一些。
+其实这些实现都是使用固定窗口(有1s, 10s, 60s)的，在这个时间窗口内设置一个次数上限。而我上面的rate limiter是60s的近似滑动窗口，在限速上会更加平滑一些。
 </p>
 
 <p>
@@ -287,40 +287,40 @@ UPDATE@202002 最近发现这个限速器在生产环境有点问题，没有对
 </p>
 
 <div class="org-src-container">
-<pre class="src src-python"><span class="org-py-def-class">class</span> <span class="org-py-class-name">SmoothThrottle</span>(object):
-    <span class="org-py-def-class">def</span> <span class="org-function-name">__init__</span>(<span class="org-py-object-reference">self</span>, rate_limit):
-        <span class="org-py-object-reference">self</span>.rate_limit = rate_limit
-        <span class="org-py-object-reference">self</span>.flow_rate = SmoothFlowRate(<span class="org-py-variable-name">unit</span>=<span class="org-py-number">60</span>)
+<pre class="src src-Python">class SmoothThrottle(object):
+    def __init__(self, rate_limit):
+        self.rate_limit = rate_limit
+        self.flow_rate = SmoothFlowRate(unit=60)
 
-    <span class="org-py-def-class">def</span> <span class="org-function-name">set_rate_limit</span>(<span class="org-py-object-reference">self</span>, v):
-        <span class="org-py-object-reference">self</span>.rate_limit = v
+    def set_rate_limit(self, v):
+        self.rate_limit = v
 
-    <span class="org-py-def-class">def</span> <span class="org-function-name">_wait_once</span>(<span class="org-py-object-reference">self</span>, rate):
-        <span class="org-keyword">if</span> <span class="org-keyword">not</span> <span class="org-py-object-reference">self</span>.rate_limit <span class="org-keyword">or</span> rate &lt; <span class="org-py-object-reference">self</span>.rate_limit:
-            <span class="org-keyword">return</span> <span class="org-py-number">0</span>
-        <span class="org-py-variable-name">delay</span> = <span class="org-py-object-reference">self</span>.flow_rate.unit * (rate - <span class="org-py-object-reference">self</span>.rate_limit) / <span class="org-py-object-reference">self</span>.rate_limit
-        <span class="org-keyword">if</span> delay &gt; <span class="org-py-number">0</span>.<span class="org-py-number">1</span>:
-            date_util.delay_seconds(delay + random.random() * <span class="org-py-number">0</span>.<span class="org-py-number">5</span>)
-            <span class="org-keyword">return</span> delay
-        <span class="org-keyword">return</span> <span class="org-py-number">0</span>
+    def _wait_once(self, rate):
+        if not self.rate_limit or rate &lt; self.rate_limit:
+            return 0
+        delay = self.flow_rate.unit * (rate - self.rate_limit) / self.rate_limit
+        if delay &gt; 0.1:
+            date_util.delay_seconds(delay + random.random() * 0.5)
+            return delay
+        return 0
 
-    <span class="org-py-def-class">def</span> <span class="org-function-name">get_rate</span>(<span class="org-py-object-reference">self</span>):
-        <span class="org-keyword">return</span> <span class="org-py-object-reference">self</span>.flow_rate.update(<span class="org-py-number">0</span>)
+    def get_rate(self):
+        return self.flow_rate.update(0)
 
-    <span class="org-py-def-class">def</span> <span class="org-function-name">_wait</span>(<span class="org-py-object-reference">self</span>):
-        <span class="org-py-variable-name">res</span> = <span class="org-py-number">0</span>
-        <span class="org-keyword">while</span> <span class="org-py-pseudo-keyword">True</span>:
-            <span class="org-py-variable-name">rate</span> = <span class="org-py-object-reference">self</span>.get_rate()
-            <span class="org-py-variable-name">v</span> = <span class="org-py-object-reference">self</span>._wait_once(rate)
-            <span class="org-py-variable-name">res</span> += v
-            <span class="org-keyword">if</span> <span class="org-py-variable-name">v</span> == <span class="org-py-number">0</span>:
-                <span class="org-keyword">break</span>
-        <span class="org-keyword">return</span> res
+    def _wait(self):
+        res = 0
+        while True:
+            rate = self.get_rate()
+            v = self._wait_once(rate)
+            res += v
+            if v == 0:
+                break
+        return res
 
-    <span class="org-py-def-class">def</span> <span class="org-function-name">run</span>(<span class="org-py-object-reference">self</span>, <span class="org-py-variable-name">inc</span>=<span class="org-py-number">1</span>):
-        <span class="org-py-variable-name">res</span> = <span class="org-py-object-reference">self</span>._wait()
-        <span class="org-py-variable-name">rate</span> = <span class="org-py-object-reference">self</span>.flow_rate.update(inc)
-        <span class="org-keyword">return</span> res + <span class="org-py-object-reference">self</span>._wait_once(rate)
+    def run(self, inc=1):
+        res = self._wait()
+        rate = self.flow_rate.update(inc)
+        return res + self._wait_once(rate)
 </pre>
 </div>
 
@@ -328,5 +328,5 @@ UPDATE@202002 最近发现这个限速器在生产环境有点问题，没有对
 不过不管是乐观还是悲观等待，在最后一次提交的时候还是可能会出现超量的情况，毕竟整个操作并不是原子的。如果所有这些逻辑都写在lua脚本提交到redis的话，是可以保证原子性的。
 </p>
 </div>
-<div id="content"><!-- DISQUS BEGIN --><div id="disqus_thread"></div><script>/***  RECOMMENDED CONFIGURATION VARIABLES: EDIT AND UNCOMMENT THE SECTION BELOW TO INSERT DYNAMIC VALUES FROM YOUR PLATFORM OR CMS.*  LEARN WHY DEFINING THESE VARIABLES IS IMPORTANT: https://disqus.com/admin/universalcode/#configuration-variables*/var disqus_config = function () {this.page.url = 'https://dirtysalt.github.io/html/throttle-in-python.html';this.page.identifier = 'throttle-in-python.html';};(function() {var d = document, s = d.createElement('script');s.src = 'https://dirlt.disqus.com/embed.js';s.setAttribute('data-timestamp', +new Date());(d.head || d.body).appendChild(s);})();</script><noscript>Please enable JavaScript to view the <a href="https://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript><!-- DISQUS END --></div></body>
+</body>
 </html>

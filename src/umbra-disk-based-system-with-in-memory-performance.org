@@ -28,7 +28,7 @@ A key ingredient for achieving this is a novel buffer manager that combines low-
 
 Umbra buffer management也比较简单，就是在为不同的object size分配不同size class的连续地址空间，如下图所示。它利用的原因是virtual memory allocate出来之后并不直接对应物理内存，所以它可以对每个size class分配巨大的虚拟内存空间，然后内存操作都映射到这个空间上。如果unpin某个page的话，可以先将page写入到磁盘上并且复用之前的物理内存。
 
-[[../images/umbra-disk-based-system-with-in-memory-performance-0.png]]
+[[../images/Pasted-Image-20231225103430.png]]
 
 #+BEGIN_QUOTE
 When a buffer frame becomes active, the buffer manager uses the pread system call to read data from disk into memory. This data is stored at the virtual memory address associated with the buffer frame, at which point the operating system creates an actual map- ping from these virtual addresses to physical memory (cf. Figure 1). If a previously active buffer frame becomes inactive due to eviction from the buffer pool, we first write any changes to the page data back to disk using the pwrite system call, and subsequently allow the kernel to immediately reuse the associated physical memory. On Linux, this can be achieved by passing the MADV_DONTNEED flag to the the madvise system call. This step is critical to ensure that the physical memory consumption of the buffer pool does not exceed the configured buffer pool size, as several times more vir- tual memory is allocated internally (cf. Figure 1). As the memory mappings used in the buffer manager are not backed by any actual files (see above), the madvise call incurs virtually no overhead.
@@ -42,18 +42,18 @@ Pointer Swizzling. 一个64bits指针可以同时表示 a)内存地址 b)某个d
 Due to the decentralized nature of pointer swizzling, some op- erations such as page eviction become more complicated. For ex- ample, the same page could be referenced by several swips, all of which would need to be updated when the page is evicted to disk. However, we cannot easily locate all swips that reference a given page, which makes it hard to maintain consistency [14]. To counter this, all buffer-managed data structures in Umbra are required to or- ganize their constituent pages in a (possibly degenerate) tree. This ensures by design that each page is referenced by exactly one own- ing swip, and no further swips besides that owning swip need to be updated when a page is loaded or evicted. In case of B+-trees, for instance, this entails that leaf pages may not contain references to their siblings, as this would require that leaf pages are referenced by more than one swip. We will outline below how efficient scans can still be implemented in light of these restrictions.
 #+END_QUOTE
 
-[[../images/umbra-disk-based-system-with-in-memory-performance-1.png]]
+[[../images/Pasted-Image-20231225103527.png]]
 
 Versioned Latches.  可以实现exclusive/shared/optimistic mode.
 - state = 1 表示 exclusive mode
 - state = n + 1 表示有n个线程共享这个latch(In the rare case that the state bits are not sufficient to count the number of threads, an additional 64-bit integer is used as an overflow counter)
 - version 表示这个latch的版本号
 
-[[../images/umbra-disk-based-system-with-in-memory-performance-2.png]]
+[[../images/Pasted-Image-20231225103626.png]]
 
 String Handling.  其中prefix可以用来加速字符串比较，offset/pointer中两个bits来区分这个string的存储类型：persistent, transient(query lifetime), temporary(function lifetime). 因为对全内存数据库也不太了解，所以这里面subtlety也没有办法体会到。
 
-[[../images/umbra-disk-based-system-with-in-memory-performance-3.png]]
+[[../images/Pasted-Image-20231225103535.png]]
 
 Statistics. 使用抽样统计以及增量更新sketches的方式来维护统计值
 
@@ -65,7 +65,7 @@ Besides a random sample, we additionally maintain updateable HyperLogLog sketche
 
 Compilation & Execution 和Hyper将一个Pipeline/Fragment编译成为整体代码不同，Umbra将Fragment拆分成为了多个steps/operators, 多个operators之间可以以不同的并行度执行，同时可以做到更好的调度。同时在编译上，选择了使用更加精简的IR表示，可以不依赖LLVM使用比较小的代价就生成代码，LLVM的问题在于它的general-purpose所以有许多overhead但是Umbra不需要。 执行期间并不是立刻将IR编译为机器码的，而是解释+编译，并且Umbra IR -> LLVM IR很容易，或许可以使用LLVM JIT功能。
 
-[[../images/umbra-disk-based-system-with-in-memory-performance-4.png]]
+[[../images/Pasted-Image-20231225103409.png]]
 
 #+BEGIN_QUOTE
 In generated code, each step corresponds to a separate function which can be called by the runtime system of Umbra. For the pur- pose of query execution, these individual steps are viewed as states with well-defined transitions between steps, which are orchestrated by the query executor of Umbra (cf. Figure 5). In case of multi- threaded steps, a morsel-driven approach is employed to distribute the available work to worker threads, and the step function pro- cesses a single morsel on each invocation [12].

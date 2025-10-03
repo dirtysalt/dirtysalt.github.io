@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Neo A Learned Query Optimizer</title>
+<meta name="author" content="dirtysalt" />
+<meta name="generator" content="Org Mode" />
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content" class="content">
+<h1 class="title">Neo A Learned Query Optimizer</h1>
+<p>
+怎么实现一个可以自己学习的query optimizer. 大致思路是：
+</p>
+<ul class="org-ul">
+<li>根据历史的execution plan和execution latency来训练模型</li>
+<li>根据这个模型，在query optimizer阶段来指导搜索怎么找到更好的模型</li>
+<li>最后不断地形成反馈，得到更多的训练数据。</li>
+</ul>
+
+<p>
+看完整个论文，觉得这个和AlphaGo是很像的。AlphaGo包括value network和policy network. 其中value network用于评估棋局，而policy network用于怎么搜索下一步。但是这个NEO系统其实没有一个很强大的policy network，靠的是bottom up的方法来搜索cost最小的plan. 这种方法和cascade optimzier差异比较大，好像是starburst optimizer.
+</p>
+
+<p>
+整个过程大概是下面这样的，里面最重要的两个问题是：a) 怎么对plan进行表示和训练模型 b) 怎么使用这个模型来进行搜索。
+</p>
+
+
+<div id="orgb47a05b" class="figure">
+<p><img src="../images/Pasted-Image-20240920081801.png" alt="Pasted-Image-20240920081801.png" />
+</p>
+</div>
+
+<p>
+模型训练要对数据进行表示，表示分为两个部分：query encoding和plan encoding. query encoding比较强调逻辑是怎么样的，选择了那些表和哪些列，如果是join的话还需要表示成为矩阵。对于column predicate, 可以有好几种方式表示 1) 1-hot 2) hist 3) r-vector. 这个r-vector文章后面讲到怎么训练，大致思路是参考word2vec的思路分析这个列之前values的embedding.
+<img src="../images/Pasted-Image-20240920082740.png" alt="Pasted-Image-20240920082740.png" />
+</p>
+
+<p>
+而plan encoding则强调具体plan信息，比如是hash join还是sort-merge join等
+<img src="../images/Pasted-Image-20240920082816.png" alt="Pasted-Image-20240920082816.png" />
+</p>
+
+<p>
+有了这个数据表示，接下来就是模型了。模型的cost function可以是latency, 也可以是和latency相关的其他指标，主要是想看优化什么方面了。
+</p>
+
+<p>
+模型大致是一个深度神经网络：
+</p>
+<ul class="org-ul">
+<li>query encoding 通过几个全连接神经网络得到固定大小的vector</li>
+<li>然后这个vetor和plan-encoding进行拼接，得到augmented tree</li>
+<li>使用tree convolution进行采样得到多组tree</li>
+<li>然后经过dynamic pooling(min/max/avg)将tree展开重新放入到全连接网络</li>
+</ul>
+
+<p>
+TODO:这里我有点不太明白是如何将不同的query的query encoding + plan encoding表示成为固定大小feed给模型的。按照论文，不同query的输入大小是|J| + 2|R|. 或许论文是简化了这点？
+</p>
+
+
+<div id="orge6ffdda" class="figure">
+<p><img src="../images/Pasted-Image-20240920083231.png" alt="Pasted-Image-20240920083231.png" />
+</p>
+</div>
+
+<p>
+tree convolution和cnn convolution类似，主要是寻找tree spatial correlation.
+</p>
+
+
+<div id="org3f74ca4" class="figure">
+<p><img src="../images/Pasted-Image-20240920084501.png" alt="Pasted-Image-20240920084501.png" />
+</p>
+</div>
+
+<p>
+我们现在有这个模型了，可以给定一个complete plan来预测latency. 接着问题就是怎么根据这个模型来有效地探索空间呢？文章的说法叫做 "DNN-guided plan search" 大致思想是先从subplan开始搜索，每个subplan可以被包含在不同的complete plan里面，选择lowest cost complete plan的cost, 作为这个subplan的代价。然后使用min-heap每次都优先选择cost最低的subplan, 然后根据这个subplan去扩展。我不是太清楚里面应该怎么实现，但是这种实现方式和目前主流的cascade query optimizer思路是不同的，整个起来估计会比较难。
+</p>
+
+<p>
+最后论文还说了是否可以尝试alpha-zero的方式，不基于现有的query optimizer给出的knowledge从头学习一个呢？很难，因为这个学习成本有点高，因为如果选出的plan不好的话，那么有可能需要执行很久。如果使用cutoff time来作为代替的话比如cutoff time = 7min, 那么7min和1hour之间不存在任何差别，其实许多知识是没有办法学习到的。
+</p>
+
+<blockquote>
+<p>
+[!NOTE]
+Since gathering demonstration data introduces additional com- plexity, it is natural to ask if demonstration is necessary at all: is it possible to learn a good policy from zero knowledge? While pre- vious work [35] showed that an off-the-shelf deep reinforcement learning technique can learn to find query plans that minimize a cost model without demonstration data, learning a policy based on query latency (i.e., end-to-end) is difficult because a bad plan can take hours to execute. Unfortunately, randomly chosen query plans behave exceptionally poorly (i.e., 100x to 1000x worse [26]), po- tentially increasing the training time of Neo by a similar factor [36].
+</p>
+
+<p>
+We attempted to work around this problem by selecting an ad- hoc query timeout t (e.g., 5 minutes), and terminating query execu- tions when latencies exceed t. However, this technique destroys a good amount of the signal that Neo uses to learn: join patterns re- sulting in a latency of 7 minutes get the same reward as join patterns resulting in a latency of 1 week, and thus Neo cannot learn that the join patterns in the 7-minute plan are an improvement over the 1- week plan. As a result, even after training for over three weeks, we did not achieve results even on par with the PostgreSQL optimizer.
+</p>
+</blockquote>
+</div>
+</body>
+</html>

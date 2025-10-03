@@ -9,7 +9,7 @@ extend-based有点类似虚拟内存里面的段式分配, pointer-based类似�
 - 少量大文件占据主要空间.
 - 目录里的项目数量基本<20 (in a block)
 
-[[../images/ostep-fs-measurement-summary.png]]
+[[../images/Pasted-Image-20231225103748.png]]
 
 *Fast File System(FFS)*
 
@@ -19,7 +19,7 @@ extend-based有点类似虚拟内存里面的段式分配, pointer-based类似�
 
 在一个磁道(track)上如何安排block id也是非常有意思的事情. 下图左边是最简单的实现.
 
-[[../images/ostep-fs-param-placement.png]]
+[[../images/Pasted-Image-20231225104651.png]]
 
 这个实现问题是, 如果我们想顺序访问所有block时候, 会发现rotation位置不对. 首先磁盘是不断旋转地, 当我们transfer block0的时候盘片依然在转动. 当我们要读取block1时, 磁头位置可能已经到了block3, 这就意味着还要等待一圈才能读block1. 所以合理的方式应该是, 将所有blocks, 按照tranfer block时间和rotate speed计算出的间隔, 均匀地分散开.
 
@@ -38,30 +38,40 @@ extend-based有点类似虚拟内存里面的段式分配, pointer-based类似�
 基于日志实现的存储系统，可以利用内存来buffer write, 将random write聚合成为sequential write提高磁盘写入吞吐。通过合理的索引结构又能保持良好的读性能。所面临的问题包括写入放大和垃圾回收。很早之前想看看LFS论文，但是可能是出于时间原因，更可能出于对LSM缺乏基本认识，所以很快就放弃了。正好这小章说了以下LFS中一些具体实现细节。
 
 
-> To achieve this end, LFS uses an ancient technique known as write buffering. Before writing to the disk, LFS keeps track of updates in memory; when it has received a sufficient number of updates, it writes them to disk all at once, thus ensuring efficient use of the disk. The large chunk of updates LFS writes at one time is referred to by the name of a segment.
+#+BEGIN_QUOTE
+To achieve this end, LFS uses an ancient technique known as write buffering. Before writing to the disk, LFS keeps track of updates in memory; when it has received a sufficient number of updates, it writes them to disk all at once, thus ensuring efficient use of the disk. The large chunk of updates LFS writes at one time is referred to by the name of a segment.
+#+END_QUOTE
 
-> Here is an example, in which LFS buffers two sets of updates into a small segment; actual segments are larger (a few MB). The first update is of four block writes to file j; the second is one block being added to file k. LFS then commits the entire segment of seven blocks to disk at once. The resulting on-disk layout of these blocks is as follows:
+#+BEGIN_QUOTE
+Here is an example, in which LFS buffers two sets of updates into a small segment; actual segments are larger (a few MB). The first update is of four block writes to file j; the second is one block being added to file k. LFS then commits the entire segment of seven blocks to disk at once. The resulting on-disk layout of these blocks is as follows:
+#+END_QUOTE
 
-[[../images/ostep-fs-lfs-seg.png]]
+[[../images/Pasted-Image-20231225104804.png]]
 
 LFS会将多个data block写入聚合在一起写下，一次写入生成一个segment. segment里面不仅仅包括data blocks, 还可能包括对应的inode block, 以及inode map. 因为每次更新inode block都会在新的地方重写一份，inode block位置在不断发生变化。inode map里面记录了这个信息，记录了inode no到inode block address的映射关系。最终会存储在一个checkpoint-region(CR)的地方。这个CR会定期flush下去，虽然这个写入是随机写，但是因为间隔时间比较长所以不会影响性能。
 
-[[../images/ostep-fs-lfs-file.png]]
+[[../images/Pasted-Image-20231225103414.png]]
 
 目录存储结构和文件存储结构很类似。在一个目录下面创建一个文件需要写入5个block. (file data block, file inode block, dir data block, dir inode block, imap).
 
-[[../images/ostep-fs-lfs-dir.png]]
+[[../images/Pasted-Image-20231225103352.png]]
 
-> Specifically, LFS includes, for each data block D, its inode number (which file it belongs to) and its offset (which block of the file this is). This information is recorded in a structure at the head of the segment known as the segment summary block.
+#+BEGIN_QUOTE
+Specifically, LFS includes, for each data block D, its inode number (which file it belongs to) and its offset (which block of the file this is). This information is recorded in a structure at the head of the segment known as the segment summary block.
+#+END_QUOTE
 
 每个segment里面每个data block都会包含inode no以及offset, 这些信息聚合在一起放在segment开头处称为segment summary block. 这个block用途是为了在GC时候可以知道那些data block是in-use的，而哪些data block是可以被回收的。
 
-> TIP: TURN FLAWS INTO VIRTUES
+#+BEGIN_QUOTE
+TIP: TURN FLAWS INTO VIRTUES
+#+END_QUOTE
 Whenever your system has a fundamental flaw, see if you can turn it around into a feature or something useful. NetApp’s WAFL does this with old file contents; by making old versions available, WAFL no longer has to worry about cleaning, and thus provides a cool feature and re- moves the LFS cleaning problem all in one wonderful twist.
 
 如果你富有创造力的话，可以将缺陷变为有优势。比如可以将那些原来老版本data block作为文件历史版本使用，而由用户来决定什么时候删除老版本而不用自己决定GC时间。
 
-> TIP: MEASURE THEN BUILD (PATTERSON’S LAW)
+#+BEGIN_QUOTE
+TIP: MEASURE THEN BUILD (PATTERSON’S LAW)
+#+END_QUOTE
 One of our advisors, David Patterson (of RISC and RAID fame), used to always encourage us to measure a system and demonstrate a problem before building a new system to fix said problem. By using experimen- tal evidence, rather than gut instinct, you can turn the process of system building into a more scientific endeavor. Doing so also has the fringe ben- efit of making you think about how exactly to measure the system before your improved version is developed. When you do finally get around to building the new system, two things are better as a result: first, you have evidence that shows you are solving a real problem; second, you now have a way to measure your new system in place, to show that it actually improves upon the state of the art. And thus we call this Patterson’s Law.
 
 改进系统，先进行测量，然后再构建。一方面你可以确定问题出在什么地方，另外一方面对比观察改进效果。

@@ -16,17 +16,19 @@
 <h2>Table of Contents</h2>
 <div id="text-table-of-contents" role="doc-toc">
 <ul>
-<li><a href="#org31c7313">1. spinlock</a></li>
-<li><a href="#org28ca152">2. lock-free</a></li>
-<li><a href="#orge88124d">3. linux futex</a></li>
-<li><a href="#orge6bca4d">4. 使用自选锁来实现信号量</a></li>
+<li><a href="#org5a9a212">1. spinlock</a></li>
+<li><a href="#org31d738f">2. lock-free</a></li>
+<li><a href="#org5a88ca0">3. linux futex</a></li>
 </ul>
 </div>
 </div>
 
-<div id="outline-container-org31c7313" class="outline-2">
-<h2 id="org31c7313"><span class="section-number-2">1.</span> spinlock</h2>
+<div id="outline-container-org5a9a212" class="outline-2">
+<h2 id="org5a9a212"><span class="section-number-2">1.</span> spinlock</h2>
 <div class="outline-text-2" id="text-1">
+<p>
+阅读材料
+</p>
 <ul class="org-ul">
 <li><a href="http://lwn.net/Articles/267968/">Ticket spinlocks</a></li>
 <li><a href="http://www.ibm.com/developerworks/cn/linux/l-cn-spinlock/index.html">Linux 内核的排队自旋锁(FIFO Ticket Spinlock)</a></li>
@@ -37,20 +39,68 @@
 <p>
 update@201509: 通过xchg/cmpxchg这种原子指令可以很容易实现一个spinlock原型. 如果critical section非常短小的话，spinlock相比mutex lock效率会好很多。
 </p>
-</div>
-</div>
-
-<div id="outline-container-org28ca152" class="outline-2">
-<h2 id="org28ca152"><span class="section-number-2">2.</span> lock-free</h2>
-<div class="outline-text-2" id="text-2">
-<ul class="org-ul">
-<li><a href="http://www.ibm.com/developerworks/cn/linux/l-cn-lockfree/">透过 Linux 内核看无锁编程</a></li>
-<li><a href="http://yongsun.me/2010/01/%25E4%25BD%25BF%25E7%2594%25A8cas%25E5%25AE%259E%25E7%258E%25B0lock-free%25E7%259A%2584%25E4%25B8%2580%25E4%25B8%25AA%25E7%25B1%25BB%25E6%25AF%2594/">使用CAS实现lock-free的一个类比</a></li>
-<li><a href="https://preshing.com/20120612/an-introduction-to-lock-free-programming/">An Introduction to Lock-Free Programming</a></li>
-</ul>
 
 <p>
-上面这篇文章写得相当不错，至少阅读完成之后对于lock-free思想就比较清楚了。lock-free本质思想无非就是copy出一个复本出来（需要注意代价），然后在复本上修改，然后merge回去。如果这个原副本没有发生变化的话，那么就提交（原子操作），如果发生变化的话，那么这个需要重新执行直到成功。当然这里问题就在于如何判断原副本没有变化，一种方式是判断值，但是这个会出现ABA问题。所谓ABA问题就是，如果值首先是A,然后被修改为B,然后再修改回A,虽然原副本看上去没有变化，但是对于内部有一个变化的过程了。另外一种方式就是使用版本号version这么一个方式。实现lock-free首先需要确保正确性，其次需要注意性能（和加锁算法进行性能对比）。不过根据我的经验，lock-free实现正确比较困难（内核层面实现是有保证的，但是应用层面实现lock-free的话因为和应用相关，所以正确性不一定有保证），另外相比加锁算法不一定好，如果加锁可以满足那就应该使用加锁算法。
+update@202409: 另外就是有些系统如果可以确定锁竞争比较小的话，那么可以使用spinlock来不断检查，但是这里的tradeoff就是cpu waste. 理想情况就是做自适应的锁：短期使用spinlock尝试，超过一定时间就要用futex然后将线程切换出去。
+</p>
+
+<hr />
+
+<p>
+使用自旋锁(spinlock)来实现信号量(semaphore)
+</p>
+
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-keyword">typedef</span> <span class="org-keyword">struct</span> <span class="org-type">sema</span>
+{
+  <span class="org-type">lock_t</span> <span class="org-variable-name">lock</span>;
+  <span class="org-type">int</span> <span class="org-variable-name">count</span>;
+  <span class="org-type">queue</span> <span class="org-variable-name">q</span>;
+} <span class="org-type">sema_t</span>;
+
+<span class="org-type">void</span> <span class="org-function-name">init_sema</span>(<span class="org-type">sema_t</span>* <span class="org-variable-name">sema</span>, <span class="org-type">int</span> <span class="org-variable-name">init_cnt</span>)
+{
+  init_lock(&amp;sema-&gt;lock);
+  init_queue(&amp;sema-&gt;q);
+  sema-&gt;count=init_cnt;
+}
+
+<span class="org-type">void</span> <span class="org-function-name">p</span>(<span class="org-type">sema_t</span>* <span class="org-variable-name">sema</span>)
+{
+  lock(&amp;sema-&gt;lock);
+  sema-&gt;count--;
+  <span class="org-keyword">if</span> (sema-&gt;count &lt; 0) {
+    q.push(current_process_context());
+    unlock(&amp;sema-&gt;lock);
+    swtch(); <span class="org-comment-delimiter">// </span><span class="org-comment">switch to another process.
+</span>    <span class="org-keyword">return</span>;
+  }
+  unlock(&amp;sema-&gt;lock);
+}
+
+<span class="org-type">void</span> <span class="org-function-name">v</span>(<span class="org-type">sema_t</span>* <span class="org-variable-name">sema</span>)
+{
+  lock(&amp;sema-&gt;lock);
+  sema-&gt;count++;
+  <span class="org-keyword">if</span> (sema-&gt;count &lt;= 0) {
+    <span class="org-type">pcs_ctx</span>* <span class="org-variable-name">ctx</span> = q.pop();
+    unlock(&amp;sema-&gt;lock);
+    enqueue(&amp;running_queue, ctx);
+    <span class="org-keyword">return</span> ;
+  }
+  unlock(&amp;sema-&gt;lock);
+}
+</pre>
+</div>
+</div>
+</div>
+
+
+<div id="outline-container-org31d738f" class="outline-2">
+<h2 id="org31d738f"><span class="section-number-2">2.</span> lock-free</h2>
+<div class="outline-text-2" id="text-2">
+<p>
+lock-free本质思想无非就是copy出一个复本出来（需要注意代价），然后在复本上修改，然后merge回去。如果这个原副本没有发生变化的话，那么就提交（原子操作），如果发生变化的话，那么这个需要重新执行直到成功。当然这里问题就在于如何判断原副本没有变化，一种方式是判断值，但是这个会出现ABA问题。所谓ABA问题就是，如果值首先是A,然后被修改为B,然后再修改回A,虽然原副本看上去没有变化，但是对于内部有一个变化的过程了。另外一种方式就是使用版本号version这么一个方式。实现lock-free首先需要确保正确性，其次需要注意性能（和加锁算法进行性能对比）。不过根据我的经验，lock-free实现正确比较困难（内核层面实现是有保证的，但是应用层面实现lock-free的话因为和应用相关，所以正确性不一定有保证），另外相比加锁算法不一定好，如果加锁可以满足那就应该使用加锁算法。
 </p>
 
 <hr />
@@ -75,9 +125,12 @@ lock-free顾名思义就是在多个执行体访问共享变量的时候，不�
 </div>
 </div>
 
-<div id="outline-container-orge88124d" class="outline-2">
-<h2 id="orge88124d"><span class="section-number-2">3.</span> linux futex</h2>
+<div id="outline-container-org5a88ca0" class="outline-2">
+<h2 id="org5a88ca0"><span class="section-number-2">3.</span> linux futex</h2>
 <div class="outline-text-2" id="text-3">
+<p>
+阅读材料
+</p>
 <ul class="org-ul">
 <li><a href="http://en.wikipedia.org/wiki/Futex">Wikipedia Futex</a></li>
 <li>man 2 futex</li>
@@ -94,54 +147,6 @@ futex(fast userspace mutex)快速用户态互斥锁，需要用户态和内核�
 </p>
 </div>
 </div>
-
-<div id="outline-container-orge6bca4d" class="outline-2">
-<h2 id="orge6bca4d"><span class="section-number-2">4.</span> 使用自选锁来实现信号量</h2>
-<div class="outline-text-2" id="text-4">
-<div class="org-src-container">
-<pre class="src src-C++"><span class="org-keyword">typedef</span> <span class="org-keyword">struct</span> <span class="org-type">sema</span>
-{
-  <span class="org-type">lock_t</span> <span class="org-variable-name">lock</span>;
-  <span class="org-type">int</span> <span class="org-variable-name">count</span>;
-  <span class="org-type">queue</span> <span class="org-variable-name">q</span>;
-} <span class="org-type">sema_t</span>;
-
-<span class="org-type">void</span> <span class="org-function-name">init_sema</span>(<span class="org-type">sema_t</span>* <span class="org-variable-name">sema</span>, <span class="org-type">int</span> <span class="org-variable-name">init_cnt</span>)
-{
-  init_lock(&amp;sema-&gt;lock);
-  init_queue(&amp;sema-&gt;q);
-  sema-&gt;count=init_cnt;
-}
-
-<span class="org-type">void</span> <span class="org-function-name">p</span>(<span class="org-type">sema_t</span>* <span class="org-variable-name">sema</span>)
-{
-  lock(&amp;sema-&gt;lock);
-  sema-&gt;count--;
-  <span class="org-keyword">if</span> (sema-&gt;count &lt; 0) {
-    q.push(current_process_context());
-    unlock(&amp;sema-&gt;lock);
-    swtch(); <span class="org-comment-delimiter">// </span><span class="org-comment">switch to another process.</span>
-    <span class="org-keyword">return</span>;
-  }
-  unlock(&amp;sema-&gt;lock);
-}
-
-<span class="org-type">void</span> <span class="org-function-name">v</span>(<span class="org-type">sema_t</span>* <span class="org-variable-name">sema</span>)
-{
-  lock(&amp;sema-&gt;lock);
-  sema-&gt;count++;
-  <span class="org-keyword">if</span> (sema-&gt;count &lt;= 0) {
-    <span class="org-type">pcs_ctx</span>* <span class="org-variable-name">ctx</span> = q.pop();
-    unlock(&amp;sema-&gt;lock);
-    enqueue(&amp;running_queue, ctx);
-    <span class="org-keyword">return</span> ;
-  }
-  unlock(&amp;sema-&gt;lock);
-}
-</pre>
 </div>
-</div>
-</div>
-</div>
-<div id="content"><!-- DISQUS BEGIN --><div id="disqus_thread"></div><script>/***  RECOMMENDED CONFIGURATION VARIABLES: EDIT AND UNCOMMENT THE SECTION BELOW TO INSERT DYNAMIC VALUES FROM YOUR PLATFORM OR CMS.*  LEARN WHY DEFINING THESE VARIABLES IS IMPORTANT: https://disqus.com/admin/universalcode/#configuration-variables*/var disqus_config = function () {this.page.url = 'https://dirtysalt.github.io/html/lock.html';this.page.identifier = 'lock.html';};(function() {var d = document, s = d.createElement('script');s.src = 'https://dirlt.disqus.com/embed.js';s.setAttribute('data-timestamp', +new Date());(d.head || d.body).appendChild(s);})();</script><noscript>Please enable JavaScript to view the <a href="https://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript><!-- DISQUS END --></div></body>
+</body>
 </html>

@@ -1,0 +1,24 @@
+#+title: lzo压缩算法和codec
+
+这几天和一个同学看看将lzo引入SR. 我本来觉得应该是挺简单的事情，因为之前apache/orc下面就有个lzo实现，可能port过来就好了。谁知道这个实现和hadoop lzocodec差别还挺大的，最后这个同学不知道从哪里了解到了hadoop lzocodec的实现，搞成C++代码 https://github.com/StarRocks/starrocks/pull/20251/files
+
+看这个PR里面，原来hadoop lzocodec在lzo压缩算法的基础上，还做了许多包装工作，包括增加了header, block, 以及针对每个block做了checksum. 只有block内部是使用lzo1x压缩算法的。
+
+其实我在调试C++ lzo + pylzo的实现也发现了这个问题：库可能并不会直接使用raw stream, 可能会在上面继续包装一层存储某些元信息，组成成为一套文件格式。比如pylzo就会可选地增加header出来，https://github.com/jd-boyd/python-lzo/blob/master/lzomodule.c#L259.
+
+----------
+
+在看 [[https://github.com/nemequ/lzo/tree/master/src][lzo]] 仓库的时候发现下面有许多算法实现，一眼看过去还不太清楚之间的差别
+
+[[../images/Pasted-Image-20231225103306.png]]
+
+后来知道lzo1b_8.c 表示: 1b类型的算法，压缩级别为8的实现。目前大概有下面几种实现，下面是chatgpt给的回答：
+- lzo1：是最早的LZO版本，具有较高的压缩速度和较小的内存占用，但压缩比不如后续版本。
+- lzo1a：在lzo1的基础上进行了一些优化，提高了压缩比和解压缩速度。
+- lzo1b：在lzo1a的基础上增加了一些新特性，包括更好的内存管理和处理数据块的能力。
+- lzo1c：这个版本在lzo1b的基础上进一步优化了压缩比和速度。
+- lzo1f：这是一个针对特定数据类型（浮点数）的版本，具有更好的压缩效果。
+- lzo1x：这是一个通用版本，与lzo1c相比，具有更好的压缩比和更高的压缩速度。
+- lzo1y：这个版本在lzo1x的基础上进行了一些改进，提高了压缩比和解压缩速度。
+- lzo1z：这是一个进一步改进的版本，可以在与lzo1x相同的速度下实现更高的压缩比。
+- lzo2a：这是一个较新的版本，具有更好的压缩比和更高的压缩速度，但需要更大的内存来进行压缩和解压缩。

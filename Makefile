@@ -1,3 +1,3 @@
 @PHONY: publish
 publish:
-	@./scripts/publish
+	@./scripts/publish.sh	

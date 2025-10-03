@@ -16,28 +16,28 @@
 <h2>Table of Contents</h2>
 <div id="text-table-of-contents" role="doc-toc">
 <ul>
-<li><a href="#org84bab6a">1. Abstract</a></li>
-<li><a href="#org1c65763">2. Introduction</a></li>
-<li><a href="#org4254fe2">3. Implementation</a>
+<li><a href="#org7949b5e">1. Abstract</a></li>
+<li><a href="#org2eb7929">2. Introduction</a></li>
+<li><a href="#orgabb1f4e">3. Implementation</a>
 <ul>
-<li><a href="#orgd225b7f">3.1. Spanserver Software Stack</a></li>
-<li><a href="#orgbd856bf">3.2. Directories and Placement</a></li>
-<li><a href="#orgdd4e735">3.3. Data Model</a></li>
+<li><a href="#org0169026">3.1. Spanserver Software Stack</a></li>
+<li><a href="#org5c7e858">3.2. Directories and Placement</a></li>
+<li><a href="#orgc66df17">3.3. Data Model</a></li>
 </ul>
 </li>
-<li><a href="#org2479a22">4. TrueTime</a></li>
-<li><a href="#orgb88aced">5. Concurrency Control</a></li>
-<li><a href="#org54ec5b7">6. Evaluation</a>
+<li><a href="#org0dd1970">4. TrueTime</a></li>
+<li><a href="#org23656f7">5. Concurrency Control</a></li>
+<li><a href="#org8c0a9a5">6. Evaluation</a>
 <ul>
-<li><a href="#org8c950a7">6.1. Microbenchmarks</a></li>
-<li><a href="#org6fc4530">6.2. Availability</a></li>
-<li><a href="#orgd9a43ee">6.3. TrueTime</a></li>
-<li><a href="#org8c1e74b">6.4. F1</a></li>
+<li><a href="#org7f820fd">6.1. Microbenchmarks</a></li>
+<li><a href="#org5c7c76c">6.2. Availability</a></li>
+<li><a href="#org86cef96">6.3. TrueTime</a></li>
+<li><a href="#orgbfcdd36">6.4. F1</a></li>
 </ul>
 </li>
-<li><a href="#org4eba4d3">7. Related Work</a></li>
-<li><a href="#orgc59b168">8. Future Work</a></li>
-<li><a href="#org3541fbc">9. Conclusions</a></li>
+<li><a href="#org40876e4">7. Related Work</a></li>
+<li><a href="#org6eea9a3">8. Future Work</a></li>
+<li><a href="#orge7e5ef8">9. Conclusions</a></li>
 </ul>
 </div>
 </div>
@@ -48,24 +48,24 @@
 <li>Google Spanner (中文版) <a href="http://dblab.xmu.edu.cn/node/230">http://dblab.xmu.edu.cn/node/230</a></li>
 </ul>
 
-<div id="outline-container-org84bab6a" class="outline-2">
-<h2 id="org84bab6a"><span class="section-number-2">1.</span> Abstract</h2>
+<div id="outline-container-org7949b5e" class="outline-2">
+<h2 id="org7949b5e"><span class="section-number-2">1.</span> Abstract</h2>
 <div class="outline-text-2" id="text-1">
 <ul class="org-ul">
-<li>Spanner is Google’s scalable, multi-version, globally-distributed, and synchronously-replicated database. It is the first system to distribute data at global scale and sup-port externally-consistent distributed transactions. (可扩展，多版本，全局分布式，同步复制的数据库系统，扩展性到全球级别，并且支持外部一致性的分布式事务）</li>
+<li>Spanner is Google’s scalable, multi-version, globally-distributed, and synchronously-replicated database. It is the first system to distribute data at global scale and sup-port externally-consistent distributed transactions. (可扩展，多版本，全局分布式，同步复制的数据库系统，扩展性到全球级别，并且支持外部一致性的分布式事务)</li>
 <li>This paper describes how Spanner is structured, its feature set, the rationale underlying various design decisions, and a novel time API that exposes clock uncertainty. （主要分为两个方面，一个方面是组织结构以及关键特性还有各种设计上的权衡，另外一个就是支持时钟不确定性的时间API）</li>
 <li>This API and its implementation are critical to supporting exter-nal consistency and a variety of powerful features: non-blocking reads in the past, lock-free read-only transac-tions, and atomic schema changes, across all of Spanner.（主要是使用这个API才能够保证外部一致性以及一些非常强大的功能，non-blocking read历史数据，lock-free read-only事务，以及原子schema变化）</li>
 </ul>
 </div>
 </div>
 
-<div id="outline-container-org1c65763" class="outline-2">
-<h2 id="org1c65763"><span class="section-number-2">2.</span> Introduction</h2>
+<div id="outline-container-org2eb7929" class="outline-2">
+<h2 id="org2eb7929"><span class="section-number-2">2.</span> Introduction</h2>
 <div class="outline-text-2" id="text-2">
 <ul class="org-ul">
 <li>At the high-est level of abstraction, it is a database that shards data across many sets of Paxos state machines in data- centers spread all over the world. Replication is used for global availability and geographic locality; clients auto-matically failover between replicas. （数据是进行shard的，每个shard实例之间的同步都是通过paxos状态机来完成的，实例可能散步于世界的各个地方。replication主要是为了提供全球可用性以及地理位置上的局部性，client能够自动地在replicas之间做failover切换）</li>
-<li>Spanner automati-cally reshards data across machines as the amount of data or the number of servers changes, and it automatically migrates data across machines (even across datacenters) to balance load and in response to failures. （spanner对于data shard是自动完成的，当server数量变化的时候会reshard然后重新做balance)</li>
-<li>Spanner is designed to scale up to millions of machines across hun-dreds of datacenters and trillions of database rows.(扩展到百万机器，上百个数据中心，10^12 rows）</li>
+<li>Spanner automati-cally reshards data across machines as the amount of data or the number of servers changes, and it automatically migrates data across machines (even across datacenters) to balance load and in response to failures. (spanner对于data shard是自动完成的，当server数量变化的时候会reshard然后重新做balance)</li>
+<li>Spanner is designed to scale up to millions of machines across hun-dreds of datacenters and trillions of database rows.(扩展到百万机器，上百个数据中心，10^12 rows)</li>
 <li>Spanner’s main focus is managing cross-datacenter replicated data, but we have also spent a great deal of time in designing and implementing important database features on top of our distributed-systems infrastructure（虽然spanner主要focus是在跨机房的数据replication上，但是也花了相当多的时间来在分布式结构上设计和实现很多database特性，
 <ul class="org-ul">
 <li>Bigtable不能够支持复杂并且变化的schema，并且对于wide-area下面不能够很好地实现强一致性</li>
@@ -99,15 +99,15 @@
 </ul>
 
 
-<div id="orgb315594" class="figure">
-<p><img src="../images/design-goals-for-spanner.png" alt="design-goals-for-spanner.png" />
+<div id="org05c70e2" class="figure">
+<p><img src="../images/Pasted-Image-20231225104515.png" alt="Pasted-Image-20231225104515.png" />
 </p>
 </div>
 </div>
 </div>
 
-<div id="outline-container-org4254fe2" class="outline-2">
-<h2 id="org4254fe2"><span class="section-number-2">3.</span> Implementation</h2>
+<div id="outline-container-orgabb1f4e" class="outline-2">
+<h2 id="orgabb1f4e"><span class="section-number-2">3.</span> Implementation</h2>
 <div class="outline-text-2" id="text-3">
 <ul class="org-ul">
 <li>A Spanner deployment is called a universe. Given that Spanner manages data globally, there will be only a handful of running universes. We currently run a test/playground universe, a development/production uni-verse, and a production-only universe.（一个spanner实例称为universe）</li>
@@ -122,8 +122,8 @@
 <hr />
 
 
-<div id="org1fc6303" class="figure">
-<p><img src="../images/spanner-server-organization.png" alt="spanner-server-organization.png" />
+<div id="orgeccc8b7" class="figure">
+<p><img src="../images/Pasted-Image-20231225104504.png" alt="Pasted-Image-20231225104504.png" />
 </p>
 </div>
 
@@ -140,17 +140,17 @@
 </ul>
 </div>
 
-<div id="outline-container-orgd225b7f" class="outline-3">
-<h3 id="orgd225b7f"><span class="section-number-3">3.1.</span> Spanserver Software Stack</h3>
+<div id="outline-container-org0169026" class="outline-3">
+<h3 id="org0169026"><span class="section-number-3">3.1.</span> Spanserver Software Stack</h3>
 <div class="outline-text-3" id="text-3-1">
 
-<div id="org036e6e8" class="figure">
-<p><img src="../images/spanserver-software-stack.png" alt="spanserver-software-stack.png" />
+<div id="org7ffa096" class="figure">
+<p><img src="../images/Pasted-Image-20231225104508.png" alt="Pasted-Image-20231225104508.png" />
 </p>
 </div>
 
 <ul class="org-ul">
-<li>At the bottom, each spanserver is responsible for between 100 and 1000 instances of a data structure called a tablet.(每个spanserver管理100-1000个tablet实例）
+<li>At the bottom, each spanserver is responsible for between 100 and 1000 instances of a data structure called a tablet.(每个spanserver管理100-1000个tablet实例)
 <ul class="org-ul">
 <li>tablet和bigtable tablet概念非常类似，也是map数据结构并且value存储了多个版本</li>
 <li>tablet’s state is stored in set of B-tree-like files and a write-ahead log, all on a distributed file system called Colossus (the successor to the Google File System) 状态保存在文件以及log上面存储在GFS2</li>
@@ -164,9 +164,9 @@
 <li>At every replica that is a leader, each spanserver im-plements a lock table to implement concurrency control. The lock table contains the state for two-phase lock-ing: it maps ranges of keys to lock states. Operations that require synchronization, such as transactional reads, acquire locks in the lock table; other operations bypass the lock table. （在leader上面实现了一个lock table来实现并发控制，使用了2PC的方式来控制提交，存放了key-&gt;lock state的映射。对于那些需要同步的操作比如事务读的话那么需要去尝试锁表，否则其他的操作都可以绕过lock table。可以认为lock table只管理一个paxos group/tablet里面的事务读操作）</li>
 <li>At every replica that is a leader, each spanserver also implements a transaction manager to support distributed transactions. The transaction manager is used to imple-ment a participant leader. the other replicas in the group will be referred to as participant slaves （多个paxos group会选举出一个leader来做分布式事务，和paxos group内部的leader作用相同，主要是解决跨tablet的事务）
 <ul class="org-ul">
-<li>If a transac-tion involves only one Paxos group (as is the case for most transactions), it can bypass the transaction manager, since the lock table and Paxos together provide transac- tionality. （如果操作只是发生在一个paxos group上面的话，那么可以绕过transaction manager)</li>
-<li>If a transaction involves more than one Paxos group, those groups’ leaders coordinate to perform two-phase commit.(如果涉及到多个paxos group的话，那么就需要leader来发起2PC）</li>
-<li>The state of each trans-action manager is stored in the underlying Paxos group (and therefore is replicated).（transaction manager的log记录在底层的paxos group)</li>
+<li>If a transac-tion involves only one Paxos group (as is the case for most transactions), it can bypass the transaction manager, since the lock table and Paxos together provide transac- tionality. (如果操作只是发生在一个paxos group上面的话，那么可以绕过transaction manager)</li>
+<li>If a transaction involves more than one Paxos group, those groups’ leaders coordinate to perform two-phase commit.(如果涉及到多个paxos group的话，那么就需要leader来发起2PC)</li>
+<li>The state of each trans-action manager is stored in the underlying Paxos group (and therefore is replicated).(transaction manager的log记录在底层的paxos group)</li>
 </ul></li>
 </ul>
 
@@ -176,18 +176,18 @@
 </div>
 </div>
 
-<div id="outline-container-orgbd856bf" class="outline-3">
-<h3 id="orgbd856bf"><span class="section-number-3">3.2.</span> Directories and Placement</h3>
+<div id="outline-container-org5c7e858" class="outline-3">
+<h3 id="org5c7e858"><span class="section-number-3">3.2.</span> Directories and Placement</h3>
 <div class="outline-text-3" id="text-3-2">
 
-<div id="org95fa224" class="figure">
-<p><img src="../images/spanner-directory-movement.png" alt="spanner-directory-movement.png" />
+<div id="org20f7898" class="figure">
+<p><img src="../images/Pasted-Image-20231225103246.png" alt="Pasted-Image-20231225103246.png" />
 </p>
 </div>
 
 <ul class="org-ul">
-<li>On top of the bag of key-value mappings, the Spanner implementation supports a bucketing abstraction called a directory, which is a set of contiguous keys that share a common prefix.（directory定义为连续key的集合，对应到directory就可以认为是一个region，但是一个tablet可以包含多个directory)</li>
-<li>A directory is the unit of data placement. All data in a directory has the same replication configuration. When data is moved between Paxos groups, it is moved direc-tory by directory (directory是data placement的最小单元，一个directory里面的data有相同的replication configuration.在paxos group之间移动的话也是按照directory作为单位移动的）
+<li>On top of the bag of key-value mappings, the Spanner implementation supports a bucketing abstraction called a directory, which is a set of contiguous keys that share a common prefix.(directory定义为连续key的集合，对应到directory就可以认为是一个region，但是一个tablet可以包含多个directory)</li>
+<li>A directory is the unit of data placement. All data in a directory has the same replication configuration. When data is moved between Paxos groups, it is moved direc-tory by directory (directory是data placement的最小单元，一个directory里面的data有相同的replication configuration.在paxos group之间移动的话也是按照directory作为单位移动的)
 <ul class="org-ul">
 <li>Spanner might move a directory to shed load from a Paxos group; 将dir移动到低负载的paxos group上面</li>
 <li>to put directories that are frequently accessed together into the same group; 将经常一起访问的dir放在一个group上面</li>
@@ -203,8 +203,8 @@
 </div>
 </div>
 
-<div id="outline-container-orgdd4e735" class="outline-3">
-<h3 id="orgdd4e735"><span class="section-number-3">3.3.</span> Data Model</h3>
+<div id="outline-container-orgc66df17" class="outline-3">
+<h3 id="orgc66df17"><span class="section-number-3">3.3.</span> Data Model</h3>
 <div class="outline-text-3" id="text-3-3">
 <ul class="org-ul">
 <li>Spanner exposes the following set of data features to applications: a data model based on schematized semi-relational tables, a query language, and general-purpose transactions（数据模型基于schema化的半关系表结构，有query语言，并且支持通用事务）
@@ -219,12 +219,12 @@
 </ul></li>
 </ul></li>
 <li>An application creates one or more databases in a universe. Each database can contain an unlimited number of schematized tables. Tables look like relational-database tables, with rows, columns, and versioned values.（应用在universe里面创建一个或者是多个databases，每个databases包含了无限制个数的table,这些table都是有schema的。table看上去非常类似关系数据库的table，有row，column，每个value都带上了version number）</li>
-<li>Spanner’s data model is not purely relational, in that rows must have names. More precisely, every table is re-quired to have an ordered set of one or more primary-key columns. This requirement is where Spanner still looks like a key-value store: the primary keys form the name for a row, and each table defines a mapping from the primary-key columns to the non-primary-key columns（但是table却又不完全是纯关系的，非常类似于bigtable的模型，table定义了primary key，每个row都有primary key之能够通过这个key找到，找到之后有很多columns可以访问，所以看上去又有点类似key-value store，因此称为semi-relational tables)</li>
+<li>Spanner’s data model is not purely relational, in that rows must have names. More precisely, every table is re-quired to have an ordered set of one or more primary-key columns. This requirement is where Spanner still looks like a key-value store: the primary keys form the name for a row, and each table defines a mapping from the primary-key columns to the non-primary-key columns(但是table却又不完全是纯关系的，非常类似于bigtable的模型，table定义了primary key，每个row都有primary key之能够通过这个key找到，找到之后有很多columns可以访问，所以看上去又有点类似key-value store，因此称为semi-relational tables)</li>
 </ul>
 
 
-<div id="orgc94ef37" class="figure">
-<p><img src="../images/spanner-data-model-example.png" alt="spanner-data-model-example.png" />
+<div id="org1d97832" class="figure">
+<p><img src="../images/Pasted-Image-20231225104305.png" alt="Pasted-Image-20231225104305.png" />
 </p>
 </div>
 
@@ -235,12 +235,12 @@
 </div>
 </div>
 
-<div id="outline-container-org2479a22" class="outline-2">
-<h2 id="org2479a22"><span class="section-number-2">4.</span> TrueTime</h2>
+<div id="outline-container-org0dd1970" class="outline-2">
+<h2 id="org0dd1970"><span class="section-number-2">4.</span> TrueTime</h2>
 <div class="outline-text-2" id="text-4">
 
-<div id="org610f963" class="figure">
-<p><img src="../images/spanner-true-time-api.png" alt="spanner-true-time-api.png" />
+<div id="orgeb5d6a0" class="figure">
+<p><img src="../images/Pasted-Image-20231225104711.png" alt="Pasted-Image-20231225104711.png" />
 </p>
 </div>
 
@@ -249,7 +249,7 @@ true time api看上去非常简洁，也非常好理解。就是说请求当前�
 </p>
 
 <ul class="org-ul">
-<li>The underlying time references used by TrueTime are GPS and atomic clocks. TrueTime uses two forms of time reference because they have different failure modes. (TTAPI底层实现上使用了两个计时工具，GPS和atomic clock，之所以使用两种不同的工具是因为他们失效的方式不同）
+<li>The underlying time references used by TrueTime are GPS and atomic clocks. TrueTime uses two forms of time reference because they have different failure modes. (TTAPI底层实现上使用了两个计时工具，GPS和atomic clock，之所以使用两种不同的工具是因为他们失效的方式不同)
 <ul class="org-ul">
 <li>GPS reference-source vulnerabilities include an-tenna and receiver failures, local radio interference, cor-related failures (e.g., design faults such as incorrect leap-second handling and spoofing), and GPS system outage （GPS的失效主要是因为参考源抵抗力不好，包括天线或者是接收器的失效，本地电波的干扰，cor-related失效就是说其他错误造成的失败，设计失误比如不正确的闰秒处理，GPS欺骗，还有GPS系统的掉电）</li>
 <li>Atomic clocks can fail in ways uncorrelated to GPS and each other, and over long periods of time can drift signif- icantly due to frequency error.（而atomic block和GPS失效方式没有关系，主要是因为频率错误造成的时间漂移）</li>
@@ -263,7 +263,7 @@ true time api看上去非常简洁，也非常好理解。就是说请求当前�
 <li>All masters’ time references are regularly compared against each other. Each mas-ter also cross-checks the rate at which its reference ad-vances time against its own local clock, and evicts itself if there is substantial divergence. （所有的机器都会相互之间进行交叉校准，如果偏差较大的话那么就停止工作）</li>
 <li>Between synchroniza-tions, Armageddon masters advertise a slowly increasing time uncertainty that is derived from conservatively ap-plied worst-case clock drift. GPS masters advertise un-certainty that is typically close to zero.（在实际同步的过程中，使用atomic clock的机器有缓慢增长的时间偏差区间因为时钟漂移，而GPS的机器的时间偏差基本为0）</li>
 <li>Every daemon polls a variety of masters to re-duce vulnerability to errors from any one master. Some are GPS masters chosen from nearby datacenters; the rest are GPS masters from farther datacenters, as well as some Armageddon masters. （timeslave daemon轮询一系列的master来确定时间以降低因为任何一台master出现错误的风险，一些是从附近的datacenter GPS master，一些是从更远的datacenter GPS master，还有一些是armageddon也就是配备atomic clock master.</li>
-<li>Daemons apply a variant of Marzullo’s algorithm to detect and reject liars, and synchronize the local machine clocks to the non-liars.(daemon使用marzullo算法来检测liars，并且将本地时钟同步到non-liars) To protect against broken local clocks, machines that exhibit frequency excursions larger than the worst-case bound derived from component specifications and operating environment are evicted.(为了防止错误的本地时钟带来的影响，那些时钟偏差超过worst-case bound的频繁发生的机器会直接下线，具体worst-case bound是根据组件规格和操作环境推算出来的）</li>
+<li>Daemons apply a variant of Marzullo’s algorithm to detect and reject liars, and synchronize the local machine clocks to the non-liars.(daemon使用marzullo算法来检测liars，并且将本地时钟同步到non-liars) To protect against broken local clocks, machines that exhibit frequency excursions larger than the worst-case bound derived from component specifications and operating environment are evicted.(为了防止错误的本地时钟带来的影响，那些时钟偏差超过worst-case bound的频繁发生的机器会直接下线，具体worst-case bound是根据组件规格和操作环境推算出来的)</li>
 <li>Between synchronizations, a daemon advertises a slowly increasing time uncertainty. e is derived from conservatively applied worst-case local clock drift. also depends on time-master uncertainty and communication delay to the time masters.（在两次同步期间，daemon会反应出缓慢增长的time uncertainty,这个范围可以从本地时钟偏移worst-case保守地计算出来，也取决于time-master uncertainty以及comminucation的延迟）
 <ul class="org-ul">
 <li>In our production environ-ment, is typically a sawtooth function of time, varying from about 1 to 7 ms over each poll interval. is there-fore 4 ms most of the time. （实际生产环境下面这个延迟呈现一个锯齿状的，从1增加到7ms, 平均值在4ms）</li>
@@ -290,8 +290,8 @@ links can result in occasional localized spikes.（但是如果出现故障的�
 </div>
 </div>
 
-<div id="outline-container-orgb88aced" class="outline-2">
-<h2 id="orgb88aced"><span class="section-number-2">5.</span> Concurrency Control</h2>
+<div id="outline-container-org23656f7" class="outline-2">
+<h2 id="org23656f7"><span class="section-number-2">5.</span> Concurrency Control</h2>
 <div class="outline-text-2" id="text-5">
 <p>
 完全看不懂。。。。
@@ -299,18 +299,18 @@ links can result in occasional localized spikes.（但是如果出现故障的�
 </div>
 </div>
 
-<div id="outline-container-org54ec5b7" class="outline-2">
-<h2 id="org54ec5b7"><span class="section-number-2">6.</span> Evaluation</h2>
+<div id="outline-container-org8c0a9a5" class="outline-2">
+<h2 id="org8c0a9a5"><span class="section-number-2">6.</span> Evaluation</h2>
 <div class="outline-text-2" id="text-6">
 </div>
-<div id="outline-container-org8c950a7" class="outline-3">
-<h3 id="org8c950a7"><span class="section-number-3">6.1.</span> Microbenchmarks</h3>
+<div id="outline-container-org7f820fd" class="outline-3">
+<h3 id="org7f820fd"><span class="section-number-3">6.1.</span> Microbenchmarks</h3>
 </div>
-<div id="outline-container-org6fc4530" class="outline-3">
-<h3 id="org6fc4530"><span class="section-number-3">6.2.</span> Availability</h3>
+<div id="outline-container-org5c7c76c" class="outline-3">
+<h3 id="org5c7c76c"><span class="section-number-3">6.2.</span> Availability</h3>
 </div>
-<div id="outline-container-orgd9a43ee" class="outline-3">
-<h3 id="orgd9a43ee"><span class="section-number-3">6.3.</span> TrueTime</h3>
+<div id="outline-container-org86cef96" class="outline-3">
+<h3 id="org86cef96"><span class="section-number-3">6.3.</span> TrueTime</h3>
 <div class="outline-text-3" id="text-6-3">
 <ul class="org-ul">
 <li>Two questions must be answered with respect to True- Time: is e truly a bound on clock uncertainty, and how bad e does get?（两个关键的问题就是偏移是否可以按照我们估算范围给出上界，另外就是偏移最坏能到什么情况）</li>
@@ -323,15 +323,15 @@ links can result in occasional localized spikes.（但是如果出现故障的�
 </ul>
 
 
-<div id="org9da1142" class="figure">
-<p><img src="../images/spanner-true-time-benchmark.png" alt="spanner-true-time-benchmark.png" />
+<div id="org6f6224e" class="figure">
+<p><img src="../images/Pasted-Image-20231225104843.png" alt="Pasted-Image-20231225104843.png" />
 </p>
 </div>
 </div>
 </div>
 
-<div id="outline-container-org8c1e74b" class="outline-3">
-<h3 id="org8c1e74b"><span class="section-number-3">6.4.</span> F1</h3>
+<div id="outline-container-orgbfcdd36" class="outline-3">
+<h3 id="orgbfcdd36"><span class="section-number-3">6.4.</span> F1</h3>
 <div class="outline-text-3" id="text-6-4">
 <p>
 F1是google广告系统的后端，最开始是基于MySQL做的，按照customer进行sharding. 但是这个东西的扩展性不好，最近一次的resharding花费了2年时间，所以想彻底解决这个问题。F1需要的就是一个强一致性，支持分布式事务，关系型数据库。
@@ -344,15 +344,15 @@ Spanner started being experimentally evaluated under production workloads in ear
 </div>
 </div>
 
-<div id="outline-container-org4eba4d3" class="outline-2">
-<h2 id="org4eba4d3"><span class="section-number-2">7.</span> Related Work</h2>
+<div id="outline-container-org40876e4" class="outline-2">
+<h2 id="org40876e4"><span class="section-number-2">7.</span> Related Work</h2>
 </div>
-<div id="outline-container-orgc59b168" class="outline-2">
-<h2 id="orgc59b168"><span class="section-number-2">8.</span> Future Work</h2>
+<div id="outline-container-org6eea9a3" class="outline-2">
+<h2 id="org6eea9a3"><span class="section-number-2">8.</span> Future Work</h2>
 </div>
-<div id="outline-container-org3541fbc" class="outline-2">
-<h2 id="org3541fbc"><span class="section-number-2">9.</span> Conclusions</h2>
+<div id="outline-container-orge7e5ef8" class="outline-2">
+<h2 id="orge7e5ef8"><span class="section-number-2">9.</span> Conclusions</h2>
 </div>
 </div>
-<div id="content"><!-- DISQUS BEGIN --><div id="disqus_thread"></div><script>/***  RECOMMENDED CONFIGURATION VARIABLES: EDIT AND UNCOMMENT THE SECTION BELOW TO INSERT DYNAMIC VALUES FROM YOUR PLATFORM OR CMS.*  LEARN WHY DEFINING THESE VARIABLES IS IMPORTANT: https://disqus.com/admin/universalcode/#configuration-variables*/var disqus_config = function () {this.page.url = 'https://dirtysalt.github.io/html/spanner.html';this.page.identifier = 'spanner.html';};(function() {var d = document, s = d.createElement('script');s.src = 'https://dirlt.disqus.com/embed.js';s.setAttribute('data-timestamp', +new Date());(d.head || d.body).appendChild(s);})();</script><noscript>Please enable JavaScript to view the <a href="https://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript><!-- DISQUS END --></div></body>
+</body>
 </html>

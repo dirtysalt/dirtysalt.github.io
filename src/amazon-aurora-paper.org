@@ -4,11 +4,11 @@ Aurora本质上还是一个类MySQL的数据库，读写压力都在单机上，
 
 下图就是再有replication功能MySQL集群的架构图，可以看到数据其实是被写了5次的，写在了4个存储设备上。至于这个availability的话，那么就要看是同步还是异步写了。异步写可以保证性能，但是可用性就会受到损害。如果都是同步写的话，那么可以看到延迟是1 + 3 + 4 + 5(其中2可以被隐藏起来). 而且写的内容也比较多，其实比较大的是binlog, data 以及 double write(dirty page).
 
-[[../images/aurora-networkio-mirrored-mysql.png]]
+[[../images/Pasted-Image-20231225103633.png]]
 
 下图则是Aurora的结构图以及write path. 从结构上，将compute/storage进行拆分，计算层管理sql/tx, 而存储层则管理caching, logging 和 durable storage. 在写入路径上，由primary instance发起async write, 然后使用NRW quorum来保证一致性和可用性。并且这个async write的内容，只包括redo log. 相比MySQL同步的内容大小，就要小多了。
 
-[[../images/aurora-data-plane.png]] [[../images/aurora-networkio.png]]
+[[../images/Pasted-Image-20231225103402.png]] [[../images/Pasted-Image-20231225104645.png]]
 
 数据库卷(database volume)被拆分成为了多个segment, 每个segment是10GB，之所以这样拆分是为了方便出现数据损坏需要进行修复。如果没有被拆分成为segment的话，那么只要数据出现了一点问题，那么整个volume都需要进行修复，这个速度是比较慢的。但是拆分成为多个segment之后，一个segment出现问题，那么从protection group(PG)下面其他volume拷贝一个segment过来就行。在10Gbps网络环境下，通常这个时间就在10s左右。一个database volume上限就是EBS的上限64TB。一个PG就是3个AZs下面的6个EBS实例。
 

@@ -17,7 +17,7 @@ The algebraic operator model is very useful for reasoning over the query, but it
 3. Queries are compiled into native machine code using the optimizing LLVM compiler framework [7].
 #+END_QUOTE
 
-[[../images/eff-compiling-eff-query-plans-0.png]]
+[[../images/Pasted-Image-20231225104527.png]]
 
 一旦我们转变思路之后，以data centric的方式来看待SQL的时候，就会发现tuple其实是被不断地推入到pipeline中，而不是像operator centric的方式那样去拉取数据。这里的push/pull更多的是种思考方式，而不是关系到具体实现。这个文中给了一个具体的例子来说明，如果以push的方式来看待SQL应该是什么样子的。
 
@@ -27,7 +27,7 @@ Now the question is, how can we organize query processing such that the data can
 We therefore reverse the direction of data flow control. Instead of pulling tuples up, we push them towards the con- sumer operators. While pushing tuples, we continue pushing until we reach the next pipeline-breaker. As a consequence, data is always pushed from one pipeline-breaker into another pipeline-breaker. Operators in-between leave the tuples in CPU registers and are therefore very cheap to compute. Fur- thermore, in a push-based architecture the complex control flow logic tends to be outside tight loops, which reduces register pressure. As the typical pipeline-breakers would have to materialize the tuples anyway, we produce execution plans that minimize the number of memory accesses.
 #+END_QUOTE
 
-[[../images/eff-compiling-eff-query-plans-1.png]]
+[[../images/Pasted-Image-20231225104427.png]]
 
 接着我们就可以考虑如何使用llvm来实现这个查询计划了。我们肯定不会把整个查询计划全部都用LLVM来生成，因为有很多组件是非常common的使用C++编写，没有必要生成这些代码。代码生成部分，按照我的理解，主要是两个部分：简单的表达式比如 if (a=10)，以及整个逻辑驱动（for循环，查询hashtable, 查询具体表等等）。 实践证明，大部分的99%时间都花费在了LLVM代码上，很少时间在C++代码上，所以这样实现是没有性能问题的。整个过程就好像链条带动齿轮运转的感觉，C++是齿轮，而LLVM则是链条。
 
@@ -35,12 +35,12 @@ We therefore reverse the direction of data flow control. Instead of pulling tupl
 Still, one does not want to implement the complete query processing logic in LLVM assembler. First, because writing assembler code is more tedious than using a high-level lan- guage like C++, and second, because much of the database logic like index structures is written in C++ anyway. But one can easily mix LLVM and C++, as C++ methods can be called directly from LLVM and vice versa. (To the com- piler, there is no difference between both types of code, as both result in native machine code and both have strongly typed prototypes.) This results in a mixed execution model which is metaphorically sketched in Figure 6. The complex part of the query processing (e.g., complex data structure management or spilling to disk) is written in C++, and forms the cogwheels in Figure 6. The different operators are connected together by LLVM code, which forms the chain in Figure 6. The C++ “cogwheels” are pre-compiled; only the LLVM “chain” for combining them is dynamically generated. Thereby we achieve very low query compilation times. In the concrete example, the complex part of the scan (e.g., locating data structures, figuring out what to scan next) is implemented in C++, and this C++ code “drives” the execution pipeline. But the tuple access itself and the further tuple processing (filtering, materialization in hash table) is implemented in LLVM assembler code. C++ code is called from time to time (like when allocating more memory), but interaction of the C++ parts is controlled by LLVM. If com- plex operators like sort are involved, control might go back fully into C++ at some point, but once the complex logic is over and tuples have to be processed in bulk, LLVM takes over again. For optimal performance it is important that the hot path, i.e., the code that is executed for 99% of the tuples, is pure LLVM. Calling C++ from time to time (e.g., when switching to a new page) is fine, the costs for that are negligible, but the bulk of the processing has to be done in LLVM. While staying in LLVM, we can keep the tuples in CPU registers all the time, which is about as fast as we can expect to be. When calling an external function all registers have to be spilled to memory, which is somewhat expensive. In absolute terms it is very cheap, of course, as the registers will be spilled on the stack, which is usually in cache, but if this is done millions of times it becomes noticeable.
 #+END_QUOTE
 
-[[../images/eff-compiling-eff-query-plans-2.png]]
+[[../images/Pasted-Image-20231225104324.png]]
 
 后面实验也测试了，如果全部生成C++代码，编译时间更长，性能也没有LLVM的好。
 
-[[../images/eff-compiling-eff-query-plans-3.png]]
+[[../images/Pasted-Image-20231225104421.png]]
 
 文章最后讲到了如何衡量生成代码的code quality，这个倒是值得学习。他们使用callgrind（一个valrgind的扩展）来运行程序拿到profile. 其中指标包括inst, branch, branch miss, l1/d1/d cache miss这些。callgrind运行比较慢（而且不确定是否可以跑多线程），其实现在应该都可以通过linux perf来获得。可以看到相比MonetDB,  各项指标都少了许多，说明生成代码质量还是不错的。
 
-[[../images/eff-compiling-eff-query-plans-4.png]]
+[[../images/Pasted-Image-20231225104128.png]]

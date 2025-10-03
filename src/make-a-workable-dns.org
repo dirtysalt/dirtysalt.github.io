@@ -6,26 +6,26 @@
 
 想要验证DNS被污染了其实也非常简单，最好有个WireShark. 先将DNS修改成为8.8.8.8, 然后请求一个被墙的地址比如data.castbox.fm. `dig data.castbox.fm`
 
-[[../images/dns-poisoning-wireshark.png]]
+[[../images/Pasted-Image-20231225104322.png]]
 
 可以看到首先返回了两个A分别是66.*** 和 199.***，这两个IP如果查询地理位置的话发现都是facebook.com的IP，而第三个CNAME才是正确的内容.
 
 -----
 
-解决DNS被污染的问题，我突然想到了可以使用ss. 因为之前看ss的代码里面记得有个 `asyncdns.py` 这个文件，专门用于DNS解析的。所以就不加思索地直接试了一把（比如ss在本地62221上） `dig @127.0.0.1 -p 62221 data.castbox.fm`（@是可以指定dns服务器，-p可以使用dns端口）。但是ss有下面这样的错误日志
+解决DNS被污染的问题，我突然想到了可以使用ss. 因为之前看ss的代码里面记得有个 `asyncdns.py` 这个文件，专门用于DNS解析的。所以就不加思索地直接试了一把（比如ss在本地62221上） `dig @127.0.0.1 -p 62221 data.castbox.fm` （@是可以指定dns服务器，-p可以使用dns端口）。但是ss有下面这样的错误日志
 #+BEGIN_EXAMPLE
 2017-12-12 22:01:22 WARNING  udprelay.py:349 drop a message since frag is not 0
 2017-12-12 22:01:27 WARNING  udprelay.py:349 drop a message since frag is not 0
 2017-12-12 22:02:47 WARNING  udprelay.py:349 drop a message since frag is not 0
 #+END_EXAMPLE
 
-我大概明白了，ss暴露的62221是支持socks5的tcp/udp端口，不能直接应用于dns. 必须在前面用个组件比如 `dns2socks` 或者是 `ss-tunnel`。
+我大概明白了，ss暴露的62221是支持socks5的tcp/udp端口，不能直接应用于dns. 必须在前面用个组件比如 `dns2socks` 或者是 `ss-tunnel` 。
 
 -----
 
 dns2socks这个软件是C编写的，我希望有个python编写的（这样就不要编译并且可以很容易地在其他地方部署了），所以找到了 `ss-tunnel`. 在我的印象中（阅读ss代码的时候），ss是没有ss-tunnel这个功能的。网上搜索了一下也是在 `shadowsocks-libev` 这个项目下面才有，而这个项目也是C + libev来写的。不过很有趣的是，在shadowsocks的python实现上，有位同学提交了一个python的ss-tunnel实现 https://github.com/shadowsocks/shadowsocks/pull/759 并且已经被合并到了master上面。
 
-使用 `ss-tunnel` 这个需要同时升级client/server才行，并且中间不能走kcptunnel（kcp使用的是tcp协议，而DNS是udp协议）。当然可以在dig里面指定使用tcp来进行解析 `+tcp`。解析正确了，ss-tunnel运行在65353端口上面。接下来的工作就是结合dnsmasq来做DNS转发了。
+使用 `ss-tunnel` 这个需要同时升级client/server才行，并且中间不能走kcptunnel（kcp使用的是tcp协议，而DNS是udp协议）。当然可以在dig里面指定使用tcp来进行解析 `+tcp` 。解析正确了，ss-tunnel运行在65353端口上面。接下来的工作就是结合dnsmasq来做DNS转发了。
 #+BEGIN_EXAMPLE
 ➜  ~ dig @127.0.0.1 -p 65353 data.castbox.fm
 

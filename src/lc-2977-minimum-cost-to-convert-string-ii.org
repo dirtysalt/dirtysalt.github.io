@@ -1,0 +1,86 @@
+#+title: LC 2977. 转换字符串的最小成本 II
+
+https://leetcode.cn/problems/minimum-cost-to-convert-string-ii/
+
+这题也有一个简单的版本，但是这题简单版本转换是单字符，可以对单字符进行更改，相对就简单多了。这题是可以针对字符串进行更改，但是存在两个限制，就是修改的部分不能重合，就让这个问题简单了不少。并且 $source.length == target.length <= 1000$, 所以这题可以使用O(n^2) 的dp算法来计算。
+
+这题在实现的时候有两个注意点：
+- 计算最短路的时候，我们只需要考虑 $dict[i].length == dict[j].length$ 的转换，因为长度不同不能转换。这样使得在实际运行的时候不会使用到O(n^3)的floyd算法。虽然 $cost.length == original.length == changed.length <= 100$, 理论上如果两者没有重合的话，那么总数可以到200. 那么O(n^3) 时间就会稍微有点长。
+- 进行字符串匹配的时候，因为是在一个点上不断扩展字符串的，所以可以使用trie来匹配而不是每次都计算hash去字典里面查找。
+
+#+BEGIN_SRC Python
+class Solution:
+    def minimumCost(self, source: str, target: str, original: List[str], changed: List[str], cost: List[int]) -> int:
+        dictIndex = {}
+        dictData = []
+        for s in original + changed:
+            if s not in dictIndex:
+                dictIndex[s] = len(dictData)
+                dictData.append(s)
+
+        INF = 1 << 63
+        n = len(dictData)
+        C = [[INF] * n for _ in range(n)]
+        for i in range(len(original)):
+            a, b, c = original[i], changed[i], cost[i]
+            a, b = dictIndex[a], dictIndex[b]
+            C[a][b] = min(C[a][b], c)
+
+        for t in range(n):
+            opts = []
+            for i in range(n):
+                if len(dictData[i]) == len(dictData[t]):
+                    opts.append(i)
+            for i in opts:
+                for j in opts:
+                    C[i][j] = min(C[i][j], C[i][t] + C[t][j])
+
+        class Trie:
+            def __init__(self):
+                self.child = [None] * 26
+                self.index = -1
+
+            def insert(self, s, index):
+                t = self
+                for c in s:
+                    d = ord(c) - ord('a')
+                    if not t.child[d]:
+                        t2 = Trie()
+                        t.child[d] = t2
+                    t = t.child[d]
+                t.index = index
+
+            def move(self, c):
+                d = ord(c) - ord('a')
+                return self.child[d]
+
+        root = Trie()
+        for i in range(len(dictData)):
+            s = dictData[i]
+            root.insert(s, i)
+
+        N = len(source)
+        dp = [0] * (N + 1)
+        for i in reversed(range(N)):
+            same = True
+            r = INF
+            a, b = root, root
+            for j in range(i, N):
+                same = same & (source[j] == target[j])
+                if a and b:
+                    a, b = a.move(source[j]), b.move(target[j])
+
+                if same:
+                    r = min(r, dp[j + 1])
+                elif not (a and b):
+                    break
+                elif a.index != -1 and b.index != -1:
+                    ta, tb = a.index, b.index
+                    c = C[ta][tb]
+                    r = min(r, c + dp[j + 1])
+            dp[i] = r
+
+        if dp[0] == INF:
+            return -1
+        return dp[0]
+#+END_SRC

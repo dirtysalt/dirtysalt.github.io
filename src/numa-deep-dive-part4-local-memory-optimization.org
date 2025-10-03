@@ -8,7 +8,7 @@ https://frankdenneman.nl/2016/07/13/numa-deep-dive-4-local-memory-optimization/
 
 Intel Xeon架构下面会有1-2个memory controller, 每个memory controller可以连接4个channel(quad-channel mode). 每个Channel上可以连接2-3个DIMM（下图中的Slot，下图中有3个DIMM,  只使用了其中一个DIMM）。channel不用全部使用，可以使用其中的2-3个。因为channel是独占的，所以CPU在内存布局上也会尽可能地interleave到多个channel上面，来提升内存带宽上限。
 
-[[../images/numa-deep-dive-part4-0.png]]
+[[../images/Pasted-Image-20231225103956.png]]
 
 #+BEGIN_QUOTE
 The Intel Xeon microarchitecture contains one or two integrated memory controllers. The memory controller connects through a channel to the DIMMs. Sandy Bridge (v1) introduced quadruple memory channels. These multiple independent channels increase data transfer rates due to concurrent access of multiple DIMMs. When operating in quad-channel mode, latency is reduced due to interleaving. The memory controller distributes the data amongst the DIMM in an alternating pattern, allowing the memory controller to access each DIMM for smaller bits of data instead of accessing a single DIMM for the entire chunk of data. This provides the memory controller more bandwidth for accessing the same amount of data across channels instead of traversing a single channel storing all data into a single DIMM. In total, there are four memory channels per processor, each channel connect up to three DIMM slots. Within a 2 CPU system, eight channels are present, connecting the CPUs to a maximum of 24 DIMMs.
@@ -22,13 +22,13 @@ Please note that interleaving memory across channels is not the same as the Node
 
 为了更好地理解channel interleaving, 我们将channel下面对应的DIMM划分成为一个Region. 在部署上应该尽可能地使：一个NUMA nodes Region分布一致，两个NUMA nodes上Region分布一致。
 
-[[../images/numa-deep-dive-part4-1.png]]
+[[../images/Pasted-Image-20231225103919.png]]
 
 下面两种配置方式都会出现问题，第一种出现的问题就是一边NUMA node的内存小导致经常会跨节点访问，另外一种出现的问题就是前面两个channel使用概率高于后面两个。这样看上去，这里多出来的4个16GB DIMM，似乎可以选择3 channel/2 DPC的部署方式。另外，channel上面DIMM越多，虽然容量也越大，但是memory controller overhead也会更高，限制带宽上限。
 
-[[../images/numa-deep-dive-part4-2.png]]
+[[../images/Pasted-Image-20231225104030.png]]
 
-[[../images/numa-deep-dive-part4-3.png]]
+[[../images/Pasted-Image-20231225104107.png]]
 
 #+BEGIN_QUOTE
 The memory capacity is equally distributed across the NUMA Nodes, both nodes contain 96 GB of RAM. The CPUs create two regions, region 0 (64GB) interleaves across four channels, region 1 (32GB) interleaves across 2 channels. Native DIMM speed remains the same (MHz). However, some performance loss occurs due to control management overhead. With local and remote memory access in mind, this configuration does not provide a consistent memory performance. Data access is done across four channels for region 0 and two channels for region 1. Data access across the QPI to the other memory controller might fetch the data across two or four channels. LCC configurations contain a single memory controller whereas MCC and HCC contain two memory controllers. This memory layout creates an unbalance in load on memory controllers with MCC and HCC configuration as well.
@@ -70,7 +70,7 @@ The key to increased capacity and performance of LRDIMMs is the abstraction of D
 
 LDRIMM相比RDIMM可以做到更高的容量以及提供更大的带宽：Frequency都是1333MHZ，但是LRDIMM的Ranking更大。
 
-[[../images/numa-deep-dive-part4-4.png]]
+[[../images/Pasted-Image-20231225103757.png]]
 
 #+BEGIN_QUOTE
 When comparing 32GB LRDIMMs and 32GB Quad Rank RDIMMs it becomes apparent that LRDIMMS allow for higher capacity while retaining the bandwidth. For example, a Gen 12 Dell R720 contains two Intel Xeon E5 2600 CPU, allowing up to 1.5TB of RAM. The system contains 24 DIMM slots and allows up to 64GB DDR3 DIMMs up to 1866 Mhz. Dells memory configuration samples only contain configurations up to 1600 MHz.

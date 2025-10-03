@@ -5,14 +5,14 @@
 - Google Spanner (中文版) http://dblab.xmu.edu.cn/node/230
 
 ** Abstract
-- Spanner is Google’s scalable, multi-version, globally-distributed, and synchronously-replicated database. It is the first system to distribute data at global scale and sup-port externally-consistent distributed transactions. (可扩展，多版本，全局分布式，同步复制的数据库系统，扩展性到全球级别，并且支持外部一致性的分布式事务）
+- Spanner is Google’s scalable, multi-version, globally-distributed, and synchronously-replicated database. It is the first system to distribute data at global scale and sup-port externally-consistent distributed transactions. (可扩展，多版本，全局分布式，同步复制的数据库系统，扩展性到全球级别，并且支持外部一致性的分布式事务)
 - This paper describes how Spanner is structured, its feature set, the rationale underlying various design decisions, and a novel time API that exposes clock uncertainty. （主要分为两个方面，一个方面是组织结构以及关键特性还有各种设计上的权衡，另外一个就是支持时钟不确定性的时间API）
 - This API and its implementation are critical to supporting exter-nal consistency and a variety of powerful features: non-blocking reads in the past, lock-free read-only transac-tions, and atomic schema changes, across all of Spanner.（主要是使用这个API才能够保证外部一致性以及一些非常强大的功能，non-blocking read历史数据，lock-free read-only事务，以及原子schema变化）
 
 ** Introduction
 - At the high-est level of abstraction, it is a database that shards data across many sets of Paxos state machines in data- centers spread all over the world. Replication is used for global availability and geographic locality; clients auto-matically failover between replicas. （数据是进行shard的，每个shard实例之间的同步都是通过paxos状态机来完成的，实例可能散步于世界的各个地方。replication主要是为了提供全球可用性以及地理位置上的局部性，client能够自动地在replicas之间做failover切换）
-- Spanner automati-cally reshards data across machines as the amount of data or the number of servers changes, and it automatically migrates data across machines (even across datacenters) to balance load and in response to failures. （spanner对于data shard是自动完成的，当server数量变化的时候会reshard然后重新做balance)
-- Spanner is designed to scale up to millions of machines across hun-dreds of datacenters and trillions of database rows.(扩展到百万机器，上百个数据中心，10^12 rows）
+- Spanner automati-cally reshards data across machines as the amount of data or the number of servers changes, and it automatically migrates data across machines (even across datacenters) to balance load and in response to failures. (spanner对于data shard是自动完成的，当server数量变化的时候会reshard然后重新做balance)
+- Spanner is designed to scale up to millions of machines across hun-dreds of datacenters and trillions of database rows.(扩展到百万机器，上百个数据中心，10^12 rows)
 - Spanner’s main focus is managing cross-datacenter replicated data, but we have also spent a great deal of time in designing and implementing important database features on top of our distributed-systems infrastructure（虽然spanner主要focus是在跨机房的数据replication上，但是也花了相当多的时间来在分布式结构上设计和实现很多database特性，
   - Bigtable不能够支持复杂并且变化的schema，并且对于wide-area下面不能够很好地实现强一致性
   - Megastore可以解决Bigtable这个问题但是write throughput太差（使用MVCC方式造成的冲突）
@@ -34,7 +34,7 @@
   - If the uncertainty is large, Spanner slows down to wait out that uncertainty. Google’s cluster-management software provides an implementation of the TrueTime API. 如果这个不确定性太大的话，那么spanner就需要slowdown等待这个uncertainty降下来
   - This implementation keeps uncertainty small (gen-erally less than 10ms) by using multiple modern clock references (GPS and atomic clocks). 通过GPS和原子钟来keep uncertainty small
 
-[[../images/design-goals-for-spanner.png]]
+[[../images/Pasted-Image-20231225104515.png]]
 
 ** Implementation
 - A Spanner deployment is called a universe. Given that Spanner manages data globally, there will be only a handful of running universes. We currently run a test/playground universe, a development/production uni-verse, and a production-only universe.（一个spanner实例称为universe）
@@ -45,7 +45,7 @@
 
 -----
 
-[[../images/spanner-server-organization.png]]
+[[../images/Pasted-Image-20231225104504.png]]
 
 - zonemaster 选择spanserver来serve data
 - spanserver serve data
@@ -56,9 +56,9 @@
   - The placement driver periodically commu-nicates with the spanservers to find data that needs to be moved, either to meet updated replication constraints or to balance load.（直接和spanserver通信）
 
 *** Spanserver Software Stack
-[[../images/spanserver-software-stack.png]]
+[[../images/Pasted-Image-20231225104508.png]]
 
-- At the bottom, each spanserver is responsible for between 100 and 1000 instances of a data structure called a tablet.(每个spanserver管理100-1000个tablet实例）
+- At the bottom, each spanserver is responsible for between 100 and 1000 instances of a data structure called a tablet.(每个spanserver管理100-1000个tablet实例)
   - tablet和bigtable tablet概念非常类似，也是map数据结构并且value存储了多个版本
   - tablet’s state is stored in set of B-tree-like files and a write-ahead log, all on a distributed file system called Colossus (the successor to the Google File System) 状态保存在文件以及log上面存储在GFS2
 - To support replication, each spanserver implements a single Paxos state machine on top of each tablet. Each state machine stores its metadata and log in its corresponding tablet. （每个tablet上面实现paxos实例，状态机的实例将metadata以及operation log保存在管理的tablet里面）
@@ -67,17 +67,17 @@
   - Writes must initiate the Paxos protocol at the leader; reads access state directly from the underlying tablet at any replica that is sufficiently up-to-date. The set of replicas is collectively a Paxos group.（所有对于tablet的write都是通过paxos leader来发起的，读取可以在任意的replicas上面，replicas组成一个paxos group）
 - At every replica that is a leader, each spanserver im-plements a lock table to implement concurrency control. The lock table contains the state for two-phase lock-ing: it maps ranges of keys to lock states. Operations that require synchronization, such as transactional reads, acquire locks in the lock table; other operations bypass the lock table. （在leader上面实现了一个lock table来实现并发控制，使用了2PC的方式来控制提交，存放了key->lock state的映射。对于那些需要同步的操作比如事务读的话那么需要去尝试锁表，否则其他的操作都可以绕过lock table。可以认为lock table只管理一个paxos group/tablet里面的事务读操作）
 - At every replica that is a leader, each spanserver also implements a transaction manager to support distributed transactions. The transaction manager is used to imple-ment a participant leader. the other replicas in the group will be referred to as participant slaves （多个paxos group会选举出一个leader来做分布式事务，和paxos group内部的leader作用相同，主要是解决跨tablet的事务）
-  - If a transac-tion involves only one Paxos group (as is the case for most transactions), it can bypass the transaction manager, since the lock table and Paxos together provide transac- tionality. （如果操作只是发生在一个paxos group上面的话，那么可以绕过transaction manager)
-  - If a transaction involves more than one Paxos group, those groups’ leaders coordinate to perform two-phase commit.(如果涉及到多个paxos group的话，那么就需要leader来发起2PC）
-  - The state of each trans-action manager is stored in the underlying Paxos group (and therefore is replicated).（transaction manager的log记录在底层的paxos group)
+  - If a transac-tion involves only one Paxos group (as is the case for most transactions), it can bypass the transaction manager, since the lock table and Paxos together provide transac- tionality. (如果操作只是发生在一个paxos group上面的话，那么可以绕过transaction manager)
+  - If a transaction involves more than one Paxos group, those groups’ leaders coordinate to perform two-phase commit.(如果涉及到多个paxos group的话，那么就需要leader来发起2PC)
+  - The state of each trans-action manager is stored in the underlying Paxos group (and therefore is replicated).(transaction manager的log记录在底层的paxos group)
 
 <大规模分布式存储系统>: 通过Paxos协议实现了跨数据中心的多个副本之间的一致性。另外每个主副本所在的spanserver还会实现一个锁表用于并发控制，读写事务操作某个子表上的目录时需要通过锁表避免多个事务之间相互干扰。除了锁表每个主副本上还有一个事务管理器，如果事务在一个Paxos组里可以绕过事务管理器，但是一旦事务跨多个Paxos组，就需要事务管理器来协调。
 
 *** Directories and Placement
-[[../images/spanner-directory-movement.png]]
+[[../images/Pasted-Image-20231225103246.png]]
 
-- On top of the bag of key-value mappings, the Spanner implementation supports a bucketing abstraction called a directory, which is a set of contiguous keys that share a common prefix.（directory定义为连续key的集合，对应到directory就可以认为是一个region，但是一个tablet可以包含多个directory)
-- A directory is the unit of data placement. All data in a directory has the same replication configuration. When data is moved between Paxos groups, it is moved direc-tory by directory (directory是data placement的最小单元，一个directory里面的data有相同的replication configuration.在paxos group之间移动的话也是按照directory作为单位移动的）
+- On top of the bag of key-value mappings, the Spanner implementation supports a bucketing abstraction called a directory, which is a set of contiguous keys that share a common prefix.(directory定义为连续key的集合，对应到directory就可以认为是一个region，但是一个tablet可以包含多个directory)
+- A directory is the unit of data placement. All data in a directory has the same replication configuration. When data is moved between Paxos groups, it is moved direc-tory by directory (directory是data placement的最小单元，一个directory里面的data有相同的replication configuration.在paxos group之间移动的话也是按照directory作为单位移动的)
   - Spanner might move a directory to shed load from a Paxos group; 将dir移动到低负载的paxos group上面
   - to put directories that are frequently accessed together into the same group; 将经常一起访问的dir放在一个group上面
   - or to move a directory into a group that is closer to its accessors. 将dir放在离accessor近的位置
@@ -97,18 +97,18 @@
     - We believe it is better to have application programmers deal with per-formance problems due to overuse of transactions as bot-tlenecks arise, rather than always coding around the lack of transactions. （让程序员了解事务的代价然后来选择性地使用事务，总比没有提供事务要好）
     - Running two-phase commit over Paxos mitigates the availability problems（而使用paxos实现的2PC能够缓解availability的问题）
 - An application creates one or more databases in a universe. Each database can contain an unlimited number of schematized tables. Tables look like relational-database tables, with rows, columns, and versioned values.（应用在universe里面创建一个或者是多个databases，每个databases包含了无限制个数的table,这些table都是有schema的。table看上去非常类似关系数据库的table，有row，column，每个value都带上了version number）
-- Spanner’s data model is not purely relational, in that rows must have names. More precisely, every table is re-quired to have an ordered set of one or more primary-key columns. This requirement is where Spanner still looks like a key-value store: the primary keys form the name for a row, and each table defines a mapping from the primary-key columns to the non-primary-key columns（但是table却又不完全是纯关系的，非常类似于bigtable的模型，table定义了primary key，每个row都有primary key之能够通过这个key找到，找到之后有很多columns可以访问，所以看上去又有点类似key-value store，因此称为semi-relational tables)
+- Spanner’s data model is not purely relational, in that rows must have names. More precisely, every table is re-quired to have an ordered set of one or more primary-key columns. This requirement is where Spanner still looks like a key-value store: the primary keys form the name for a row, and each table defines a mapping from the primary-key columns to the non-primary-key columns(但是table却又不完全是纯关系的，非常类似于bigtable的模型，table定义了primary key，每个row都有primary key之能够通过这个key找到，找到之后有很多columns可以访问，所以看上去又有点类似key-value store，因此称为semi-relational tables)
 
-[[../images/spanner-data-model-example.png]]
+[[../images/Pasted-Image-20231225104305.png]]
 
 顶层的table标记为"DIRECTORY",所有的subtable primary key都必须以directory table的primary开头，然后subtable都和table放在一起，类似megastore的数据模型。这样顶层的table每行成为一个directory可以任意移动。
 
 ** TrueTime
-[[../images/spanner-true-time-api.png]]
+[[../images/Pasted-Image-20231225104711.png]]
 
 true time api看上去非常简洁，也非常好理解。就是说请求当前时间点的时候，得到的不是具体的时间点而是一个区间[a,b]. 没有办法准确地告诉这个时间点，但是可以确信这个时间点是在我[a,b]之间，也就是clock uncertainty.
 
-- The underlying time references used by TrueTime are GPS and atomic clocks. TrueTime uses two forms of time reference because they have different failure modes. (TTAPI底层实现上使用了两个计时工具，GPS和atomic clock，之所以使用两种不同的工具是因为他们失效的方式不同）
+- The underlying time references used by TrueTime are GPS and atomic clocks. TrueTime uses two forms of time reference because they have different failure modes. (TTAPI底层实现上使用了两个计时工具，GPS和atomic clock，之所以使用两种不同的工具是因为他们失效的方式不同)
   - GPS reference-source vulnerabilities include an-tenna and receiver failures, local radio interference, cor-related failures (e.g., design faults such as incorrect leap-second handling and spoofing), and GPS system outage （GPS的失效主要是因为参考源抵抗力不好，包括天线或者是接收器的失效，本地电波的干扰，cor-related失效就是说其他错误造成的失败，设计失误比如不正确的闰秒处理，GPS欺骗，还有GPS系统的掉电）
   - Atomic clocks can fail in ways uncorrelated to GPS and each other, and over long periods of time can drift signif- icantly due to frequency error.（而atomic block和GPS失效方式没有关系，主要是因为频率错误造成的时间漂移）
   - 简单地说就是GPS时间非常精确但是容易受到外部的影响，而atomic可能不非常精确但是不容易受到外部的影响，时钟的参考应该主要着重在GPS，而atomic clock应该只是为了能够应急一些GPS出现问题的情况。
@@ -118,7 +118,7 @@ true time api看上去非常简洁，也非常好理解。就是说请求当前�
 - All masters’ time references are regularly compared against each other. Each mas-ter also cross-checks the rate at which its reference ad-vances time against its own local clock, and evicts itself if there is substantial divergence. （所有的机器都会相互之间进行交叉校准，如果偏差较大的话那么就停止工作）
 - Between synchroniza-tions, Armageddon masters advertise a slowly increasing time uncertainty that is derived from conservatively ap-plied worst-case clock drift. GPS masters advertise un-certainty that is typically close to zero.（在实际同步的过程中，使用atomic clock的机器有缓慢增长的时间偏差区间因为时钟漂移，而GPS的机器的时间偏差基本为0）
 - Every daemon polls a variety of masters to re-duce vulnerability to errors from any one master. Some are GPS masters chosen from nearby datacenters; the rest are GPS masters from farther datacenters, as well as some Armageddon masters. （timeslave daemon轮询一系列的master来确定时间以降低因为任何一台master出现错误的风险，一些是从附近的datacenter GPS master，一些是从更远的datacenter GPS master，还有一些是armageddon也就是配备atomic clock master.
-- Daemons apply a variant of Marzullo’s algorithm to detect and reject liars, and synchronize the local machine clocks to the non-liars.(daemon使用marzullo算法来检测liars，并且将本地时钟同步到non-liars) To protect against broken local clocks, machines that exhibit frequency excursions larger than the worst-case bound derived from component specifications and operating environment are evicted.(为了防止错误的本地时钟带来的影响，那些时钟偏差超过worst-case bound的频繁发生的机器会直接下线，具体worst-case bound是根据组件规格和操作环境推算出来的）
+- Daemons apply a variant of Marzullo’s algorithm to detect and reject liars, and synchronize the local machine clocks to the non-liars.(daemon使用marzullo算法来检测liars，并且将本地时钟同步到non-liars) To protect against broken local clocks, machines that exhibit frequency excursions larger than the worst-case bound derived from component specifications and operating environment are evicted.(为了防止错误的本地时钟带来的影响，那些时钟偏差超过worst-case bound的频繁发生的机器会直接下线，具体worst-case bound是根据组件规格和操作环境推算出来的)
 - Between synchronizations, a daemon advertises a slowly increasing time uncertainty. e is derived from conservatively applied worst-case local clock drift. also depends on time-master uncertainty and communication delay to the time masters.（在两次同步期间，daemon会反应出缓慢增长的time uncertainty,这个范围可以从本地时钟偏移worst-case保守地计算出来，也取决于time-master uncertainty以及comminucation的延迟）
   - In our production environ-ment, is typically a sawtooth function of time, varying from about 1 to 7 ms over each poll interval. is there-fore 4 ms most of the time. （实际生产环境下面这个延迟呈现一个锯齿状的，从1增加到7ms, 平均值在4ms）
   - The daemon’s poll interval is currently 30 seconds, and the current applied drift rate is set at 200 microseconds/second, which together account for the sawtooth bounds from 0 to 6 ms. The remain-ing 1 ms comes from the communication delay to the time masters.（上面的计算是这样出来的，平均30s同步一次，估算出来当前偏移是200us / s,因此30s是从0-6ms的偏移，在加上和master通信的1ms的延迟）
@@ -145,7 +145,7 @@ links can result in occasional localized spikes.（但是如果出现故障的�
   - That is, clock issues are extremely infrequent, relative to much more serious hardware problems. （因此相对于更加严重的硬件鼓掌来说，clock issume问题非常小）
 - several thou-sand spanserver machines across datacenters up to 2200 km apart. It plots the 90th, 99th, and 99.9th percentiles of  sampled at timeslave daemons immediately after polling the time masters（下面的图统计出了跨越2200km的spanner机器的时间偏移统计，这些时间偏移都是在和timeslave在同步timemaster之后立刻描绘出来的，统计了90%,99%,99.9%的时间偏移，可以看到是非常小的。第一张图里面后半部分的下降是因为改进了网络拥塞，第二张图里面的高峰主要是因为当时下线了几台time masters）
 
-[[../images/spanner-true-time-benchmark.png]]
+[[../images/Pasted-Image-20231225104843.png]]
 
 *** F1
 

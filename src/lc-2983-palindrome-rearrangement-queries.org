@@ -1,0 +1,99 @@
+#+title: LC 2983. 回文串重新排列查询
+
+https://leetcode.cn/problems/palindrome-rearrangement-queries/description/
+
+这题在实现上有几个点：
+- 把后半部分字符串进行翻转，并且对query后半段也做翻转，这样比较容易对照。
+- 对于调整范围之外的字符串内容，肯定是前半段或者是后半段，可以预先计算出来值。
+- 两个调整范围之间的关系需要单独考虑：
+	- 如果两个调整范围包含，那么只需要判断字符个数是否相同
+	- 如果两个调整范围不重叠，分别考虑调整部分，不重叠部分必须直接比较(我的实现比较偷懒直接比较了，其实可以做个hash)
+	- 如果两个调整范围重叠，那么需要分别处理前半部分和后半部分，然后处理中间部分。
+
+细节稍微有点多，我花了比较长时间想怎么容易写对。
+
+#+BEGIN_SRC Python
+class Solution:
+    def canMakePalindromeQueries(self, s: str, queries: List[List[int]]) -> List[bool]:
+        n = len(s)
+        n2 = n // 2
+        s1 = s[:n2]
+        s2 = s[n2:][::-1]
+        left = [0] * n2
+        right = [0] * n2
+        for i in range(0, n2):
+            left[i] = (s1[i] == s2[i]) & (left[i - 1] if i > 0 else 1)
+        for i in reversed(range(n2)):
+            right[i] = (s1[i] == s2[i]) & (right[i + 1] if (i + 1) < n2 else 1)
+
+        acc1 = [[0] * 26 for _ in range(n2 + 1)]
+        acc2 = [[0] * 26 for _ in range(n2 + 1)]
+        for i in range(n2):
+            for j in range(26):
+                acc1[i + 1][j] = acc1[i][j]
+                acc2[i + 1][j] = acc2[i][j]
+            d = ord(s1[i]) - ord('a')
+            acc1[i + 1][d] += 1
+            d = ord(s2[i]) - ord('a')
+            acc2[i + 1][d] += 1
+
+        def get_range(acc, l, r):
+            A = [0] * 26
+            for j in range(26):
+                A[j] = acc[r + 1][j] - acc[l][j]
+            return A
+
+        def check_range(l, r):
+            A = get_range(acc1, l, r)
+            B = get_range(acc2, l, r)
+            return A == B
+
+        def check_identity(l, r):
+            if l > r: return True
+            return s1[l:r + 1] == s2[l:r + 1]
+
+        def handle(a, b, c, d):
+            c, d = n - 1 - d, n - c - 1
+            # print(a, b, c, d)
+            l, r = min(a, c), max(b, d)
+            if l > 0 and not left[l - 1]: return False
+            if (r + 1) < n2 and not right[r + 1]: return False
+
+            # print("'%s' '%s' '%s'" % (s1[:a], s1[a:b + 1], s1[b + 1:]) +
+            #       "-> '%s' '%s' '%s'" % (s2[:c], s2[c:d + 1], s2[d + 1:]))
+
+            # if one range is larger.
+            if (a >= c and b <= d) or (a <= c and b >= d):
+                return check_range(l, r)
+
+            # if ranges not overlapped.
+            if b < c or d < a:
+                if not check_range(a, b) or not check_range(c, d):
+                    return False
+                return check_identity(b + 1, c - 1) and check_identity(d + 1, a - 1)
+
+            # ranges are overlapped.
+            ax, ay = acc1, acc2
+            if a > c:
+                a, b, c, d = c, d, a, b
+                ax, ay = ay, ax
+            A = get_range(ax, a, b)
+            B = get_range(ay, c, d)
+
+            C = get_range(ay, a, c - 1)
+            for j in range(26):
+                if A[j] < C[j]: return False
+                A[j] -= C[j]
+            C = get_range(ax, b + 1, d)
+            for j in range(26):
+                if B[j] < C[j]: return False
+                B[j] -= C[j]
+            return A == B
+
+        ans = []
+        for (a, b, c, d) in queries:
+            r = handle(a, b, c, d)
+            ans.append(r)
+        return ans
+
+#+END_SRC

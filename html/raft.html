@@ -85,7 +85,7 @@ Labs
 Rafe FAQ
 </p>
 
-<pre class="example" id="org340edf3">
+<pre class="example" id="org4c0d0c0">
 how does a server learn about newly elected leader?
   new leader sees yes votes from majority
   others see AppendEntries heart-beats with a higher term number
@@ -125,7 +125,7 @@ A: Raft gives up some performance in return for clarity; for example:
 下面一段文字是关于Raft和Paxos等共识算法在实际应用中的比较
 </p>
 
-<pre class="example" id="org98a2e7b">
+<pre class="example" id="org4fc68ba">
 Q: Is Raft used in real-world software, or do companies generally roll
 their own flavor of Paxos (or use a different consensus protocol)?
 
@@ -198,7 +198,7 @@ datacenter. ePaxos is an example.
 如果这里只考虑数据一致性问题的话，其实这里面选S2,S3都无所谓。S2,S3可以把自己的4,5都擦出掉，因为4,5都没有commit. 肯定不能将已经commit的日志回滚。
 </p>
 
-<pre class="example" id="org336e286">
+<pre class="example" id="org8961428">
 how can logs disagree after a crash?
   a leader crashes before sending last AppendEntries to all
     S1: 3
@@ -228,7 +228,7 @@ Raft forces agreement by having followers adopt new leader's log
 为什么不选择日志最长的作为leader
 </p>
 
-<pre class="example" id="org5f87853">
+<pre class="example" id="orgd3698c2">
 why not elect the server with the longest log as leader?
   example:
     S1: 5 6 7
@@ -270,11 +270,11 @@ A: 如果leader的prevLogIndex比自己的logs还要多的话，那么先选择�
 </p>
 
 <div class="org-src-container">
-<pre class="src src-go"><span class="org-function-name">DPrintf</span>(<span class="org-string">"X%d: mismatch log entry. index = %v, leader term = %v, my term = %v"</span>,
+<pre class="src src-Go">DPrintf("X%d: mismatch log entry. index = %v, leader term = %v, my term = %v",
     rf.me, req.PrevLogIndex, req.PrevLogTerm, rf.logs[idx].Term)
 searchTerm := rf.logs[idx].Term - 1
 rb := 0
-<span class="org-keyword">for</span> idx &gt;= 0 &amp;&amp; rf.logs[idx].Term &gt; searchTerm &amp;&amp; (idx+rf.baseLogIndex) &gt; rf.commitIndex {
+for idx &gt;= 0 &amp;&amp; rf.logs[idx].Term &gt; searchTerm &amp;&amp; (idx+rf.baseLogIndex) &gt; rf.commitIndex {
     idx -= 1
     rb += 1
 }
@@ -286,12 +286,12 @@ rb := 0
 </p>
 
 <div class="org-src-container">
-<pre class="src src-go"><span class="org-function-name">DPrintf</span>(<span class="org-string">"X%d: mismatch log entry. index = %v, leader term = %v, my term = %v"</span>,
+<pre class="src src-Go">DPrintf("X%d: mismatch log entry. index = %v, leader term = %v, my term = %v",
     rf.me, req.PrevLogIndex, req.PrevLogTerm, rf.logs[idx].Term)
 
 searchTerm := rf.logs[idx].Term
 rb := 0
-<span class="org-keyword">for</span> idx &gt;= 0 &amp;&amp; rf.logs[idx].Term == searchTerm &amp;&amp; (idx+rf.baseLogIndex) &gt; rf.commitIndex {
+for idx &gt;= 0 &amp;&amp; rf.logs[idx].Term == searchTerm &amp;&amp; (idx+rf.baseLogIndex) &gt; rf.commitIndex {
     idx -= 1
     rb += 1
 }
@@ -308,24 +308,24 @@ A: 首先reply.voteGranted要保证是true. 其次如果我们使用goroutine的
 </p>
 
 <div class="org-src-container">
-<pre class="src src-go">valid := <span class="org-constant">true</span>
-rf.<span class="org-function-name">Lock</span>()
-<span class="org-comment-delimiter">// </span><span class="org-comment">&#22914;&#26524;&#20462;&#25913;&#20102;currentTerm&#30340;&#35805;&#65292;&#37027;&#20040;&#35748;&#20026;&#36825;&#36718;&#23601;&#22833;&#36133;&#20102;</span>
-<span class="org-comment-delimiter">// </span><span class="org-comment">&#22240;&#20026;&#36825;&#37324;&#25237;&#31080;&#20854;&#23454;&#26159;&#25237;&#32473;req.Term</span>
-<span class="org-comment-delimiter">// </span><span class="org-comment">&#22914;&#26524;&#36825;&#37324;&#30452;&#25509;&#26356;&#26032;&#20102;currentTerm&#30340;&#35805;&#65292;&#37027;&#20040;&#23601;&#20250;&#20986;&#29616;&#20004;&#20010;leader.</span>
-<span class="org-keyword">if</span> reply.Term &gt; rf.currentTerm {
-    rf.<span class="org-function-name">changeToFollower</span>(reply.Term, <span class="org-string">"electLeaderResponse"</span>)
+<pre class="src src-Go">valid := true
+rf.Lock()
+// 如果修改了currentTerm的话，那么认为这轮就失败了
+// 因为这里投票其实是投给req.Term
+// 如果这里直接更新了currentTerm的话，那么就会出现两个leader.
+if reply.Term &gt; rf.currentTerm {
+    rf.changeToFollower(reply.Term, "electLeaderResponse")
 }
-<span class="org-keyword">if</span> req.Term != rf.currentTerm {
-    valid = <span class="org-constant">false</span>
+if req.Term != rf.currentTerm {
+    valid = false
 }
-rf.<span class="org-function-name">Unlock</span>()
+rf.Unlock()
 
-<span class="org-comment-delimiter">// </span><span class="org-comment">get majority votes</span>
-<span class="org-keyword">if</span> valid &amp;&amp; reply.VoteGranted {
-    v := atomic.<span class="org-function-name">AddInt32</span>(&amp;votes, 1)
-    <span class="org-keyword">if</span> <span class="org-function-name">int</span>(v) == (<span class="org-builtin">len</span>(rf.peers)/2 + 1) {
-        rf.<span class="org-function-name">changeToLeader</span>()
+// get majority votes
+if valid &amp;&amp; reply.VoteGranted {
+    v := atomic.AddInt32(&amp;votes, 1)
+    if int(v) == (len(rf.peers)/2 + 1) {
+        rf.changeToLeader()
     }
 }
 </pre>
@@ -340,15 +340,15 @@ A: 首先实现request/response的String()方法，然后可以在处理过程�
 </p>
 
 <div class="org-src-container">
-<pre class="src src-go">trace := strings.<span class="org-type">Builder</span>{}
+<pre class="src src-Go">trace := strings.Builder{}
 
-<span class="org-keyword">defer</span> <span class="org-keyword">func</span>() {
-    <span class="org-function-name">DPrintf</span>(<span class="org-string">"X%d: AppendEntries:%v -&gt; %v %s"</span>, rf.me, req, reply, trace.<span class="org-function-name">String</span>())
+defer func() {
+    DPrintf("X%d: AppendEntries:%v -&gt; %v %s", rf.me, req, reply, trace.String())
 }()
 
-<span class="org-keyword">if</span> req.Term &lt; rf.currentTerm {
-    trace.<span class="org-function-name">WriteString</span>(<span class="org-string">"[ignore lower term]"</span>)
-    <span class="org-keyword">return</span>
+if req.Term &lt; rf.currentTerm {
+    trace.WriteString("[ignore lower term]")
+    return
 }
 </pre>
 </div>
@@ -388,41 +388,41 @@ A: 我在Lab3中实现的log compaction策略非常简单，我觉得有两个�
 </p>
 
 <div class="org-src-container">
-<pre class="src src-go">
-<span class="org-keyword">func</span> (kv *<span class="org-type">KVServer</span>) <span class="org-function-name">logCompactionWorker</span>() {
-    <span class="org-keyword">if</span> kv.maxraftstate == -1 {
-        <span class="org-keyword">return</span>
+<pre class="src src-Go">
+func (kv *KVServer) logCompactionWorker() {
+    if kv.maxraftstate == -1 {
+        return
     }
 
-    <span class="org-keyword">const</span> COMPACTION_RATIO = 4
-    <span class="org-keyword">const</span> CHECK_INTERVAL = 20
-    <span class="org-keyword">for</span> {
-        <span class="org-keyword">if</span> kv.<span class="org-function-name">killed</span>() {
-            <span class="org-keyword">break</span>
+    const COMPACTION_RATIO = 4
+    const CHECK_INTERVAL = 20
+    for {
+        if kv.killed() {
+            break
         }
-        kv.<span class="org-function-name">Lock</span>()
-        size := kv.persister.<span class="org-function-name">RaftStateSize</span>()
-        <span class="org-keyword">if</span> <span class="org-function-name">float64</span>(size) &lt; <span class="org-function-name">float64</span>(kv.maxraftstate)*COMPACTION_RATIO {
-            kv.moreLogsCond.<span class="org-function-name">Wait</span>()
-            kv.<span class="org-function-name">Unlock</span>()
-            <span class="org-keyword">continue</span>
+        kv.Lock()
+        size := kv.persister.RaftStateSize()
+        if float64(size) &lt; float64(kv.maxraftstate)*COMPACTION_RATIO {
+            kv.moreLogsCond.Wait()
+            kv.Unlock()
+            continue
         }
-        kv.<span class="org-function-name">Unlock</span>()
-        <span class="org-function-name">DPrintf</span>(<span class="org-string">"kv%d: make log compaction, current size = %d, threshold = %d"</span>, kv.me, size, kv.maxraftstate)
-        kv.<span class="org-function-name">doLogCompaction</span>()
-        <span class="org-function-name">SleepMills</span>(CHECK_INTERVAL)
+        kv.Unlock()
+        DPrintf("kv%d: make log compaction, current size = %d, threshold = %d", kv.me, size, kv.maxraftstate)
+        kv.doLogCompaction()
+        SleepMills(CHECK_INTERVAL)
     }
 }
 
-<span class="org-keyword">func</span> (kv *<span class="org-type">KVServer</span>) <span class="org-function-name">doLogCompaction</span>() {
-    <span class="org-comment-delimiter">// </span><span class="org-comment">log compaction &#21644; install snapshot &#36807;&#31243;&#35201;&#23545;&#24212;&#19978;</span>
-    <span class="org-comment-delimiter">// </span><span class="org-comment">&#36825;&#20010;&#36807;&#31243;&#20808;&#23545;kv&#21152;&#38145;&#65292;&#22312;&#23545;rf&#21152;&#38145;</span>
-    kv.<span class="org-function-name">Lock</span>()
-    <span class="org-keyword">defer</span> kv.<span class="org-function-name">Unlock</span>()
-    snapshot := kv.<span class="org-function-name">encodeSnapshot</span>()
+func (kv *KVServer) doLogCompaction() {
+    // log compaction 和 install snapshot 过程要对应上
+    // 这个过程先对kv加锁，在对rf加锁
+    kv.Lock()
+    defer kv.Unlock()
+    snapshot := kv.encodeSnapshot()
     applyIndex := kv.lastApplyIndex
-    <span class="org-comment-delimiter">// </span><span class="org-comment">&#21521;&#21069;&#20445;&#30041;&#20960;&#20010;log&#21487;&#33021;&#21487;&#20197;&#20943;&#23569;&#21516;&#27493;&#27425;&#25968;</span>
-    kv.rf.<span class="org-function-name">LogCompaction</span>(snapshot, applyIndex-10)
+    // 向前保留几个log可能可以减少同步次数
+    kv.rf.LogCompaction(snapshot, applyIndex-10)
 }
 </pre>
 </div>
@@ -443,19 +443,19 @@ A: Lab3简化了传输问题，snapshot数据一次RPC就可以完全传输完�
 </p>
 
 <div class="org-src-container">
-<pre class="src src-go"><span class="org-keyword">if</span> op == <span class="org-string">"install"</span> {
-    <span class="org-function-name">DPrintf</span>(<span class="org-string">"kv%d: install snapshot. rpcId=%d"</span>, kv.me, msg.RpcId)
-    data := msg.Command.([]<span class="org-type">byte</span>)
+<pre class="src src-Go">if op == "install" {
+    DPrintf("kv%d: install snapshot. rpcId=%d", kv.me, msg.RpcId)
+    data := msg.Command.([]byte)
     wait := msg.WaitChan
-    kv.<span class="org-function-name">doInstallSnapshot</span>(data)
-    wait &lt;- <span class="org-string">"ok"</span>
-    <span class="org-comment-delimiter">// </span><span class="org-comment">&#36825;&#37324;&#23433;&#35013;&#23436;&#25104;&#20102;snapshot&#20043;&#21518;</span>
-    <span class="org-comment-delimiter">// </span><span class="org-comment">&#26368;&#22909;&#22312;&#20570;&#19968;&#20010;snapshot. &#19981;&#28982;&#22914;&#26524;&#36825;&#20010;&#26102;&#20505;&#37325;&#21551;&#30340;&#35805;</span>
-    <span class="org-comment-delimiter">// </span><span class="org-comment">applyIndex&#20250;&#22238;&#28378;&#21040;&#20043;&#21069;&#30340;&#29366;&#24577;&#65292;&#32780;&#36825;&#20010;&#29366;&#24577;&#27809;&#26377;&#21150;&#27861;&#25509;&#30528;&#32487;&#32493;</span>
-    kv.<span class="org-function-name">doLogCompaction</span>()
+    kv.doInstallSnapshot(data)
+    wait &lt;- "ok"
+    // 这里安装完成了snapshot之后
+    // 最好在做一个snapshot. 不然如果这个时候重启的话
+    // applyIndex会回滚到之前的状态，而这个状态没有办法接着继续
+    kv.doLogCompaction()
 }
 </pre>
 </div>
 </div>
-<div id="content"><!-- DISQUS BEGIN --><div id="disqus_thread"></div><script>/***  RECOMMENDED CONFIGURATION VARIABLES: EDIT AND UNCOMMENT THE SECTION BELOW TO INSERT DYNAMIC VALUES FROM YOUR PLATFORM OR CMS.*  LEARN WHY DEFINING THESE VARIABLES IS IMPORTANT: https://disqus.com/admin/universalcode/#configuration-variables*/var disqus_config = function () {this.page.url = 'https://dirtysalt.github.io/html/raft.html';this.page.identifier = 'raft.html';};(function() {var d = document, s = d.createElement('script');s.src = 'https://dirlt.disqus.com/embed.js';s.setAttribute('data-timestamp', +new Date());(d.head || d.body).appendChild(s);})();</script><noscript>Please enable JavaScript to view the <a href="https://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript><!-- DISQUS END --></div></body>
+</body>
 </html>

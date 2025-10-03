@@ -13,11 +13,11 @@
 <div id="content" class="content">
 <h1 class="title">filter range实现优化</h1>
 <p>
-基本代码都来自于 [StarRocks](<a href="https://github.com/StarRocks/starrocks/blob/main/be/src/column/column_helper.h#L315">https://github.com/StarRocks/starrocks/blob/main/be/src/column/column_helper.h#L315</a>)
+基本代码都来自于 <a href="https://github.com/StarRocks/starrocks/blob/main/be/src/column/column_helper.h#L315">StarRocks</a>
 </p>
 
 <p>
-benchmark代码放在 [Github](<a href="https://github.com/dirtysalt/codes/blob/master/cc/sr-test/filter_range_perf.cpp">https://github.com/dirtysalt/codes/blob/master/cc/sr-test/filter_range_perf.cpp</a>)
+benchmark代码放在 <a href="https://github.com/dirtysalt/codes/blob/master/cc/sr-test/filter_range_perf.cpp">Github</a>
 </p>
 
 <p>
@@ -32,7 +32,7 @@ benchmark代码放在 [Github](<a href="https://github.com/dirtysalt/codes/blob/
 普通实现版本如下：
 </p>
 <div class="org-src-container">
-<pre class="src src-cpp"><span class="org-keyword">for</span> (<span class="org-keyword">auto</span> <span class="org-variable-name">i</span> = start_offset; i &lt; to; ++i) {
+<pre class="src src-C++"><span class="org-keyword">for</span> (<span class="org-keyword">auto</span> <span class="org-variable-name">i</span> = start_offset; i &lt; to; ++i) {
     <span class="org-keyword">if</span> (f_data[i]) {
         *(data + result_offset) = *(data + i);
         result_offset++;
@@ -59,11 +59,11 @@ benchmark代码放在 [Github](<a href="https://github.com/dirtysalt/codes/blob/
 </p>
 
 <div class="org-src-container">
-<pre class="src src-cpp">        <span class="org-keyword">if</span> (mask == 0) {
-            <span class="org-comment-delimiter">// </span><span class="org-comment">all no hit, pass</span>
-        } <span class="org-keyword">else</span> <span class="org-keyword">if</span> (mask == 0xffffffff) {
-            <span class="org-comment-delimiter">// </span><span class="org-comment">all hit, copy all</span>
-            memmove(data + result_offset, data + start_offset, kBatchNums * data_type_size);
+<pre class="src src-C++">        <span class="org-keyword">if</span> (mask == 0) {
+            <span class="org-comment-delimiter">// </span><span class="org-comment">all no hit, pass
+</span>        } <span class="org-keyword">else</span> <span class="org-keyword">if</span> (mask == 0xffffffff) {
+            <span class="org-comment-delimiter">// </span><span class="org-comment">all hit, copy all
+</span>            memmove(data + result_offset, data + start_offset, kBatchNums * data_type_size);
             result_offset += kBatchNums;
         } <span class="org-keyword">else</span> {
 <span class="org-preprocessor">#define</span> <span class="org-function-name">BITMASK_COPY</span>(<span class="org-variable-name">mask</span>)                                            \
@@ -89,7 +89,7 @@ benchmark代码放在 [Github](<a href="https://github.com/dirtysalt/codes/blob/
 </p>
 
 <div class="org-src-container">
-<pre class="src src-cpp"><span class="org-preprocessor">#define</span> <span class="org-function-name">BRANCHLESS_COPY</span>()                  \
+<pre class="src src-C++"><span class="org-preprocessor">#define</span> <span class="org-function-name">BRANCHLESS_COPY</span>()                  \
     {                                      \
         <span class="org-type">int</span> <span class="org-variable-name">j</span> = start_offset;              \
         <span class="org-keyword">for</span> (<span class="org-type">int</span> <span class="org-variable-name">i</span> = 0; i &lt; 32; i++) {     \
@@ -102,11 +102,11 @@ benchmark代码放在 [Github](<a href="https://github.com/dirtysalt/codes/blob/
 </div>
 
 <p>
-另外一个实现则需要CPU支持AVX512F特性，具体来说就是用到这个指令：`_mm512_mask_compress_epi32` 和 `_mm512_mask_compress_epi64`.  这两个指令可以支持32bit/64bit的压缩。如果需要支持epi8/epi16压缩的话，那么就需要AVX512_VBMI(icelake)特性，我看了下我们开发机器还不支持。
+另外一个实现则需要CPU支持AVX512F特性，具体来说就是用到这个指令： `_mm512_mask_compress_epi32` 和 `_mm512_mask_compress_epi64`.  这两个指令可以支持32bit/64bit的压缩。如果需要支持epi8/epi16压缩的话，那么就需要AVX512_VBMI(icelake)特性，我看了下我们开发机器还不支持。
 </p>
 
 <div class="org-src-container">
-<pre class="src src-cpp"><span class="org-preprocessor">#define</span> <span class="org-function-name">AVX512_COPY</span>(<span class="org-variable-name">SHIFT</span>, <span class="org-variable-name">MASK</span>, <span class="org-variable-name">WIDTH</span>)                                         \
+<pre class="src src-C++"><span class="org-preprocessor">#define</span> <span class="org-function-name">AVX512_COPY</span>(<span class="org-variable-name">SHIFT</span>, <span class="org-variable-name">MASK</span>, <span class="org-variable-name">WIDTH</span>)                                         \
     {                                                                           \
         <span class="org-keyword">auto</span> <span class="org-variable-name">m</span> = (mask &gt;&gt; SHIFT) &amp; MASK;                                        \
         <span class="org-keyword">if</span> (m) {                                                                \
@@ -125,7 +125,7 @@ benchmark代码放在 [Github](<a href="https://github.com/dirtysalt/codes/blob/
 </p>
 
 <div class="org-src-container">
-<pre class="src src-cpp"><span class="org-preprocessor">#define</span> <span class="org-function-name">AVX512_ASM_COPY</span>(<span class="org-variable-name">SHIFT</span>, <span class="org-variable-name">MASK</span>, <span class="org-variable-name">WIDTH</span>, <span class="org-variable-name">WIDTHX</span>)               \
+<pre class="src src-C++"><span class="org-preprocessor">#define</span> <span class="org-function-name">AVX512_ASM_COPY</span>(<span class="org-variable-name">SHIFT</span>, <span class="org-variable-name">MASK</span>, <span class="org-variable-name">WIDTH</span>, <span class="org-variable-name">WIDTHX</span>)               \
     {                                                             \
         <span class="org-keyword">auto</span> <span class="org-variable-name">m</span> = (mask &gt;&gt; SHIFT) &amp; MASK;                          \
         <span class="org-keyword">if</span> (m) {                                                  \
@@ -147,7 +147,7 @@ benchmark代码放在 [Github](<a href="https://github.com/dirtysalt/codes/blob/
 </div>
 
 <p>
-运行时CPU特性判断可以参考 [这里](<a href="https://gcc.gnu.org/onlinedocs/gcc/x86-Built-in-Functions.html">https://gcc.gnu.org/onlinedocs/gcc/x86-Built-in-Functions.html</a>) 的 `__builtin_cpu_supports` 函数（注意需要初始化调用 `__builtin_cpu_init`，不过我测试了如果不调用好像也没有问题）
+运行时CPU特性判断可以参考 <a href="https://gcc.gnu.org/onlinedocs/gcc/x86-Built-in-Functions.html">这里</a> 的 `__builtin_cpu_supports` 函数（注意需要初始化调用 `__builtin_cpu_init` ，不过我测试了如果不调用好像也没有问题）
 </p>
 
 <hr />
@@ -161,13 +161,13 @@ benchmark里面，我根据期望生成了不同的filter. 比如 `branchless/16
 </p>
 <ul class="org-ul">
 <li>拷贝8bit和16bit上其实性能差别不大，16bit在bitmask版本略微高些，但是branchless差别不大。</li>
-<li>branchless只有在 `bits = 8` 的情况下面比bitmask好一点，在 `bits = 16`的情况下面比bitmask好很多。</li>
+<li>branchless只有在 `bits = 8` 的情况下面比bitmask好一点，在 `bits = 16` 的情况下面比bitmask好很多。</li>
 <li>但是如果在这里增加一次判断的话，造成的额外开销会比较大。</li>
 </ul>
 
 
-<div id="org5da0eb5" class="figure">
-<p><img src="../images/filter-range-optimization-0.jpg" alt="filter-range-optimization-0.jpg" />
+<div id="org39cf22b" class="figure">
+<p><img src="../images/Pasted-Image-20231225105112.png" alt="Pasted-Image-20231225105112.png" />
 </p>
 </div>
 
@@ -181,16 +181,16 @@ benchmark里面，我根据期望生成了不同的filter. 比如 `branchless/16
 </ol>
 
 
-<div id="orgde8cc38" class="figure">
-<p><img src="../images/filter-range-optimization-1.jpg" alt="filter-range-optimization-1.jpg" />
+<div id="org477ad08" class="figure">
+<p><img src="../images/Pasted-Image-20231225105108.png" alt="Pasted-Image-20231225105108.png" />
 </p>
 </div>
 
 
-<div id="org1ac5309" class="figure">
-<p><img src="../images/filter-range-optimization-2.jpg" alt="filter-range-optimization-2.jpg" />
+<div id="org9bc5530" class="figure">
+<p><img src="../images/Pasted-Image-20231225105124.png" alt="Pasted-Image-20231225105124.png" />
 </p>
 </div>
 </div>
-<div id="content"><!-- DISQUS BEGIN --><div id="disqus_thread"></div><script>/***  RECOMMENDED CONFIGURATION VARIABLES: EDIT AND UNCOMMENT THE SECTION BELOW TO INSERT DYNAMIC VALUES FROM YOUR PLATFORM OR CMS.*  LEARN WHY DEFINING THESE VARIABLES IS IMPORTANT: https://disqus.com/admin/universalcode/#configuration-variables*/var disqus_config = function () {this.page.url = 'https://dirtysalt.github.io/html/filter-range-optimization.html';this.page.identifier = 'filter-range-optimization.html';};(function() {var d = document, s = d.createElement('script');s.src = 'https://dirlt.disqus.com/embed.js';s.setAttribute('data-timestamp', +new Date());(d.head || d.body).appendChild(s);})();</script><noscript>Please enable JavaScript to view the <a href="https://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript><!-- DISQUS END --></div></body>
+</body>
 </html>

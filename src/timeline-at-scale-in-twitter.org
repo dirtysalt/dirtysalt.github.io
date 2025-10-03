@@ -8,7 +8,7 @@ http://highscalability.com/blog/2013/7/8/the-architecture-twitter-uses-to-deal-w
 
 twitter timeline 整体架构如下图：
 
-[[../images/timeline-at-scale-in-twitter.png]]
+[[../images/Pasted-Image-20231225104537.png]]
 
 按照功能分成了很多services, 每个service由不同的service group来管理：Timeline Service, Tweet Service, User Service, Social Graph Service, 这些service可以说是见名知意。
 
@@ -55,13 +55,13 @@ tweet一旦写入queue之后就ack, 这个过程是同步行为。从queue到剩
 
 - user timeline
   - Immediately the fanout process occurs. Tweets that come in are placed into a massive Redis cluster. Each tweet is replicated 3 times on 3 different machines. At Twitter scale many machines fail a day. By replicating 3 times if a machine has a problem then they won’t have to recreate the timelines for all the timelines on that machine per datacenter.（Redis集群是3备份的，这样如果user timeline挂掉的话不用去重建）
-  - Fanout queries the social graph service that is based on [[https://github.com/twitter/flockdb][Flock]]. Flock maintains the follower and followings lists.（查询flock来了解social graph)
-  - The Redis cluster has a couple of terabytes of RAM.(Redis集群内存整体大小在TB级别）
-  - Pipelined 4k destinations at a time（每次写入4K个tweets，包括fanout)
+  - Fanout queries the social graph service that is based on [[https://github.com/twitter/flockdb][Flock]]. Flock maintains the follower and followings lists.(查询flock来了解social graph)
+  - The Redis cluster has a couple of terabytes of RAM.(Redis集群内存整体大小在TB级别)
+  - Pipelined 4k destinations at a time(每次写入4K个tweets，包括fanout)
   - Native list structure are used inside Redis.（Redis就是使用列表结构）
   - Your home timeline sits in a Redis cluster and is 800 entries long. If you page back long enough you’ll hit the limit. RAM is the limiting resource determining how long your current tweet set can be.（每个用户最多保持800 entries）
   - What is being stored is the tweet ID of the generated tweet, the user ID of the originator of the tweet, and 4 bytes of bits used to mark if it’s a retweet or a reply or something else.（Redis存储结构上非常精简，user id + tweet id + 4bytes）
-  - Every active user is stored in RAM to keep latencies down. Active user is someone who has logged into Twitter within 30 days, which can change depending on cache capacity or Twitter’s usage. If you fall out of the Redis cluster then you go through a process called reconstruction. （只是为acitve user缓存timeline，如果没有在cache里面的话，那么就需要使用计算资源来重建这个user timeline)
+  - Every active user is stored in RAM to keep latencies down. Active user is someone who has logged into Twitter within 30 days, which can change depending on cache capacity or Twitter’s usage. If you fall out of the Redis cluster then you go through a process called reconstruction. (只是为acitve user缓存timeline，如果没有在cache里面的话，那么就需要使用计算资源来重建这个user timeline)
 
 - home timeline
   - Only your home timelines hit disk.（对于home timeline会动用缓存而是直接访问数据库，这个上面应该也有一定的缓存。home timeline会存储3份，哪份响应快就使用哪份）
@@ -70,7 +70,7 @@ tweet一旦写入queue之后就ack, 这个过程是同步行为。从queue到剩
   - The tradeoff is fanout takes a little longer, but the read process is fast. About 2 seconds from a cold cache to the browser. For an API call it’s about 400 msec.
 
 - id to tweet
-  - Since the timeline only contains tweet IDs they must “hydrate” those tweets, that is find the text of the tweets. Given an array of IDs they can do a multiget and get the tweets in parallel from T-bird.(T-bird是id到tweet的数据库）
+  - Since the timeline only contains tweet IDs they must “hydrate” those tweets, that is find the text of the tweets. Given an array of IDs they can do a multiget and get the tweets in parallel from T-bird.(T-bird是id到tweet的数据库)
   - Gizmoduck is the user service and Tweetypie is the tweet object service. Each service has their own caches. The user cache is a memcache cluster that has the entire user base in cache. Tweetypie has about the last month and half of tweets stored in its memcache cluster. These are exposed to internal customers.（Gizmoduck是上层服务，Tweetypie则是映射服务，之间有memcache做的缓存集群，差不多有最近1个半月的tweets放在了memcache集群里面）
   - Some read time filtering happens at the edge. For example, filtering out Nazi content in France, so there’s read time stripping of the content before it is sent out.（实时关键词过滤系统）
 
@@ -94,7 +94,7 @@ high fanout是因为名人产生的，他们有很多的粉丝。这个问题的
 Problem is for large cardinality graphs. @ladygaga has 31 million followers. @katyperry has 28 million followers. @justinbieber has 28 million followers. @barackobama has 23 million followers.
 #+END_QUOTE
 
-[[../images/timeline-at-scale-ts.png]]
+[[../images/Pasted-Image-20231225103634.png]]
 
 根据上面一节的分析，Search/Pull可以认为是逆操作，所以对于high fanout tweet, 可以使用search不是pull模型。这样taylor swift发推就不是问题了。
 
@@ -105,7 +105,7 @@ Trying to figure out how to merge the read and write paths. Not fanning out the 
 -----
 Monitoring
 
-- If you have 1 million followers it takes a couple of seconds to fanout all the tweets. （1M粉丝需要几秒钟fanout tweet)
+- If you have 1 million followers it takes a couple of seconds to fanout all the tweets. (1M粉丝需要几秒钟fanout tweet)
 - Tweet input statistics: 400m tweets per day; 5K/sec daily average; 7K/sec daily peak; >12K/sec during large events.
 - Timeline delivery statistics: 30b deliveries / day (~21m / min); 3.5 seconds @ p50 (50th percentile) to deliver to 1m; 300k deliveries /sec; @ p99 it could take up to 5 minutes
 - A system called VIZ monitors every cluster. Median request time to the Timeline Service to get data out of Scala cluster is 5msec. @ p99 it’s 100msec. And @ p99.9 is where they hit disk, so it takes a couple hundred of milliseconds.

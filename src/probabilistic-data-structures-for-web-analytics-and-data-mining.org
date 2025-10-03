@@ -4,7 +4,7 @@ http://highlyscalable.wordpress.com/2012/05/01/probabilistic-structures-web-anal
 ** Introduction
 Let us start with a simple example that illustrates capabilities of probabilistic data structures:
 
-[[../images/probabilistic-data-structures-overview.png]]
+[[../images/Pasted-Image-20231225104436.png]]
 
 原始数据是10m个32位整数，但是去重之后个数只有1m个，占用40MB存储空间。在这个原始数据上做下面这些查询：
 - How many distinct elements are in the data set (i.e. what is the cardinality of the data set)? （去重元素个数）
@@ -35,7 +35,7 @@ Let’s say that the ratio of a number of distinct items in the data set to m is
 
 The following table contains key formulas that allow one to estimate cardinality as a function of the mask weight and choose parameter m by required bias or standard error of the estimation:
 
-[[../images/linear-counting-analysis.png]]
+[[../images/Pasted-Image-20231225103636.png]]
 
 The rule of thumb is that load factor of 10 can be used for large data sets even if very precise estimation is required, i.e. memory consumption is about 0.1 bits per unique value. This is more than two orders of magnitude more efficient than the explicit indexing of 32- or 64-bit identifiers, but memory consumption grows linearly as a function of the expected cardinality (n), i.e. capacity of counter.（load factor在10左右可以获得比较高的精度，在加上1 byte = 8 bits, 空间大小可以节省大约两个数量级）
 
@@ -44,14 +44,14 @@ The rule of thumb is that load factor of 10 can be used for large data sets even
 
 The following table provides the estimation formula and equations that can be used to determine numerical parameters of the Loglog Counter:
 
-[[../images/loglog-counting-analysis.png]]
+[[../images/Pasted-Image-20231225103948.png]]
 
 These formulas are very impressive. One can see that a number of buckets is relatively small for most of the practically interesting values of the standard error of the estimation. For example, 1024 estimators provide a standard error of 4%. At the same time, the length of the estimator is a very slow growing function of the capacity, 5-bit buckets are enough for cardinalities up to 10^11, 8-bit buckets (etype is byte) can support practically unlimited cardinalities. This means that less than 1KB of auxiliary memory may be enough to process gigabytes of data in the real life applications! （bucket数量的增长相对与原始数据量的增长是非常缓慢的）
 
 ** Frequency Estimation: Count-Min Sketch
 The basic idea of Count-Min Sketch is quite simple and somehow similar to Linear Counting. Count-Min sketch is simply a two-dimensional array (d x w) of integer counters. When a value arrives, it is mapped to one position at each of d rows using d different and preferably independent hash functions. Counters on each position are incremented. This process is shown in the figure below:
 
-[[../images/count-min-sketch-overview.png]]
+[[../images/Pasted-Image-20231225104624.png]]
 
 It is clear that if sketch is large in comparison with the cardinality of the data set, almost each value will get an independent counter and estimation will precise. Nevertheless, this case is absolutely impractical – it is much better to simply maintain a dedicated counter for each value by using plain array or hash table. To cope with this issue, Count-Min algorithm estimates frequency of the given value as a minimum of the corresponding counters in each row because the estimation error is always positive (each occurrence of a value always increases its counters, but collisions can cause additional increments). A practical implementation of Count-Min sketch is provided in the following code snippet.
 
@@ -90,18 +90,18 @@ class CountMinSketch {
 
 Dependency between the sketch size and accuracy is shown in the table below. It is worth noting that width of the sketch limits the magnitude of the error and height (also called depth) controls the probability that estimation breaks through this limit:
 
-[[../images/count-min-sketch-analysis.png]]
+[[../images/Pasted-Image-20231225103818.png]]
 
 -----
 count-min sketch这种算法只有在dataset本身比较skewed的情况下才能够获得比较好的结果，也就是说如果d x w比较小的话，那么对于skewed dataset是比较合适的。
 
 Two experiments were done with the Count-Min sketch of size 3×64, i.e. 192 counters total. In the first case the sketch was populated with moderately skewed data set of 10k elements, about 8500 distinct values (element frequencies follow Zipfian distribution which models, for example, distribution of words in natural texts). The real histogram (for most frequent elements, it has a long flat tail in the right that was truncated in this figure) and the histogram recovered from the sketch are shown in the figure below:
 
-[[../images/count-min-sketch-unskewed-dataset-experiment.png]]
+[[../images/Pasted-Image-20231225103439.png]]
 
 In the second case the sketch was populated with a relatively highly skewed data set of 80k elements, also about 8500 distinct values. The real and estimated histograms are presented in the figure below:
 
-[[../images/count-min-sketch-skewed-dataset-experiment.png]]
+[[../images/Pasted-Image-20231225104702.png]]
 
 One can see that result is more accurate, at least for the most frequent items. In general, applicability of Count-Min sketches is not a straightforward question and the best thing that can be recommended is experimental evaluation of each particular case.
 
@@ -128,7 +128,7 @@ class CountMeanMinSketch {
 
 This enhancement can significantly improve accuracy of the Count-Min structure. For example, compare the histograms below with the first histograms for Count-Min sketch (both techniques used a sketch of size 3×64 and 8500 elements were added to it):
 
-[[../images/count-mean-min-sketch-unskewed-dataset-experiment.png]]
+[[../images/Pasted-Image-20231225104330.png]]
 
 ** Heavy Hitters: Count-Min Sketch
 Count-Min sketches are applicable to the following problem: Find all elements in the data set with the frequencies greater than k percent of the total number of elements in the data set.（获取频率大于k%的元素总数，使用heap作为辅助） The algorithm is straightforward:（
@@ -176,7 +176,7 @@ Nevertheless, it is possible to overcome these problems using multiple Count-Min
 - 172  = 0b10101100
 如果我们选取的前缀是 0b0111 的话，那么在这个sketch上面查询这么几个数值然后叠加：0b0111 0b1000 0b1001 0b1010. 当然这种方式会存在很大的偏差，如果想减少偏差的话可以取更长的前缀。另外可以取动态前缀比如 0b0111 0b10000 0b10001 0b10010 0b10011 0b101000 0b101011. 如果前缀是32的话，那么就相当于退化到一开始的方式了。
 
-[[../images/array-of-count-min-sketch.png]]
+[[../images/Pasted-Image-20231225103828.png]]
 
 Any range query can be reduced to a number of queries to the sketches of different level, as it shown in right part of the picture above. This approach (called dyadic ranges) allows one to reduce the number of computations and increase accuracy. An obvious optimization of this schema is to replace sketches by exact counters at the lowest levels where a number of buckets is small.
 
@@ -187,6 +187,6 @@ Bloom Filter is probably the most famous and widely used probabilistic data stru
 
 The following table contains formulas that allow one to calculate parameters of the Bloom filter as functions of error probability and capacity:
 
-[[../images/bloom-filter-analysis.png]]
+[[../images/Pasted-Image-20231225103400.png]]
 
 Bloom filter is widely used as a preliminary probabilistic test that allows one to reduce a number of exact checks. The following case study shows how the Bloom filter can be applied to the cardinality estimation.

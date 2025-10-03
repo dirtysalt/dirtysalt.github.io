@@ -1,0 +1,297 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>SIMD prefix sum实现</title>
+<meta name="author" content="dirtysalt" />
+<meta name="generator" content="Org Mode" />
+<link rel="shortcut icon" href="/themes/favicon.ico" /><link rel="stylesheet" type="text/css" href="/themes/simple.css"/></head>
+<body>
+<div id="content" class="content">
+<h1 class="title">SIMD prefix sum实现</h1>
+<p>
+最近实现parquet data page v2里面几个encoding <a href="https://parquet.apache.org/docs/file-format/data-pages/encodings/">https://parquet.apache.org/docs/file-format/data-pages/encodings/</a>, 其中delta binary packed encoding需要实现prefix sum.
+</p>
+
+<p>
+直觉上觉得这个东西应该是有SIMD的实现，但是不知道怎么写，后来找到了两个还不错的源：
+</p>
+<ul class="org-ul">
+<li><a href="https://en.algorithmica.org/hpc/algorithms/prefix/">Prefix Sum with SIMD - Algorithmica</a></li>
+<li><a href="https://www.adms-conf.org/2020-camera-ready/ADMS20_05.pdf">https://www.adms-conf.org/2020-camera-ready/ADMS20_05.pdf</a> (parallel prefix with simd)</li>
+</ul>
+
+<p>
+两个link里面分别给出了avx2和avx512的实现，按照avx512的实现我仿照写了一个256bit的实现，以为这样写avx2会更加简单高效，后来查指令表格发现用到了avx512f+avx512L =D.
+</p>
+
+<p>
+几个实现我放到了 [[Enhancement] add parquet DELTA_BINARY_PACKED encoding benchmark by dirtysalt · Pull Request #58470 · StarRocks/starrocks](<a href="https://github.com/StarRocks/starrocks/pull/58470">https://github.com/StarRocks/starrocks/pull/58470</a>) 这个PR里面，我这里也留个代码备份。
+</p>
+
+<p>
+浏览代码的时候发现gcc对x86 arch支持multi version static function，可以针对不同的架构做不同的实现，然后可以自动进行runtime dispatch. 此外如果使用类似 `__attribute__((target("avx512f,avx512vl")))` 这样的pragma的话，那么编译选项里面不用编写 "-mavx512f -mavx512vl"的话也是可以进行编译的。只不过头文件需要的话需要把所有的intrinsic header files都包含进来，比如下面这样
+</p>
+
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-comment-delimiter">// </span><span class="org-comment">Only x86 support function multiversion.
+</span><span class="org-comment-delimiter">// </span><span class="org-comment">https://gcc.gnu.org/wiki/FunctionMultiVersioning
+</span><span class="org-comment-delimiter">// </span><span class="org-comment">TODO(GoHalo) Support aarch64 platform.
+</span><span class="org-preprocessor">#if</span> <span class="org-preprocessor">defined</span>(__GNUC__) &amp;&amp; <span class="org-preprocessor">defined</span>(__x86_64__)
+<span class="org-preprocessor">#include</span> <span class="org-string">&lt;x86intrin.h&gt;</span>
+
+<span class="org-preprocessor">#define</span> <span class="org-function-name">MFV_IMPL</span>(<span class="org-variable-name">IMPL</span>, <span class="org-variable-name">ATTR</span>)                                                               \
+    _Pragma(<span class="org-string">"GCC diagnostic push"</span>) _Pragma(<span class="org-string">"GCC diagnostic ignored \"-Wunused-function\""</span>) \
+            ATTR <span class="org-keyword">static</span> <span class="org-keyword">inline</span> <span class="org-type">IMPL</span> <span class="org-variable-name">_Pragma</span>(<span class="org-string">"GCC diagnostic pop"</span>)
+
+<span class="org-preprocessor">#define</span> <span class="org-function-name">MFV_SSE42</span>(<span class="org-variable-name">IMPL</span>) MFV_IMPL(IMPL, <span class="org-keyword">__attribute__</span>((target(<span class="org-string">"sse4.2"</span>))))
+<span class="org-preprocessor">#define</span> <span class="org-function-name">MFV_AVX2</span>(<span class="org-variable-name">IMPL</span>) MFV_IMPL(IMPL, <span class="org-keyword">__attribute__</span>((target(<span class="org-string">"avx2"</span>))))
+<span class="org-preprocessor">#define</span> <span class="org-function-name">MFV_AVX512</span>(<span class="org-variable-name">IMPL</span>) MFV_IMPL(IMPL, <span class="org-keyword">__attribute__</span>((target(<span class="org-string">"avx512f,avx512bw"</span>))))
+<span class="org-preprocessor">#define</span> <span class="org-function-name">MFV_DEFAULT</span>(<span class="org-variable-name">IMPL</span>) MFV_IMPL(IMPL, <span class="org-keyword">__attribute__</span>((target(<span class="org-string">"default"</span>))))
+
+<span class="org-preprocessor">#else</span>
+
+<span class="org-preprocessor">#define</span> <span class="org-function-name">MFV_SSE42</span>(<span class="org-variable-name">IMPL</span>)
+<span class="org-preprocessor">#define</span> <span class="org-function-name">MFV_AVX2</span>(<span class="org-variable-name">IMPL</span>)
+<span class="org-preprocessor">#define</span> <span class="org-function-name">MFV_AVX512</span>(<span class="org-variable-name">IMPL</span>)
+<span class="org-preprocessor">#define</span> <span class="org-function-name">MFV_DEFAULT</span>(<span class="org-variable-name">IMPL</span>) IMPL
+
+<span class="org-preprocessor">#endif</span>
+</pre>
+</div>
+
+<p>
+然后我对这几个实现做了下benchmark，做的比较简单，都是在固定大小(4096)个int32数组上做测试：
+</p>
+<ul class="org-ul">
+<li>avx512 505ns</li>
+<li>avx2 973ns</li>
+<li>avx2x (实际使用了avx512f+vl) 804ns</li>
+<li>native (+prefetch) 1671ns</li>
+</ul>
+
+<p>
+我的直觉是如果数组比较小的话，可能差距没有这么大。如果是数组比较大的话,avx512&gt;avx2x&gt;avx2.因为那个avx2实现需要有2 passes, 可能cache locality不是特别好。
+</p>
+
+<p>
+链接里面给出了解决方法，就是针对一个Block做2 passes, 感觉这样对cache会更好。
+</p>
+
+<pre class="example" id="org0fed2b3">
+---------------------------------------------------------------------------
+Benchmark                                 Time             CPU   Iterations
+---------------------------------------------------------------------------
+BM_int32_avx512_prefix_sum/4096         505 ns          505 ns      1387154
+BM_int32_avx512_prefix_sum/8192        1017 ns         1017 ns       688849
+BM_int32_avx512_prefix_sum/16384       2336 ns         2335 ns       299731
+BM_int32_avx512_prefix_sum/32768       4665 ns         4665 ns       149991
+BM_int32_avx2_prefix_sum/4096           973 ns          973 ns       719452
+BM_int32_avx2_prefix_sum/8192          1934 ns         1934 ns       361978
+BM_int32_avx2_prefix_sum/16384         4204 ns         4204 ns       166237
+BM_int32_avx2_prefix_sum/32768         8399 ns         8398 ns        83391
+BM_int32_avx2x_prefix_sum/4096          804 ns          803 ns       871364
+BM_int32_avx2x_prefix_sum/8192         1607 ns         1607 ns       435556
+BM_int32_avx2x_prefix_sum/16384        3208 ns         3207 ns       218231
+BM_int32_avx2x_prefix_sum/32768        6411 ns         6411 ns       109205
+BM_int32_native_prefix_sum/4096        1671 ns         1670 ns       419114
+BM_int32_native_prefix_sum/8192        3340 ns         3339 ns       209865
+BM_int32_native_prefix_sum/16384       6684 ns         6683 ns       104963
+BM_int32_native_prefix_sum/32768      13336 ns        13334 ns        52479
+BM_int64_avx512_prefix_sum/4096         980 ns          980 ns       712131
+BM_int64_avx512_prefix_sum/8192        1942 ns         1942 ns       360513
+BM_int64_avx512_prefix_sum/16384       3882 ns         3881 ns       180216
+BM_int64_avx512_prefix_sum/32768       7760 ns         7759 ns        90254
+BM_int64_native_prefix_sum/4096        1671 ns         1671 ns       418874
+BM_int64_native_prefix_sum/8192        3462 ns         3461 ns       202279
+BM_int64_native_prefix_sum/16384       6910 ns         6909 ns       101323
+BM_int64_native_prefix_sum/32768      13805 ns        13804 ns        50588
+</pre>
+
+
+<hr />
+
+<p>
+下面是avx2的实现代码
+</p>
+
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-comment-delimiter">// </span><span class="org-comment">=========================
+</span><span class="org-comment-delimiter">// </span><span class="org-comment">reference: https://en.algorithmica.org/hpc/algorithms/prefix/
+</span><span class="org-comment-delimiter">// </span><span class="org-comment">int32 / uint32_t version
+</span><span class="org-keyword">__attribute__</span>((target(<span class="org-string">"avx2"</span>))) <span class="org-keyword">static</span> <span class="org-keyword">inline</span> <span class="org-type">void</span> <span class="org-function-name">delta_decode_chain_int32_avx2</span>(<span class="org-type">int32_t</span>* <span class="org-variable-name">buf</span>, <span class="org-type">int</span> <span class="org-variable-name">n</span>, <span class="org-type">int32_t</span> <span class="org-variable-name">min_delta</span>,
+                                                                                 <span class="org-type">int32_t</span>&amp; <span class="org-variable-name">last_value</span>) {
+    <span class="org-keyword">using</span> <span class="org-type">v4i</span> = __m128i;
+    <span class="org-keyword">using</span> <span class="org-type">v8i</span> = __m256i;
+
+    <span class="org-comment-delimiter">// </span><span class="org-comment">avx2 instructions.
+</span>    <span class="org-keyword">const</span> <span class="org-type">v8i</span> <span class="org-variable-name">v_min_delta</span> = _mm256_set1_epi32(min_delta);
+    <span class="org-keyword">auto</span> <span class="org-variable-name">prefix</span> = [&amp;](<span class="org-type">int32_t</span>* <span class="org-variable-name">p</span>) {
+        <span class="org-type">v8i</span> <span class="org-variable-name">x</span> = _mm256_loadu_si256((<span class="org-type">v8i</span>*)p);
+        x = _mm256_add_epi32(x, v_min_delta);
+        x = _mm256_add_epi32(x, _mm256_slli_si256(x, 4));
+        x = _mm256_add_epi32(x, _mm256_slli_si256(x, 8));
+        _mm256_storeu_si256((<span class="org-type">v8i</span>*)p, x);
+    };
+
+    <span class="org-comment-delimiter">// </span><span class="org-comment">sse2 instructions.
+</span>    <span class="org-keyword">auto</span> <span class="org-variable-name">accumulate</span> = [](<span class="org-type">int32_t</span>* <span class="org-variable-name">p</span>, <span class="org-type">v4i</span> <span class="org-variable-name">s</span>) {
+        <span class="org-type">v4i</span> <span class="org-variable-name">x</span> = _mm_loadu_si128((<span class="org-type">v4i</span>*)p);
+        x = _mm_add_epi32(s, x);
+        _mm_storeu_si128((<span class="org-type">v4i</span>*)p, x);
+        <span class="org-keyword">return</span> _mm_shuffle_epi32(x, _MM_SHUFFLE(3, 3, 3, 3));
+    };
+
+    <span class="org-type">int</span> <span class="org-variable-name">sz</span> = (n / 8) * 8;
+    <span class="org-keyword">if</span> (sz &gt; 0) {
+        <span class="org-comment-delimiter">// </span><span class="org-comment">two passes, don't mixed use avx2 and sse2.
+</span>        <span class="org-keyword">for</span> (<span class="org-type">int</span> <span class="org-variable-name">i</span> = 0; i &lt; sz; i += 8) {
+            prefix(buf + i);
+        }
+        <span class="org-type">v4i</span> <span class="org-variable-name">s</span> = _mm_set1_epi32(last_value);
+        <span class="org-keyword">for</span> (<span class="org-type">int</span> <span class="org-variable-name">i</span> = 0; i &lt; sz; i += 4) {
+            s = accumulate(buf + i, s);
+        }
+        <span class="org-comment-delimiter">// </span><span class="org-comment">any index is ok.
+</span>        last_value = _mm_extract_epi32(s, 0);
+    }
+
+    <span class="org-keyword">for</span> (<span class="org-type">int</span> <span class="org-variable-name">i</span> = sz; i &lt; n; i++) {
+        buf[i] += last_value + min_delta;
+        last_value = buf[i];
+    }
+}
+
+</pre>
+</div>
+
+<p>
+下面这个是avx512的实现代码
+</p>
+
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-keyword">__attribute__</span>((target(<span class="org-string">"avx512f"</span>))) <span class="org-keyword">static</span> <span class="org-keyword">inline</span> <span class="org-type">__m512i</span> <span class="org-function-name">prefix_and_accumulate_int32_avx512</span>(<span class="org-type">int32_t</span>* <span class="org-variable-name">p</span>, <span class="org-type">__m512i</span> <span class="org-variable-name">s</span>,
+                                                                                            <span class="org-keyword">const</span> <span class="org-type">__m512i</span>&amp; <span class="org-variable-name">v_min_delta</span>,
+                                                                                            <span class="org-keyword">const</span> <span class="org-type">__m512i</span>&amp; <span class="org-variable-name">v_zero</span>,
+                                                                                            <span class="org-keyword">const</span> <span class="org-type">__m512i</span>&amp; <span class="org-variable-name">v_perm15</span>) {
+    <span class="org-comment-delimiter">// </span><span class="org-comment">prefix
+</span>    <span class="org-type">__m512i</span> <span class="org-variable-name">x</span> = _mm512_loadu_si512(p);
+    x = _mm512_add_epi32(x, v_min_delta);
+    x = _mm512_add_epi32(x, _mm512_alignr_epi32(x, v_zero, 16 - 1));
+    x = _mm512_add_epi32(x, _mm512_alignr_epi32(x, v_zero, 16 - 2));
+    x = _mm512_add_epi32(x, _mm512_alignr_epi32(x, v_zero, 16 - 4));
+    x = _mm512_add_epi32(x, _mm512_alignr_epi32(x, v_zero, 16 - 8));
+    <span class="org-comment-delimiter">// </span><span class="org-comment">accumulate
+</span>    x = _mm512_add_epi32(s, x);
+    _mm512_storeu_si512((<span class="org-type">__m512i</span>*)p, x);
+    <span class="org-comment-delimiter">// </span><span class="org-comment">return last value.
+</span>    <span class="org-keyword">return</span> _mm512_permutexvar_epi32(v_perm15, x);
+};
+
+<span class="org-comment-delimiter">// </span><span class="org-comment">reference: https://www.adms-conf.org/2020-camera-ready/ADMS20_05.pdf
+</span><span class="org-keyword">__attribute__</span>((target(<span class="org-string">"avx512f"</span>))) <span class="org-keyword">static</span> <span class="org-keyword">inline</span> <span class="org-type">void</span> <span class="org-function-name">delta_decode_chain_int32_avx512</span>(<span class="org-type">int32_t</span>* <span class="org-variable-name">buf</span>, <span class="org-type">int</span> <span class="org-variable-name">n</span>,
+                                                                                      <span class="org-type">int32_t</span> <span class="org-variable-name">min_delta</span>,
+                                                                                      <span class="org-type">int32_t</span>&amp; <span class="org-variable-name">last_value</span>) {
+    <span class="org-keyword">using</span> <span class="org-type">v4i</span> = __m128i;
+    <span class="org-keyword">using</span> <span class="org-type">v8i</span> = __m256i;
+    <span class="org-keyword">using</span> <span class="org-type">v16i</span> = __m512i;
+
+    <span class="org-comment-delimiter">// </span><span class="org-comment">avx512 instructions.
+</span>    <span class="org-keyword">const</span> <span class="org-type">v16i</span> <span class="org-variable-name">v_min_delta</span> = _mm512_set1_epi32(min_delta);
+    <span class="org-keyword">const</span> <span class="org-type">v16i</span> <span class="org-variable-name">v_zero</span> = _mm512_setzero_si512();
+    <span class="org-keyword">const</span> <span class="org-type">v16i</span> <span class="org-variable-name">v_perm15</span> = _mm512_set1_epi32(15);
+    <span class="org-comment-delimiter">// </span><span class="org-comment">auto prefix = [&amp;](int32_t* p) {
+</span>    <span class="org-comment-delimiter">//     </span><span class="org-comment">v16i x = _mm512_loadu_si512((v8i*)p);
+</span>    <span class="org-comment-delimiter">//     </span><span class="org-comment">x = _mm512_add_epi32(x, v_min_delta);
+</span>    <span class="org-comment-delimiter">//     </span><span class="org-comment">x = _mm512_add_epi32(x, _mm512_alignr_epi32(x, v_zero, 16 - 1));
+</span>    <span class="org-comment-delimiter">//     </span><span class="org-comment">x = _mm512_add_epi32(x, _mm512_alignr_epi32(x, v_zero, 16 - 2));
+</span>    <span class="org-comment-delimiter">//     </span><span class="org-comment">x = _mm512_add_epi32(x, _mm512_alignr_epi32(x, v_zero, 16 - 4));
+</span>    <span class="org-comment-delimiter">//     </span><span class="org-comment">x = _mm512_add_epi32(x, _mm512_alignr_epi32(x, v_zero, 16 - 8));
+</span>    <span class="org-comment-delimiter">//     </span><span class="org-comment">_mm512_storeu_si512((v16i*)p, x);
+</span>    <span class="org-comment-delimiter">// </span><span class="org-comment">};
+</span>
+    <span class="org-comment-delimiter">// </span><span class="org-comment">auto accumulate = [&amp;](int32_t* p, v16i s) {
+</span>    <span class="org-comment-delimiter">//     </span><span class="org-comment">v16i x = _mm512_loadu_si512((v16i*)p);
+</span>    <span class="org-comment-delimiter">//     </span><span class="org-comment">x = _mm512_add_epi32(s, x);
+</span>    <span class="org-comment-delimiter">//     </span><span class="org-comment">_mm512_storeu_si512((v16i*)p, x);
+</span>    <span class="org-comment-delimiter">//     </span><span class="org-comment">return _mm512_permutexvar_epi32(v_perm15, x);
+</span>    <span class="org-comment-delimiter">// </span><span class="org-comment">};
+</span>
+    <span class="org-type">int</span> <span class="org-variable-name">sz</span> = (n / 16) * 16;
+    <span class="org-keyword">if</span> (sz &gt; 0) {
+        <span class="org-comment-delimiter">// </span><span class="org-comment">for (int i = 0; i &lt; sz; i += 16) {
+</span>        <span class="org-comment-delimiter">//     </span><span class="org-comment">prefix(buf + i);
+</span>        <span class="org-comment-delimiter">// </span><span class="org-comment">}
+</span>        <span class="org-comment-delimiter">// </span><span class="org-comment">v16i s = _mm512_set1_epi32(last_value);
+</span>        <span class="org-comment-delimiter">// </span><span class="org-comment">for (int i = 0; i &lt; sz; i += 16) {
+</span>        <span class="org-comment-delimiter">//     </span><span class="org-comment">s = accumulate(buf + i, s);
+</span>        <span class="org-comment-delimiter">// </span><span class="org-comment">}
+</span>
+        <span class="org-type">v16i</span> <span class="org-variable-name">s</span> = _mm512_set1_epi32(last_value);
+        <span class="org-keyword">for</span> (<span class="org-type">int</span> <span class="org-variable-name">i</span> = 0; i &lt; sz; i += 16) {
+            s = prefix_and_accumulate_int32_avx512(buf + i, s, v_min_delta, v_zero, v_perm15);
+        }
+        <span class="org-type">v4i</span> <span class="org-variable-name">s2</span> = _mm512_castsi512_si128(s);
+        last_value = _mm_extract_epi32(s2, 0);
+    }
+
+    <span class="org-keyword">for</span> (<span class="org-type">int</span> <span class="org-variable-name">i</span> = sz; i &lt; n; i++) {
+        buf[i] += last_value + min_delta;
+        last_value = buf[i];
+    }
+}
+</pre>
+</div>
+
+<p>
+然后这个是我以为可以运行在avx2, 但是实际上使用到了avx512f+avx512l的代码实现
+</p>
+
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-comment-delimiter">// </span><span class="org-comment">Though we handle 256bit as a unit, we still use some instructions of avx512f + avx512vl.
+</span><span class="org-keyword">__attribute__</span>((target(<span class="org-string">"avx512f,avx512vl"</span>))) <span class="org-keyword">static</span> <span class="org-keyword">inline</span> <span class="org-type">__m256i</span> <span class="org-function-name">prefix_and_accumulate_int32_avx2</span>(
+        <span class="org-type">int32_t</span>* <span class="org-variable-name">p</span>, <span class="org-type">__m256i</span> <span class="org-variable-name">s</span>, <span class="org-keyword">const</span> <span class="org-type">__m256i</span>&amp; <span class="org-variable-name">v_min_delta</span>, <span class="org-keyword">const</span> <span class="org-type">__m256i</span>&amp; <span class="org-variable-name">v_zero</span>, <span class="org-keyword">const</span> <span class="org-type">__m256i</span>&amp; <span class="org-variable-name">v_perm7</span>) {
+    <span class="org-type">__m256i</span> <span class="org-variable-name">x</span> = _mm256_loadu_si256((<span class="org-type">__m256i</span>*)p);
+    x = _mm256_add_epi32(x, v_min_delta);
+    x = _mm256_add_epi32(x, _mm256_alignr_epi32(x, v_zero, 8 - 1));
+    x = _mm256_add_epi32(x, _mm256_alignr_epi32(x, v_zero, 8 - 2));
+    x = _mm256_add_epi32(x, _mm256_alignr_epi32(x, v_zero, 8 - 4));
+    <span class="org-comment-delimiter">// </span><span class="org-comment">accumulate
+</span>    x = _mm256_add_epi32(s, x);
+    _mm256_storeu_si256((<span class="org-type">__m256i</span>*)p, x);
+    <span class="org-comment-delimiter">// </span><span class="org-comment">return last value.
+</span>    <span class="org-keyword">return</span> _mm256_permutevar8x32_epi32(x, v_perm7);
+}
+
+<span class="org-keyword">__attribute__</span>((target(<span class="org-string">"avx2,avx512f,avx512vl"</span>))) <span class="org-keyword">static</span> <span class="org-keyword">inline</span> <span class="org-type">void</span> <span class="org-function-name">delta_decode_chain_int32_avx2x</span>(
+        <span class="org-type">int32_t</span>* <span class="org-variable-name">buf</span>, <span class="org-type">int</span> <span class="org-variable-name">n</span>, <span class="org-type">int32_t</span> <span class="org-variable-name">min_delta</span>, <span class="org-type">int32_t</span>&amp; <span class="org-variable-name">last_value</span>) {
+    <span class="org-keyword">using</span> <span class="org-type">v4i</span> = __m128i;
+    <span class="org-keyword">using</span> <span class="org-type">v8i</span> = __m256i;
+
+    <span class="org-comment-delimiter">// </span><span class="org-comment">avx2 instructions.
+</span>    <span class="org-keyword">const</span> <span class="org-type">v8i</span> <span class="org-variable-name">v_min_delta</span> = _mm256_set1_epi32(min_delta);
+    <span class="org-keyword">const</span> <span class="org-type">v8i</span> <span class="org-variable-name">v_zero</span> = _mm256_setzero_si256();
+    <span class="org-keyword">const</span> <span class="org-type">v8i</span> <span class="org-variable-name">v_perm7</span> = _mm256_set1_epi32(7);
+
+    <span class="org-type">int</span> <span class="org-variable-name">sz</span> = (n / 8) * 8;
+    <span class="org-keyword">if</span> (sz &gt; 0) {
+        <span class="org-type">v8i</span> <span class="org-variable-name">s</span> = _mm256_set1_epi32(last_value);
+        <span class="org-keyword">for</span> (<span class="org-type">int</span> <span class="org-variable-name">i</span> = 0; i &lt; sz; i += 8) {
+            s = prefix_and_accumulate_int32_avx2(buf + i, s, v_min_delta, v_zero, v_perm7);
+        }
+        last_value = _mm256_extract_epi32(s, 0);
+    }
+
+    <span class="org-keyword">for</span> (<span class="org-type">int</span> <span class="org-variable-name">i</span> = sz; i &lt; n; i++) {
+        buf[i] += last_value + min_delta;
+        last_value = buf[i];
+    }
+}
+</pre>
+</div>
+</div>
+</body>
+</html>
