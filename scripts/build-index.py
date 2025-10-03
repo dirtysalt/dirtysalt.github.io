@@ -47,13 +47,12 @@ def build_html(evernote_links, srt_to_book_links):
     parts.append("<head>")
     parts.append("  <meta charset=\"utf-8\" />")
     parts.append("  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />")
-    parts.append("  <title>Index</title>")
+    parts.append("  <title>An Amateur Alchemist's Adventure</title>")
     parts.append("  <link rel=\"shortcut icon\" href=\"/themes/favicon.ico\" />")
     parts.append("  <link rel=\"stylesheet\" type=\"text/css\" href=\"/themes/simple.css\" />")
     parts.append("</head>")
     parts.append("<body>")
     parts.append("  <div id=\"content\" class=\"content\">")
-    parts.append("    <h1>An Amateur Alchemist's Adventure</h1>")
     
     org_notes = [
         ('Files Index', 'html/index.html'),
