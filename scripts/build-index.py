@@ -53,13 +53,21 @@ def build_html(evernote_links, srt_to_book_links):
     parts.append("</head>")
     parts.append("<body>")
     parts.append("  <div id=\"content\" class=\"content\">")
-    parts.append("    <h2>An Amateur Alchemist's Adventure</h2>")
-    parts.append("    <ul>")
-    parts.append(li("Files Index", "html/index.html"))
-    parts.append(li("Blogs Index", "html/blogs.html"))
-    parts.append(li("Web Pastes", "html/paste.html"))
-    parts.append(li("Funny Things", "html/fun.html"))
-    parts.append("    </ul>")
+    parts.append("    <h1>An Amateur Alchemist's Adventure</h1>")
+    
+    org_notes = [
+        ('Files Index', 'html/index.html'),
+        ('Blogs Index', 'html/blogs.html'),
+        ('Web Pastes', 'html/paste.html'),
+        ('Funny Things', 'html/fun.html'),
+    ]
+    
+    if org_notes:
+        parts.append("    <h2>Emacs Org Notes</h2>")
+        parts.append("    <ul>")
+        for name, href in org_notes:
+            parts.append(li(name, href))
+        parts.append("    </ul>")
 
     if evernote_links:
         parts.append("    <h2>Evernote</h2>")
