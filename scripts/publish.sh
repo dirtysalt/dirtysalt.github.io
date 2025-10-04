@@ -34,9 +34,9 @@ if [ $? != 0 ]; then
     exit 1
 fi
 
-function publish-org-html() {
+function org-export-html() {
     # 保存上次构建的 commit id 的文件
-    LAST_COMMIT_FILE=".last_build_commit"
+    LAST_COMMIT_FILE=".org_export_last_commit"
 
     # 获取当前最新 commit id
     CURRENT_COMMIT=$(git rev-parse HEAD)
@@ -51,19 +51,19 @@ function publish-org-html() {
     # 比较 commit id
     if [ "$CURRENT_COMMIT" != "$LAST_COMMIT" ]; then
         # 检查是否有修改来自于 src 文件夹
-        if [ -z "$LAST_COMMIT" ] || ! git diff --name-only "$LAST_COMMIT" "$CURRENT_COMMIT" | grep -q "^src/"; then
+        if [ -n "$LAST_COMMIT" ] && ! git diff --name-only "$LAST_COMMIT" "$CURRENT_COMMIT" | grep -q "^src/"; then
             echo "没有检测到 src 文件夹的修改，不执行构建。"
             return 0
         fi
-        echo "检测到新的提交，执行 publish-html.sh ..."
-        bash ./scripts/publish-html.sh
+        echo "检测到新的提交，执行 org-export-html.sh ..."
+        bash ./scripts/org-export-html.sh
         
         if [ $? == 0 ]; then
             CURRENT_COMMIT=$(git rev-parse HEAD)
             echo "$CURRENT_COMMIT" > "$LAST_COMMIT_FILE"
             echo "构建完成，已更新 commit 记录。"
         else
-            echo "publish-html.sh 执行失败，请检查错误。"
+            echo "org-export-html.sh 执行失败，请检查错误。"
             return 1
         fi
     else
@@ -71,11 +71,10 @@ function publish-org-html() {
     fi
 }
 
-echo "********** publish org html **********"
-publish-org-html
+echo "********** org export html **********"
+org-export-html
 if [ $? != 0 ]; then
-    echo "publish org html failed"
-    exit 1
+    echo "org export html failed. ignore this error."
 fi
 
 echo "********** build index html **********"

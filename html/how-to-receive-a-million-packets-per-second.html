@@ -43,7 +43,7 @@ On Linux, how hard is it to write a program that receives 1 million UDP packets 
 <p>
 baseline没有任何额外设置
 </p>
-<pre class="example" id="org73c1a28">
+<pre class="example" id="orgec1065e">
 sender$ ./udpsender 192.168.254.1:4321
 receiver$ ./udpreceiver1 0.0.0.0:4321
   0.352M pps  10.730MiB /  90.010Mb
@@ -59,7 +59,7 @@ receiver$ ./udpreceiver1 0.0.0.0:4321
 <p>
 可以看到pps在195k~352k之间浮动，这是因为进程每次调度被分配到不同的core上运行，使用taskset -c来绑定运行core. 这样可以充分利用cache locality.
 </p>
-<pre class="example" id="orgc13bbd7">
+<pre class="example" id="orgab497ad">
 sender$ taskset -c 1 ./udpsender 192.168.254.1:4321
 receiver$ taskset -c 1 ./udpreceiver1 0.0.0.0:4321
   0.362M pps  11.058MiB /  92.760Mb
@@ -78,7 +78,7 @@ receiver$ taskset -c 1 ./udpreceiver1 0.0.0.0:4321
 <p>
 通过两个线程来提供发送pps, 但是可以看到接收pps并没有增长
 </p>
-<pre class="example" id="orgf220fc2">
+<pre class="example" id="orgc93a135">
 sender$ taskset -c 1,2 ./udpsender \
             192.168.254.1:4321 192.168.254.1:4321
 receiver$ taskset -c 1 ./udpreceiver1 0.0.0.0:4321
@@ -91,7 +91,7 @@ receiver$ taskset -c 1 ./udpreceiver1 0.0.0.0:4321
 <p>
 可以通过ethtool -S查看网口上统计数据. 这个网口有11个接受队列
 </p>
-<pre class="example" id="org5861b1c">
+<pre class="example" id="org66f0ba5">
 receiver$ watch 'sudo ethtool -S eth2 |grep rx'
      rx_nodesc_drop_cnt:    451.3k/s
      rx-0.rx_packets:     8.0/s
@@ -111,7 +111,7 @@ pps中有451k没有被kernel处理而丢弃，355.2k都是在rx-4接收队列上
 </p>
 
 
-<div id="org13fa855" class="figure">
+<div id="org12089a0" class="figure">
 <p><img src="../images/Pasted-Image-20231225103823.png" alt="Pasted-Image-20231225103823.png" />
 </p>
 </div>
@@ -130,7 +130,7 @@ Historically, network cards had a single RX queue that was used to pass packets 
 </p>
 
 
-<div id="org4915aed" class="figure">
+<div id="orgef752a6" class="figure">
 <p><img src="../images/Pasted-Image-20231225104728.png" alt="Pasted-Image-20231225104728.png" />
 </p>
 </div>
@@ -169,7 +169,7 @@ While a 10% penalty for running on a different NUMA node may not sound too bad, 
 <p>
 除了使用多队列的方式外，我们还可以使用多IP来避免单个processor来处理中断。
 </p>
-<pre class="example" id="org5bc4844">
+<pre class="example" id="org940a809">
 sender$ taskset -c 1,2 ./udpsender 192.168.254.1:4321 192.168.254.2:4321
 receiver$ watch 'sudo ethtool -S eth2 |grep rx'
      rx-0.rx_packets:     8.0/s
@@ -195,7 +195,7 @@ receiver$ taskset -c 1 ./udpreceiver1 0.0.0.0:4321
 <p>
 如果我们继续增加发送IP数量的话，接收pps不再上升，rx_nodesc_drop_cnt也不增加。netstat能够看到接收错误
 </p>
-<pre class="example" id="orgb1bb77e">
+<pre class="example" id="org6de9e80">
 receiver$ watch 'netstat -s --udp'
 Udp:
       437.0k/s packets received
@@ -223,7 +223,7 @@ Udp:
 可以使用 <a href="https://lwn.net/Articles/542629/">SO_REUSEPORT</a> 来解决这个问题. SO_REUSEPORT允许多个进程/线程绑定同一个端口(不同fd)来读取写入数据（底层实现是根据&lt;src-ip, src-port, dst-ip, dst-port&gt;做hash放入不同的bucket, 上层fd会在不同bucket里面取出链接来处理。如果某个fd进程挂掉的话，那么这个bucket里面所有packets都会作废）
 </p>
 
-<pre class="example" id="org44d4de2">
+<pre class="example" id="org56ab60b">
 receiver$ taskset -c 1,2,3,4 ./udpreceiver1 0.0.0.0:4321 4 1
   1.114M pps  34.007MiB / 285.271Mb
   1.147M pps  34.990MiB / 293.518Mb
