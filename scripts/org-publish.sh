@@ -45,13 +45,15 @@ function org-export-html() {
     if [ -f "$LAST_COMMIT_FILE" ]; then
         LAST_COMMIT=$(cat "$LAST_COMMIT_FILE")
     else
-        LAST_COMMIT=""
+        LAST_COMMIT=$(git rev-parse HEAD)
     fi
 
     # 比较 commit id
-    if [ "$CURRENT_COMMIT" != "$LAST_COMMIT" ]; then
+    if [ "$CURRENT_COMMIT" != "$LAST_COMMIT" ]; then        
         # 检查是否有修改来自于 src 文件夹
-        if [ -n "$LAST_COMMIT" ] && ! git diff --name-only "$LAST_COMMIT" "$CURRENT_COMMIT" | grep -q "^src/"; then
+        echo "LAST_COMMIT: $LAST_COMMIT, CURRENT_COMMIT: $CURRENT_COMMIT"
+        git diff --name-only "$LAST_COMMIT" "$CURRENT_COMMIT" | grep -q "^src/*.org"
+        if ! git diff --name-only "$LAST_COMMIT" "$CURRENT_COMMIT" | grep -q "^src/*.org"; then
             echo "没有检测到 src 文件夹的修改，不执行构建。"
             return 0
         fi
@@ -75,11 +77,5 @@ echo "********** org export html **********"
 org-export-html
 if [ $? != 0 ]; then
     echo "org export html failed. ignore this error."
-fi
-
-echo "********** build index html **********"
-python ./scripts/build-index.py
-if [ $? != 0 ]; then
-    echo "build index html failed"
     exit 1
 fi
