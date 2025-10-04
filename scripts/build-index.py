@@ -53,6 +53,12 @@ def build_html(evernote_links, srt_to_book_links):
     parts.append("</head>")
     parts.append("<body>")
     parts.append("  <div id=\"content\" class=\"content\">")
+    parts.append("    <h2>About Me</h2>")
+    parts.append("    <p>")
+    parts.append("      Welcome to my personal website! I am an amateur alchemist exploring the realms of technology,")
+    parts.append("      programming, and knowledge sharing. This site serves as a collection of my notes, projects,")
+    parts.append("      and resources that I find interesting or useful.")    
+    parts.append("    </p>")
     
     org_notes = [
         ('Files Index', 'html/index.html'),
@@ -63,13 +69,15 @@ def build_html(evernote_links, srt_to_book_links):
     
     if org_notes:
         parts.append("    <h2>Emacs Org Notes</h2>")
+        parts.append("Since I switched to obsidian from emacs, I don't update these notes anymore, but they are still here for reference.")
         parts.append("    <ul>")
         for name, href in org_notes:
             parts.append(li(name, href))
         parts.append("    </ul>")
 
-    if evernote_links:
+    if evernote_links:        
         parts.append("    <h2>Evernote</h2>")
+        parts.append("Once upone a time, I listened to some courses and took notes in Evernote. Later I exported them to HTML files.")
         parts.append("    <ul>")
         for name, href in evernote_links:
             parts.append(li(name, href))
@@ -77,15 +85,12 @@ def build_html(evernote_links, srt_to_book_links):
 
     if srt_to_book_links:
         parts.append("    <h2>SRT to Book</h2>")
+        parts.append("I have a program to download srt from youtube, convert them to markdown using LLM, and then to epub.")
         parts.append("    <ul>")
         for name, href in srt_to_book_links:
             parts.append(li(name, href))
         parts.append("    </ul>")
 
-    parts.append("    <h2>Featured Image</h2>")
-    parts.append("    <div>")
-    parts.append('      <img src="themes/fp.jpg" alt="Featured Image" style="max-width:200px;height:auto;">')
-    parts.append("    </div>")
     parts.append("  </div>")
     parts.append("</body>")
     parts.append("</html>")
