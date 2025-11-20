@@ -75,7 +75,7 @@ def build_html(evernote_links, srt_to_book_links):
             parts.append(li(name, href))
         parts.append("    </ul>")
 
-    if evernote_links:        
+    if evernote_links:
         parts.append("    <h2>Evernote</h2>")
         parts.append("Once upone a time, I listened to some courses and took notes in Evernote. Later I exported them to HTML files.")
         parts.append("    <ul>")
